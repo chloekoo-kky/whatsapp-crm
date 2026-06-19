@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="csrf-token" content="{{ csrf_token }}" />
+  <title>WhatsApp CRM — Lead CRM</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: { sans: ["Inter", "system-ui", "sans-serif"] },
+        },
+      },
+    };
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  {% include "leads/partials/_workspace_app_styles.html" %}
+</head>
+<body class="flex h-screen min-h-0 overflow-hidden overflow-x-hidden bg-slate-100 font-sans text-slate-900 antialiased">
+  {% include "leads/partials/_workspace_clinic_view_bootstrap.html" %}
+
+  {% include "leads/partials/_app_sidebar.html" with nav_active="whatsapp" %}
+  <div id="workspace-root" class="flex min-h-0 min-w-0 flex-1" data-view="whatsapp">
+    {% include "leads/partials/_workspace_whatsapp_panel.html" %}
+  </div>
+
+  <div id="chat-modal-container" class="pointer-events-none fixed inset-0 z-[70]"></div>
+
+  {% include "leads/partials/_htmx_setup.html" %}
+  {% include "leads/partials/_workspace_nav.js.html" %}
+</body>
+</html>

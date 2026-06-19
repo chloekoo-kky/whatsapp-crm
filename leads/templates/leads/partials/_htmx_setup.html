@@ -1,0 +1,328 @@
+<script src="https://unpkg.com/htmx.org@2.0.4/dist/htmx.min.js" integrity="sha384-HGfztofotfshcF7+8n44JQL2oJmowVChPTg48S+jvZoztPfvwD79OC/LTtG6dMp+" crossorigin="anonymous"></script>
+
+<script>
+
+  function __htmxCsrfToken() {
+
+    var match = document.cookie.match(/(?:^|;\s*)csrftoken=([^;]+)/);
+
+    if (match) return decodeURIComponent(match[1]);
+
+    var meta = document.querySelector('meta[name="csrf-token"]');
+
+    return meta ? (meta.getAttribute("content") || "") : "";
+
+  }
+
+
+
+  window.__ensureGridHtmxBound = function () {
+
+    if (!window.htmx) return;
+
+    var gridInner = document.getElementById("clinics-grid-inner");
+
+    if (gridInner) window.htmx.process(gridInner);
+
+  };
+
+
+
+  document.body.addEventListener("htmx:configRequest", function (evt) {
+
+    var token = __htmxCsrfToken();
+
+    if (token) {
+
+      evt.detail.headers["X-CSRFToken"] = token;
+
+    }
+
+  });
+
+
+
+  document.body.addEventListener("htmx:afterOnLoad", function (evt) {
+
+    var xhr = evt.detail && evt.detail.xhr;
+
+    var elt = evt.detail && evt.detail.elt;
+
+    if (!xhr || !elt || xhr.status < 200 || xhr.status >= 300) return;
+
+    if (
+
+      elt.classList.contains("lead-card-trash-btn") ||
+
+      elt.classList.contains("lead-join-queue-btn") ||
+
+      elt.classList.contains("lead-dequeue-btn") ||
+
+      elt.classList.contains("lead-force-send-btn")
+
+    ) {
+
+      if (typeof window.refreshSelectAllState === "function") window.refreshSelectAllState();
+
+      if (typeof window.refreshSelectionVisuals === "function") window.refreshSelectionVisuals();
+
+      if (typeof window.refreshSetCategoryButtonState === "function") window.refreshSetCategoryButtonState();
+
+      if (typeof window.refreshBulkAssignGroupButtonState === "function") window.refreshBulkAssignGroupButtonState();
+
+      if (typeof window.applyTableFilter === "function") window.applyTableFilter();
+
+    }
+
+  });
+
+
+
+  document.body.addEventListener("htmx:responseError", function (evt) {
+
+    var elt = evt.detail && evt.detail.elt;
+
+    var status = evt.detail && evt.detail.xhr && evt.detail.xhr.status;
+
+    if (elt) elt.classList.remove("htmx-request");
+
+    console.error("HTMX request failed", status, evt.detail.pathInfo && evt.detail.pathInfo.requestPath);
+
+  });
+
+
+
+  document.body.addEventListener("htmx:sendError", function (evt) {
+
+    var elt = evt.detail && evt.detail.elt;
+
+    if (elt) elt.classList.remove("htmx-request");
+
+    console.error("HTMX network error", evt.detail && evt.detail.pathInfo && evt.detail.pathInfo.requestPath);
+
+  });
+
+
+
+  document.body.addEventListener("funnelMetricsRefresh", function () {
+
+    if (typeof window.__refreshFunnelMetricsStrip === "function") {
+
+      window.__refreshFunnelMetricsStrip();
+
+    }
+
+  });
+
+  document.body.addEventListener("waRowFlash", function (evt) {
+
+    var id = evt.detail;
+
+    if (id == null) return;
+
+    var row = document.querySelector('tr.clinic-row[data-clinic-id="' + id + '"]');
+
+    if (row) {
+
+      row.classList.add("clinic-row--wa-flash");
+
+      window.setTimeout(function () { row.classList.remove("clinic-row--wa-flash"); }, 2200);
+
+    }
+
+    var card = document.querySelector('.clinic-card[data-clinic-id="' + id + '"]');
+
+    if (card) {
+
+      card.classList.add("clinic-card--wa-flash");
+
+      window.setTimeout(function () { card.classList.remove("clinic-card--wa-flash"); }, 2200);
+
+    }
+
+  });
+
+  document.body.addEventListener("leadCardSink", function (evt) {
+
+    var id = evt.detail;
+
+    if (id == null) return;
+
+    var cell = document.getElementById("lead-grid-cell-" + id);
+
+    var grid = document.getElementById("clinics-grid-inner");
+
+    if (!cell || !grid) return;
+
+    cell.setAttribute("data-whatsapp-status", "pending");
+
+    cell.classList.add("lead-card--sinking");
+
+    grid.appendChild(cell);
+
+    window.setTimeout(function () { cell.classList.remove("lead-card--sinking"); }, 320);
+
+  });
+
+  window.__chatInboxPollTimer = null;
+
+  window.__stopChatInboxPolling = function () {
+
+    if (window.__chatInboxPollTimer) {
+
+      window.clearInterval(window.__chatInboxPollTimer);
+
+      window.__chatInboxPollTimer = null;
+
+    }
+
+  };
+
+  window.__scrollChatInboxToBottom = function (el) {
+
+    if (!el) return;
+
+    el.scrollTop = el.scrollHeight;
+
+    window.requestAnimationFrame(function () {
+
+      el.scrollTop = el.scrollHeight;
+
+    });
+
+  };
+
+  window.__startChatInboxPolling = function () {
+
+    window.__stopChatInboxPolling();
+
+    var panel = document.querySelector("#chat-modal-container .chat-inbox-messages");
+
+    if (!panel || !window.htmx) return;
+
+    var url = panel.getAttribute("data-chat-poll-url");
+
+    if (!url) return;
+
+    window.__scrollChatInboxToBottom(panel);
+
+    window.setTimeout(function () {
+
+      window.__scrollChatInboxToBottom(panel);
+
+    }, 120);
+
+    window.__chatInboxPollTimer = window.setInterval(function () {
+
+      var root = document.getElementById("chat-modal-container");
+
+      if (!root || !root.innerHTML.trim()) {
+
+        window.__stopChatInboxPolling();
+
+        return;
+
+      }
+
+      var livePanel = root.querySelector(".chat-inbox-messages");
+
+      if (!livePanel) {
+
+        window.__stopChatInboxPolling();
+
+        return;
+
+      }
+
+      window.htmx.ajax("GET", url, { target: livePanel, swap: "innerHTML" });
+
+    }, 3000);
+
+  };
+
+  document.body.addEventListener("keydown", function (evt) {
+
+    if (evt.key !== "Escape") return;
+
+    var chatRoot = document.getElementById("chat-modal-container");
+
+    if (chatRoot && chatRoot.innerHTML.trim()) {
+
+      window.__stopChatInboxPolling();
+
+      chatRoot.innerHTML = "";
+
+    }
+
+  });
+
+  document.body.addEventListener("htmx:afterSwap", function (evt) {
+
+    var target = evt.detail && evt.detail.target;
+
+    if (target && target.id === "chat-modal-container") {
+
+      if (window.__startChatInboxPolling) window.__startChatInboxPolling();
+
+    }
+
+    if (target && target.classList && target.classList.contains("chat-inbox-messages")) {
+
+      window.__scrollChatInboxToBottom(target);
+
+      if (typeof window.__refreshLeadChatIndicators === "function") {
+        window.__refreshLeadChatIndicators();
+      }
+
+    }
+
+  });
+
+
+
+  document.body.addEventListener("leadCardFloat", function (evt) {
+
+    var id = evt.detail;
+
+    if (id == null) return;
+
+    var cell = document.getElementById("lead-grid-cell-" + id);
+
+    var grid = document.getElementById("clinics-grid-inner");
+
+    if (!cell || !grid) return;
+
+    cell.setAttribute("data-whatsapp-status", "idle");
+
+    cell.classList.add("lead-card--floating");
+
+    var firstPending = grid.querySelector('.lead-card-container[data-whatsapp-status="pending"]');
+
+    if (firstPending) {
+
+      grid.insertBefore(cell, firstPending);
+
+    } else {
+
+      grid.insertBefore(cell, grid.firstElementChild);
+
+    }
+
+    window.setTimeout(function () { cell.classList.remove("lead-card--floating"); }, 320);
+
+  });
+
+
+
+  if (document.readyState === "loading") {
+
+    document.addEventListener("DOMContentLoaded", window.__ensureGridHtmxBound);
+
+  } else {
+
+    window.__ensureGridHtmxBound();
+
+  }
+
+</script>
+

@@ -1,0 +1,386 @@
+<style>
+
+  /* Tailwind .flex overrides [hidden]; keep inactive workspace panels out of layout */
+
+  #workspace-root > #workspace-panel-dashboard[hidden],
+
+  #workspace-root > #workspace-panel-whatsapp[hidden] {
+
+    display: none !important;
+
+  }
+
+</style>
+
+<script>
+
+  (function () {
+
+    var FRAGMENT_URLS = {
+
+      dashboard: "{{ workspace_fragment_dashboard_url|default:''|escapejs }}" || "/leads/ajax/workspace/dashboard/",
+
+      whatsapp: "{{ workspace_fragment_whatsapp_url|default:''|escapejs }}" || "/leads/ajax/workspace/whatsapp/",
+
+    };
+
+    var PANEL_IDS = {
+
+      dashboard: "workspace-panel-dashboard",
+
+      whatsapp: "workspace-panel-whatsapp",
+
+    };
+
+    var TITLES = {
+
+      dashboard: "Lead CRM",
+
+      whatsapp: "WhatsApp CRM — Lead CRM",
+
+    };
+
+
+
+    function workspaceViewFromPath(pathname) {
+
+      if (pathname.indexOf("whatsapp") >= 0) return "whatsapp";
+
+      return "dashboard";
+
+    }
+
+
+
+    function setSidebarActive(view) {
+
+      var nav = document.querySelector('aside[aria-label="Main navigation"]');
+
+      if (!nav) return;
+
+      nav.querySelectorAll("a.manage-nav-item[data-workspace-nav]").forEach(function (link) {
+
+        var active = link.getAttribute("data-workspace-nav") === view;
+
+        link.classList.toggle("manage-nav-item--active", active);
+
+      });
+
+    }
+
+
+
+    function showWorkspacePanel(view) {
+
+      var root = document.getElementById("workspace-root");
+
+      if (!root) return;
+
+      root.dataset.view = view;
+
+      Object.keys(PANEL_IDS).forEach(function (key) {
+
+        var panel = document.getElementById(PANEL_IDS[key]);
+
+        if (!panel) return;
+
+        var active = key === view;
+
+        if (active) {
+
+          panel.removeAttribute("hidden");
+
+          panel.removeAttribute("aria-hidden");
+
+        } else {
+
+          panel.setAttribute("hidden", "");
+
+          panel.setAttribute("aria-hidden", "true");
+
+        }
+
+      });
+
+      setSidebarActive(view);
+
+      var title = TITLES[view];
+
+      if (title) document.title = title;
+
+    }
+
+
+
+    function runScriptsIn(container) {
+
+      container.querySelectorAll("script").forEach(function (old) {
+
+        var s = document.createElement("script");
+
+        if (old.src) {
+
+          s.src = old.src;
+
+          if (old.async) s.async = true;
+
+          if (old.defer) s.defer = true;
+
+        } else {
+
+          s.textContent = old.textContent;
+
+        }
+
+        old.parentNode.replaceChild(s, old);
+
+      });
+
+    }
+
+
+
+    async function ensureWorkspacePanelLoaded(view, url) {
+
+      var panelId = PANEL_IDS[view];
+
+      var panel = document.getElementById(panelId);
+
+      var root = document.getElementById("workspace-root");
+
+      if (!root) return null;
+
+      if (panel && panel.dataset.loaded === "1") return panel;
+
+
+
+      var fragUrl = FRAGMENT_URLS[view];
+
+      if (view === "dashboard" && url) {
+
+        try {
+
+          var u = new URL(url, window.location.origin);
+
+          fragUrl = FRAGMENT_URLS.dashboard + u.search;
+
+        } catch (e) { /* ignore */ }
+
+      }
+
+      var res = await fetch(fragUrl, {
+
+        headers: { Accept: "application/json", "X-Requested-With": "XMLHttpRequest" },
+
+        credentials: "same-origin",
+
+      });
+
+      if (!res.ok) throw new Error("HTTP " + res.status);
+
+      var data = await res.json();
+
+      if (!data.ok) throw new Error((data.detail && String(data.detail)) || "Bad response");
+
+
+
+      var tmp = document.createElement("div");
+
+      tmp.innerHTML = data.html;
+
+      var fetchedPanel = tmp.querySelector("#" + panelId);
+
+      if (fetchedPanel) {
+
+        if (panel) {
+
+          panel.replaceWith(fetchedPanel);
+
+        } else {
+
+          root.appendChild(fetchedPanel);
+
+        }
+
+        panel = fetchedPanel;
+
+        // The dashboard fragment ships its <script> block as a SIBLING of the panel
+        // node (not a child). Move any leftover nodes into the panel so runScriptsIn()
+        // below actually executes them — otherwise dashboard JS (group tabs, etc.)
+        // never binds when arriving here via SPA navigation (e.g. from WhatsApp).
+        while (tmp.firstChild) {
+
+          panel.appendChild(tmp.firstChild);
+
+        }
+
+      } else if (panel) {
+
+        panel.innerHTML = data.html;
+
+      } else {
+
+        root.insertAdjacentHTML("beforeend", data.html);
+
+        panel = document.getElementById(panelId);
+
+      }
+
+        if (panel) {
+
+          panel.dataset.loaded = "1";
+
+          runScriptsIn(panel);
+
+          if (window.htmx) window.htmx.process(panel);
+
+          if (typeof window.__ensureGridHtmxBound === "function") window.__ensureGridHtmxBound();
+
+        }
+
+      if (data.title) document.title = data.title;
+
+      return panel;
+
+    }
+
+
+
+    var workspaceNavBusy = false;
+
+    async function workspaceNavigate(view, url, opts) {
+
+      opts = opts || {};
+
+      var root = document.getElementById("workspace-root");
+
+      if (!root || workspaceNavBusy) return;
+
+      if (!opts.fromPopstate && root.dataset.view === view) {
+
+        if (url && !opts.skipHistory) {
+
+          try {
+
+            history.replaceState({ workspace: view }, "", url);
+
+          } catch (e) { /* ignore */ }
+
+        }
+
+        return;
+
+      }
+
+      workspaceNavBusy = true;
+
+      try {
+
+        await ensureWorkspacePanelLoaded(view, url);
+
+        showWorkspacePanel(view);
+
+        if (!opts.skipHistory && url) {
+
+          var mode = opts.historyMode || "push";
+
+          var state = { workspace: view };
+
+          if (mode === "replace") history.replaceState(state, "", url);
+
+          else history.pushState(state, "", url);
+
+        }
+
+        if (view === "dashboard" && typeof window.__dashboardOnWorkspaceShown === "function") {
+
+          window.__dashboardOnWorkspaceShown();
+
+        } else if (typeof window.__stopLeadChatIndicatorPolling === "function") {
+
+          window.__stopLeadChatIndicatorPolling();
+
+        }
+
+        if (view === "whatsapp" && typeof window.__syncWaActivityLogPolling === "function") {
+
+          window.__syncWaActivityLogPolling();
+
+        } else if (typeof window.__stopWaActivityLogPolling === "function") {
+
+          window.__stopWaActivityLogPolling();
+
+        }
+
+      } catch (err) {
+
+        console.error(err);
+
+        var fallback = "/";
+
+        if (view === "whatsapp") fallback = "/whatsapp/";
+
+        window.location.href = url || fallback;
+
+      } finally {
+
+        workspaceNavBusy = false;
+
+      }
+
+    }
+
+
+
+    window.workspaceNavigate = workspaceNavigate;
+
+
+
+    document.body.addEventListener("click", function (e) {
+
+      var link = e.target.closest("a[data-workspace-nav]");
+
+      if (!link || link.getAttribute("href") === "#") return;
+
+      e.preventDefault();
+
+      workspaceNavigate(link.getAttribute("data-workspace-nav"), link.href);
+
+    });
+
+
+
+    window.addEventListener("popstate", function (e) {
+
+      var view =
+
+        (e.state && e.state.workspace) || workspaceViewFromPath(window.location.pathname);
+
+      workspaceNavigate(view, window.location.href, {
+
+        fromPopstate: true,
+
+        skipHistory: true,
+
+      }).then(function () {
+
+        if (view === "dashboard" && typeof window.__dashboardHandlePopstate === "function") {
+
+          window.__dashboardHandlePopstate(e);
+
+        }
+
+      });
+
+    });
+
+
+
+    var initialView = document.getElementById("workspace-root")?.dataset.view || "dashboard";
+
+    showWorkspacePanel(initialView);
+
+  })();
+
+</script>
+

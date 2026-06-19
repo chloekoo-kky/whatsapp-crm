@@ -1,0 +1,588 @@
+<div id="workspace-panel-dashboard" class="dashboard-workspace"{% if not workspace_fragment %} data-loaded="1"{% endif %}{% if workspace_fragment %} hidden{% endif %}>
+
+    <aside id="scraping-panel" class="dashboard-scraping-col" aria-label="Scraping and import">
+      <div class="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-y-contain px-4 py-4 xl:px-5">
+        <div class="shrink-0">
+          <div class="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+            <h2 class="text-sm font-semibold tracking-tight text-slate-800">Scraping</h2>
+            <span class="rounded-md bg-slate-100 px-1.5 py-px text-[10px] font-semibold uppercase tracking-wider text-slate-500">Serper</span>
+          </div>
+          <p class="mt-1 text-[11px] leading-relaxed text-slate-500">Import leads from Serper Maps.</p>
+        </div>
+        <form id="hunt-form" class="mt-4 min-w-0 rounded-xl border border-slate-200/80 bg-slate-50/40 p-4 shadow-inner shadow-slate-900/5">
+          <div class="grid gap-5">
+            <section class="grid gap-2.5" aria-labelledby="hunt-form-options-label">
+              <h3 id="hunt-form-options-label" class="hunt-form-section-label text-[10px] font-bold uppercase text-slate-400">Options</h3>
+              <div class="flex flex-col gap-2">
+                {% include "leads/partials/_hunt_option_toggle.html" with toggle_id="hunt-require-website" toggle_name="require_website" toggle_label="Website / social only" toggle_desc_id="require-website-desc" toggle_desc="When on, skip listings with no website or social URL in Serper. When off, import all results." toggle_title="When on, skip listings with no website or social URL in Serper. When off, import all results." %}
+              </div>
+            </section>
+
+            <section class="grid gap-2.5" aria-labelledby="hunt-form-location-label">
+              <h3 id="hunt-form-location-label" class="hunt-form-section-label text-[10px] font-bold uppercase text-slate-400">Location</h3>
+              <div class="grid grid-cols-1 gap-3">
+                <div class="grid gap-1">
+                  <label for="hunt-state" class="text-xs font-semibold text-slate-600">State <span class="text-indigo-600">*</span></label>
+                  <select id="hunt-state" name="state" required
+                    title="Appended after the city in the Serper query."
+                    class="hunt-form-input">
+                    <option value="Johor">Johor</option>
+                    <option value="Kedah">Kedah</option>
+                    <option value="Kelantan">Kelantan</option>
+                    <option value="Kuala Lumpur">Kuala Lumpur</option>
+                    <option value="Labuan">Labuan</option>
+                    <option value="Melaka">Melaka</option>
+                    <option value="Negeri Sembilan">Negeri Sembilan</option>
+                    <option value="Pahang">Pahang</option>
+                    <option value="Penang">Penang</option>
+                    <option value="Perak">Perak</option>
+                    <option value="Perlis">Perlis</option>
+                    <option value="Putrajaya">Putrajaya</option>
+                    <option value="Sabah">Sabah</option>
+                    <option value="Sarawak">Sarawak</option>
+                    <option value="Selangor" selected>Selangor</option>
+                    <option value="Terengganu">Terengganu</option>
+                  </select>
+                </div>
+                <div class="grid gap-1">
+                  <label for="city" class="text-xs font-semibold text-slate-600">City / area <span class="text-indigo-600">*</span></label>
+                  <input id="city" name="city" type="text" required placeholder="e.g. Kuala Lumpur"
+                    class="hunt-form-input" />
+                  <button id="hunt-city-suggest" type="button"
+                    title="Fill a popular city / area for the selected state. Click again for more suggestions."
+                    class="mt-1.5 inline-flex w-fit items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 py-1.5 text-xs font-semibold text-indigo-700 shadow-sm transition hover:bg-indigo-100 focus:outline-none focus:ring-2 focus:ring-indigo-500/20">
+                    <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456z"/></svg>
+                    <span>Suggest city / area</span>
+                  </button>
+                </div>
+                <div class="grid gap-1">
+                  <label for="hunt-country" class="text-xs font-semibold text-slate-600">Country</label>
+                  <input id="hunt-country" name="country" type="text" autocomplete="off"
+                    value="{{ hunt_default_country|default:'Malaysia'|escape }}"
+                    title="Appended after the city in the Serper query. Default is Malaysia; clear or edit for other regions."
+                    placeholder="e.g. Malaysia"
+                    class="hunt-form-input" />
+                </div>
+              </div>
+            </section>
+
+            <section class="grid gap-2.5" aria-labelledby="hunt-form-search-label">
+              <h3 id="hunt-form-search-label" class="hunt-form-section-label text-[10px] font-bold uppercase text-slate-400">Search terms</h3>
+              <div class="grid grid-cols-1 gap-3">
+                <div class="grid gap-1">
+                  <label for="hunt-shop-keyword" class="text-xs font-semibold text-slate-600">Keyword <span class="text-indigo-600">*</span></label>
+                  <input id="hunt-shop-keyword" name="shop_keyword" type="text" required autocomplete="off"
+                    title="Hunt target; used when Maps query is empty; stored on each lead."
+                    placeholder="e.g. medical clinic, fitness center"
+                    class="hunt-form-input" />
+                </div>
+                <div class="grid gap-1">
+                  <label for="query" class="text-xs font-semibold text-slate-600">Maps query <span class="font-normal text-slate-400">(optional)</span></label>
+                  <input id="query" name="query" type="text"
+                    value="{% if hunt_form_prefill %}{{ hunt_form_prefill.maps_query|escape }}{% endif %}"
+                    title="Optional. If empty, the keyword builds the Serper string. If set, this phrase is used instead—useful to narrow (e.g. “weight loss clinic”) without changing the stored keyword."
+                    placeholder="Narrows Serper beyond the keyword — e.g. weight loss clinic"
+                    class="hunt-form-input" />
+                </div>
+              </div>
+            </section>
+
+            <section class="grid gap-3 border-t border-slate-200/70 pt-4" aria-labelledby="hunt-form-run-label">
+              <div class="grid gap-2">
+                <h3 id="hunt-form-run-label" class="hunt-form-section-label text-[10px] font-bold uppercase text-slate-400">Result limit</h3>
+                <div id="limit-buttons" class="inline-flex h-10 w-full max-w-full gap-0.5 rounded-lg border border-slate-200 bg-white p-0.5 shadow-sm" role="group" aria-label="Serper result limit">
+                  {% with lim_def=hunt_limit_default|default:20 %}
+                  {% for n in hunt_limit_choices %}
+                  <button type="button" data-limit="{{ n }}"
+                    class="limit-btn min-w-0 flex-1 rounded-md px-2 text-xs font-semibold transition focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-1 {% if lim_def == n %}limit-btn--active bg-indigo-600 text-white shadow-sm{% else %}text-slate-600 hover:bg-slate-50 hover:text-slate-900{% endif %}">{{ n }}</button>
+                  {% endfor %}
+                  {% endwith %}
+                </div>
+                <input type="hidden" id="hunt-limit-value" value="{{ hunt_limit_default|default:20 }}" />
+              </div>
+              <button type="submit" id="hunt-btn"
+                class="inline-flex h-11 w-full items-center justify-center rounded-lg bg-indigo-600 px-5 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60">
+                <span id="hunt-btn-label">Run hunt</span>
+                <svg id="hunt-spinner" class="ml-1.5 hidden h-4 w-4 shrink-0 animate-spin text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+              </button>
+            </section>
+          </div>
+        </form>
+        <p id="hunt-status" class="mt-3 min-h-[1.125rem] text-xs leading-relaxed text-slate-600 empty:hidden" role="status"></p>
+      </div>
+    </aside>
+
+    <main id="content-panel" class="dashboard-content-col" aria-label="Leads">
+      <header id="content-toolbar" class="shrink-0 border-b border-slate-200/90 bg-white/95 px-4 py-3 shadow-[0_1px_2px_0_rgb(15_23_42/0.04)] backdrop-blur-sm supports-[backdrop-filter]:bg-white/85 sm:px-5">
+        <div class="flex flex-col gap-2">
+          <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+            <div class="flex min-h-[2.5rem] min-w-0 flex-1 items-stretch gap-2 sm:min-w-[12rem]">
+              <div class="relative min-h-[2.5rem] min-w-0 flex-1">
+                <label for="table-search" class="sr-only">Filter leads</label>
+                <input id="table-search" type="search" placeholder="Filter leads…" autocomplete="off"
+                  class="h-full min-h-[2.5rem] w-full rounded-xl border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm shadow-sm outline-none transition placeholder:text-slate-400 focus:border-indigo-400 focus:ring-2 focus:ring-indigo-500/20" />
+                <svg class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+              </div>
+              <button type="button" id="table-search-clear" hidden
+                class="inline-flex shrink-0 items-center justify-center gap-1 rounded-xl border border-slate-200 bg-white px-2.5 py-2 text-xs font-semibold text-slate-600 shadow-sm transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/30"
+                title="Clear filter"
+                aria-label="Clear lead filter">× <span class="font-medium">clear</span></button>
+            </div>
+            <div class="flex min-w-0 shrink-0 flex-wrap items-center gap-2">
+              <button type="button" id="bulk-manual-open" disabled
+                class="inline-flex min-h-[2.5rem] shrink-0 items-center rounded-xl border border-indigo-200 bg-indigo-50/90 px-3.5 py-2 text-xs font-semibold text-indigo-950 shadow-sm transition hover:border-indigo-300 hover:bg-indigo-100/90 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/35 disabled:pointer-events-none disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400 disabled:opacity-70"
+                title="Set category and mark selected leads as processed (no AI). Select at least one lead first."
+                aria-label="Set category for selected leads without AI">Set category</button>
+              <button type="button" id="bulk-assign-group-open" disabled
+                class="inline-flex min-h-[2.5rem] shrink-0 items-center rounded-xl border border-violet-200 bg-violet-50/90 px-3.5 py-2 text-xs font-semibold text-violet-950 shadow-sm transition hover:border-violet-300 hover:bg-violet-100/90 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/35 disabled:pointer-events-none disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400 disabled:opacity-70"
+                title="Choose a folder for selected leads (or Uncategorized)"
+                aria-label="Move selected leads to a group"
+                aria-expanded="false"
+                aria-haspopup="true">Move to group…</button>
+              <button type="button" id="lead-manual-create-open"
+                class="inline-flex min-h-[2.5rem] min-w-[2.5rem] shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:border-indigo-300/80 hover:bg-indigo-50/90 hover:text-indigo-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/35"
+                title="Add a lead manually (saved in the current folder tab)"
+                aria-label="Add lead manually">
+                <span class="sr-only">Add lead manually</span>
+                <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/></svg>
+              </button>
+              <button type="button" id="export-xlsx-btn"
+                class="inline-flex min-h-[2.5rem] min-w-[2.5rem] shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:border-emerald-300/80 hover:bg-emerald-50/90 hover:text-emerald-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/35 disabled:pointer-events-none disabled:opacity-50"
+                title="Download Excel (.xlsx) for the current folder — checked rows only if any are selected (still limited to this folder)">
+                <span class="sr-only">Export to Excel</span>
+                <svg id="export-xlsx-icon" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5m0 0V9.375A3.375 3.375 0 0013.5 6.375h-1.5a3.375 3.375 0 00-3.375 3.375V10.5m14.625 0a3.375 3.375 0 00-3.375-3.375H3.375A3.375 3.375 0 001.875 10.5v8.25A3.375 3.375 0 004.875 22.125h14.25a3.375 3.375 0 003.375-3.375V14.25"/><path stroke-linecap="round" stroke-linejoin="round" d="M6 10.5h9m-9 4.5h6M7.5 18H18M10.5 3.75h3m-1.5-1.5v3"/></svg>
+                <svg id="export-xlsx-spinner" class="hidden h-5 w-5 animate-spin text-emerald-700" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+              </button>
+              <button type="button" id="backup-all-btn"
+                class="inline-flex min-h-[2.5rem] min-w-[2.5rem] shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:border-sky-300/80 hover:bg-sky-50/90 hover:text-sky-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/35 disabled:pointer-events-none disabled:opacity-50"
+                title="Backup ALL leads across every folder (with chats, logs &amp; settings) to a re-importable .xlsx file">
+                <span class="sr-only">Backup all leads</span>
+                <svg id="backup-all-icon" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12a9.75 9.75 0 0119.5 0v.75M12 2.25v9m0 0l-3-3m3 3l3-3M4.5 18.75h15"/></svg>
+                <svg id="backup-all-spinner" class="hidden h-5 w-5 animate-spin text-sky-700" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+              </button>
+              <button type="button" id="restore-backup-btn"
+                class="inline-flex min-h-[2.5rem] min-w-[2.5rem] shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:border-amber-300/80 hover:bg-amber-50/90 hover:text-amber-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/35 disabled:pointer-events-none disabled:opacity-50"
+                title="Restore from a backup .xlsx file — existing leads (same name &amp; address) are skipped">
+                <span class="sr-only">Restore from backup</span>
+                <svg id="restore-backup-icon" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 21.75a9.75 9.75 0 119.75-9.75M12 21.75V12m0 9.75l3-3m-3 3l-3-3M4.5 5.25h15"/></svg>
+                <svg id="restore-backup-spinner" class="hidden h-5 w-5 animate-spin text-amber-700" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+              </button>
+              <input type="file" id="restore-backup-input" accept=".xlsx" class="hidden" aria-hidden="true" tabindex="-1" />
+            </div>
+          </div>
+          <div id="lead-filter-tags-row" class="flex flex-wrap items-center gap-1.5" role="group" aria-label="Saved filter tags">
+            <button type="button" id="lead-filter-tag-save" disabled
+              class="inline-flex shrink-0 items-center gap-1 rounded-lg border border-dashed border-slate-300 bg-slate-50/80 px-2 py-1 text-[11px] font-semibold text-slate-600 transition hover:border-indigo-300 hover:bg-indigo-50/80 hover:text-indigo-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/30 disabled:pointer-events-none disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
+              title="Save current filter text as a reusable tag"
+              aria-label="Save current filter as tag">
+              <svg class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9.568 3H5.25A2.25 2.25 0 003 5.25v4.318c0 .597.237 1.17.659 1.591l9.581 9.581c.699.699 1.78.872 2.607.33a18.095 18.095 0 005.223-5.223c.542-.827.369-1.908-.33-2.607L11.16 3.66A2.25 2.25 0 009.568 3z"/><path stroke-linecap="round" stroke-linejoin="round" d="M6 6h.008v.008H6V6z"/></svg>
+              <span>Tag</span>
+            </button>
+            <div id="lead-filter-tags-list" class="flex flex-wrap items-center gap-1.5"></div>
+          </div>
+          <div class="-mx-4 border-b border-slate-200 px-4 sm:-mx-5 sm:px-5">
+            <div id="lead-group-tabs" class="flex flex-wrap items-end gap-0.5" role="tablist" aria-label="Lead groups">
+              <button type="button" role="tab" class="lead-group-tab rounded-t-md{% if active_group_pk is None %} lead-group-tab--active{% endif %}" data-group-id="uncategorized" aria-selected="{% if active_group_pk is None %}true{% else %}false{% endif %}"><span class="relative inline-flex">Uncategorized<span class="lead-group-count absolute -right-3.5 -top-2.5 inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-slate-200 px-1.5 py-0.5 text-[11px] font-bold leading-none text-slate-600 ring-1 ring-white" title="{{ uncategorized_lead_count }} lead(s) in this group">{{ uncategorized_lead_count }}</span></span></button>
+              <button type="button" role="tab" class="lead-group-tab rounded-t-md{% if active_group_pk == queue_group.pk %} lead-group-tab--active{% endif %}" data-group-id="{{ queue_group.pk }}" aria-selected="{% if active_group_pk == queue_group.pk %}true{% else %}false{% endif %}"><span class="relative inline-flex">🚀Queue<span class="lead-group-count absolute -right-3.5 -top-2.5 inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-slate-200 px-1.5 py-0.5 text-[11px] font-bold leading-none text-slate-600 ring-1 ring-white" title="{{ queue_lead_count }} lead(s) in this group">{{ queue_lead_count }}</span></span></button>
+              <button type="button" role="tab" class="lead-group-tab rounded-t-md{% if active_group_pk == trash_group.pk %} lead-group-tab--active{% endif %}" data-group-id="{{ trash_group.pk }}" aria-selected="{% if active_group_pk == trash_group.pk %}true{% else %}false{% endif %}"><span class="relative inline-flex">{{ trash_group.name }}<span class="lead-group-count absolute -right-3.5 -top-2.5 inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-slate-200 px-1.5 py-0.5 text-[11px] font-bold leading-none text-slate-600 ring-1 ring-white" title="{{ trash_lead_count }} lead(s) in this group">{{ trash_lead_count }}</span></span></button>
+              <button type="button" role="tab" class="lead-group-tab rounded-t-md{% if active_group_pk == whatsapp_chats_group.pk %} lead-group-tab--active{% endif %}" data-group-id="{{ whatsapp_chats_group.pk }}" aria-selected="{% if active_group_pk == whatsapp_chats_group.pk %}true{% else %}false{% endif %}">💬 Active Chat<span id="active-chat-count-badge" class="ml-1.5 inline-flex min-w-[1.125rem] items-center justify-center rounded-full bg-emerald-500 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white{% if not active_chat_count %} hidden{% endif %}" aria-label="{{ active_chat_count }} active chats" title="{{ active_chat_count }} chats awaiting your reply">{{ active_chat_count }}</span></button>
+              {% for g in lead_groups %}
+              <button type="button" role="tab" class="lead-group-tab lead-group-tab--draggable rounded-t-md{% if active_group_pk == g.pk %} lead-group-tab--active{% endif %}" draggable="true" data-group-id="{{ g.pk }}" aria-selected="{% if active_group_pk == g.pk %}true{% else %}false{% endif %}"><span class="relative inline-flex">{{ g.name }}<span class="lead-group-count absolute -right-3.5 -top-2.5 inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-slate-200 px-1.5 py-0.5 text-[11px] font-bold leading-none text-slate-600 ring-1 ring-white" title="{{ g.total_leads }} lead(s) in this group">{{ g.total_leads }}</span></span></button>
+              {% endfor %}
+              <button type="button" id="lead-group-new-btn" class="lead-group-tab lead-group-tab--new ml-0.5 rounded-t-md font-semibold" title="Create a new group">+ New group</button>
+            </div>
+          </div>
+          <div id="leads-controls-bar" class="sticky top-0 z-20 -mx-4 flex flex-wrap items-center gap-2 border-t border-slate-100 bg-white/95 px-4 py-2.5 backdrop-blur-sm supports-[backdrop-filter]:bg-white/85 sm:-mx-5 sm:px-5">
+            <label class="inline-flex min-h-[2.5rem] cursor-pointer select-none items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-sm transition hover:border-indigo-200/90 hover:bg-slate-50/80 focus-within:outline-none focus-within:ring-2 focus-within:ring-indigo-500/30" title="Every row or card visible after filters">
+              <input type="checkbox" id="select-all-clinics" class="h-4 w-4 shrink-0 rounded border-slate-300 text-indigo-600 focus:ring-2 focus:ring-indigo-500/35" aria-label="Select all leads in current view" />
+              <span class="text-xs font-semibold text-slate-700">Select all</span>
+            </label>
+            <button type="button" id="filter-very-important-only"
+              class="inline-flex min-h-[2.5rem] shrink-0 items-center gap-1 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-600 shadow-sm transition hover:border-amber-500/60 hover:bg-amber-50/60 hover:text-amber-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/35"
+              aria-pressed="false" title="Show only leads marked with the star (very important)">
+              <svg class="h-4 w-4 shrink-0 text-amber-500" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M10.788 3.21c.448-1.077 1.976-1.077 2.424 0l2.082 5.006 5.404.434c1.164.093 1.636 1.545.749 2.305l-4.117 3.527 1.257 5.273c.271 1.136-.964 2.033-1.96 1.425L12 18.354 7.373 21.18c-.996.608-2.231-.29-1.96-1.425l1.257-5.273-4.117-3.527c-.887-.76-.415-2.212.749-2.305l5.404-.434 2.082-5.005z" clip-rule="evenodd" /></svg>
+              <span>Very important</span>
+            </button>
+            <div class="ml-auto flex flex-wrap items-center justify-end gap-2">
+              <div class="min-w-[11.5rem] max-w-xs shrink-0">
+                {% include "leads/partials/_hunt_option_toggle.html" with toggle_id="chat-indicator-poll-toggle" toggle_name="chat_indicator_poll" toggle_label="Live chat badges" toggle_desc_id="chat-indicator-poll-desc" toggle_desc="When on, poll every few seconds for reply and queue updates on lead cards. When off, badges refresh only when you switch tabs or send messages." toggle_checked=True toggle_title="Periodic chat-indicator polling for the current folder" %}
+              </div>
+              <div class="flex min-h-[2.5rem] items-center gap-0.5 rounded-xl border border-slate-200 bg-slate-50 p-1 shadow-inner" role="group" aria-label="Table layout">
+                <button type="button" class="view-mode-btn rounded-lg px-3 py-2 text-xs font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/35" data-view-mode="list" aria-pressed="true">List</button>
+                <button type="button" class="view-mode-btn min-w-[3.25rem] rounded-lg px-3 py-2 text-xs font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/35" data-view-mode="grid" aria-pressed="false">Grid</button>
+              </div>
+            </div>
+          </div>
+          <script>
+            (function () {
+              var grid = document.documentElement.classList.contains('cv-grid');
+              document.querySelectorAll('.view-mode-btn').forEach(function (btn) {
+                var mode = btn.getAttribute('data-view-mode') || '';
+                var active = (mode === 'grid') === grid;
+                btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+                btn.classList.toggle('bg-white', active);
+                btn.classList.toggle('text-indigo-700', active);
+                btn.classList.toggle('shadow-sm', active);
+                btn.classList.toggle('ring-1', active);
+                btn.classList.toggle('ring-slate-200/80', active);
+                btn.classList.toggle('text-slate-600', !active);
+              });
+            })();
+          </script>
+          <p id="clinic-save-status" class="hidden rounded-lg bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-900 ring-1 ring-emerald-200/90" role="status" aria-live="polite"></p>
+        </div>
+        <p id="export-xlsx-status" class="mt-2 hidden text-right text-[11px] text-red-600" role="status"></p>
+      </header>
+
+      <div class="min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-4 py-4 sm:px-5 sm:py-5">
+    <section id="clinics-panel" class="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm">
+      <div id="leads-fragment-root">
+      <div id="clinics-view-list" class="overflow-x-auto rounded-b-xl">
+        <table class="w-full min-w-[880px] table-fixed border-separate border-spacing-0 text-left text-sm text-slate-800">
+          <colgroup>
+            <col class="w-12 sm:w-12" />
+            <col class="w-[30%] min-w-0" />
+            <col class="w-[34%] min-w-0" />
+            <col class="w-[10.5rem]" />
+            <col class="w-[6.5rem]" />
+          </colgroup>
+          <thead>
+            <tr class="border-b border-slate-200 bg-slate-50/95 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+              <th class="px-2 py-3.5 text-center sm:px-3" scope="col"><span class="sr-only">Select</span></th>
+              <th class="min-w-0 px-2 py-3.5 sm:px-4" scope="col">Lead &amp; source</th>
+              <th class="min-w-0 px-2 py-3.5 sm:px-4" scope="col">Address &amp; website</th>
+              <th class="whitespace-nowrap px-2 py-3.5 sm:px-3" scope="col">Phone</th>
+              <th class="whitespace-nowrap px-2 py-3.5 text-center sm:px-3" scope="col">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="clinics-table-body">
+            {% include "leads/partials/_leads_table_body.html" %}
+          </tbody>
+        </table>
+      </div>
+      <div id="clinics-view-grid" class="hidden border-t border-slate-100 p-4 sm:p-5">
+        <div id="clinics-grid-inner" class="leads-funnel-grid grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-[repeat(auto-fill,minmax(17rem,1fr))]">
+          {% include "leads/partials/_leads_grid_body.html" %}
+        </div>
+      </div>
+      </div>
+    </section>
+      </div>
+    </main>
+  </div>
+
+  <dialog id="clinic-edit-dialog" class="clinic-edit-dialog z-[100] w-[calc(100%-1.5rem)] max-w-lg overflow-hidden rounded-2xl border border-slate-200/90 bg-white p-0 shadow-2xl ring-1 ring-slate-900/5 backdrop:bg-slate-900/45">
+    <form id="clinic-edit-form" class="flex max-h-[min(90vh,640px)] flex-col" novalidate>
+      <div class="flex items-start justify-between gap-3 border-b border-slate-100 bg-slate-50/80 px-5 py-4">
+        <div>
+          <h2 id="clinic-edit-title" class="text-base font-semibold tracking-tight text-slate-900">Edit clinic</h2>
+          <p class="mt-0.5 text-xs text-slate-500">Updates apply to this lead in the database.</p>
+        </div>
+        <button type="button" id="clinic-edit-close-x" class="rounded-lg p-1.5 text-slate-400 transition hover:bg-white hover:text-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/40" aria-label="Close">
+          <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <div class="flex-1 space-y-3 overflow-y-auto px-5 py-4">
+        <input type="hidden" id="clinic-edit-id" name="id" value="" />
+        <p id="clinic-edit-error" class="hidden rounded-lg bg-red-50 px-3 py-2 text-xs font-medium text-red-800 ring-1 ring-red-200/80" role="alert"></p>
+        <div class="space-y-1.5">
+          <label for="clinic-edit-name" class="text-xs font-semibold text-slate-700">Business name <span class="text-red-600">*</span></label>
+          <input id="clinic-edit-name" name="name" type="text" autocomplete="organization" class="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15" />
+        </div>
+        <div class="grid gap-3 sm:grid-cols-2">
+          <div class="space-y-1.5">
+            <div class="flex items-end justify-between gap-2">
+              <span class="text-xs font-semibold text-slate-700">Phone numbers</span>
+              <button type="button" id="clinic-edit-add-phone" class="text-xs font-medium text-indigo-600 transition hover:text-indigo-500">+ Add number</button>
+            </div>
+            <div id="clinic-edit-phones-list" class="space-y-2"></div>
+            <p class="text-[10px] leading-snug text-slate-400">Default +60. Up to 8 numbers; first is primary. Spaces/dashes stripped on save.</p>
+          </div>
+          <div class="space-y-1.5">
+            <label for="clinic-edit-type" class="text-xs font-semibold text-slate-700">Category</label>
+            <select id="clinic-edit-type" name="category" class="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15">
+              <option value="unknown">Unknown</option>
+              <option value="invalid">Invalid / irrelevant</option>
+              <option value="gp">GP</option>
+              <option value="aesthetic">Aesthetic</option>
+              <option value="dental">Dental</option>
+              <option value="fitness">Fitness / gym / yoga</option>
+              <option value="cafe">Café / restaurant / F&amp;B</option>
+              <option value="retail">Retail / shop</option>
+              <option value="service">Services / other business</option>
+            </select>
+          </div>
+        </div>
+        <div class="space-y-1.5">
+          <label for="clinic-edit-address" class="text-xs font-semibold text-slate-700">Address</label>
+          <textarea id="clinic-edit-address" name="address" rows="2" class="w-full resize-y rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15"></textarea>
+        </div>
+        <div class="space-y-1.5">
+          <label for="clinic-edit-website" class="text-xs font-semibold text-slate-700">Website</label>
+          <input id="clinic-edit-website" name="website" type="text" inputmode="url" placeholder="https://…" class="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15" />
+        </div>
+        <div class="grid gap-3 sm:grid-cols-2">
+          <div class="space-y-1.5">
+            <label for="clinic-edit-search-city" class="text-xs font-semibold text-slate-700">Search city / area</label>
+            <input id="clinic-edit-search-city" name="search_city" type="text" class="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15" />
+          </div>
+          <div class="space-y-1.5">
+            <label for="clinic-edit-search-country" class="text-xs font-semibold text-slate-700">Search country</label>
+            <input id="clinic-edit-search-country" name="search_country" type="text" class="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15" />
+          </div>
+          <div class="space-y-1.5 sm:col-span-2">
+            <label for="clinic-edit-search-query" class="text-xs font-semibold text-slate-700">Maps search query</label>
+            <input id="clinic-edit-search-query" name="search_query" type="text" class="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15" />
+          </div>
+        </div>
+        <div class="flex flex-wrap gap-4 rounded-xl border border-slate-200/80 bg-slate-50/50 px-3 py-3">
+          <label class="inline-flex cursor-pointer items-center gap-2 text-sm font-medium text-slate-700">
+            <input id="clinic-edit-chain" name="is_chain" type="checkbox" class="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />
+            Chain
+          </label>
+        </div>
+        <div class="space-y-1.5">
+          <label for="clinic-edit-whatsapp" class="text-xs font-semibold text-slate-700">WhatsApp draft <span class="font-normal text-slate-400">(optional)</span></label>
+          <textarea id="clinic-edit-whatsapp" name="whatsapp_draft" rows="3" placeholder="Personalized opening message as a potential customer…" class="w-full resize-y rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15"></textarea>
+        </div>
+      </div>
+      <div class="flex flex-wrap items-center justify-end gap-2 border-t border-slate-100 bg-slate-50/50 px-5 py-3">
+        <button type="button" id="clinic-edit-cancel" class="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/30">Cancel</button>
+        <button type="submit" id="clinic-edit-save" class="inline-flex items-center rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-md shadow-indigo-600/20 transition hover:bg-indigo-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60">
+          <span id="clinic-edit-save-label">Save changes</span>
+          <svg id="clinic-edit-save-spinner" class="ml-2 hidden h-4 w-4 animate-spin text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+        </button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="lead-create-dialog" class="z-[100] w-[calc(100%-1.5rem)] max-w-lg overflow-hidden rounded-2xl border border-slate-200/90 bg-white p-0 shadow-2xl ring-1 ring-slate-900/5 backdrop:bg-slate-900/45">
+    <form id="lead-create-form" class="flex max-h-[min(90vh,520px)] flex-col">
+      <div class="flex items-start justify-between gap-3 border-b border-slate-100 bg-slate-50/80 px-5 py-4">
+        <div>
+          <h2 class="text-base font-semibold tracking-tight text-slate-900">Add lead</h2>
+          <p class="mt-0.5 text-xs text-slate-500">Creates a new row in the <strong class="font-medium text-slate-700">current folder tab</strong> (no Serper or AI).</p>
+        </div>
+        <button type="button" id="lead-create-close-x" class="rounded-lg p-1.5 text-slate-400 transition hover:bg-white hover:text-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/40" aria-label="Close">
+          <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <div class="flex-1 space-y-3 overflow-y-auto px-5 py-4">
+        <p id="lead-create-error" class="hidden rounded-lg bg-red-50 px-3 py-2 text-xs font-medium text-red-800 ring-1 ring-red-200/80" role="alert"></p>
+        <div class="space-y-1.5">
+          <label for="lead-create-name" class="text-xs font-semibold text-slate-700">Business name <span class="text-red-600">*</span></label>
+          <input id="lead-create-name" name="name" type="text" required autocomplete="organization" class="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15" />
+        </div>
+        <div class="grid gap-3 sm:grid-cols-2">
+          <div class="space-y-1.5">
+            <div class="flex items-end justify-between gap-2">
+              <span class="text-xs font-semibold text-slate-700">Phone numbers</span>
+              <button type="button" id="lead-create-add-phone" class="text-xs font-medium text-indigo-600 transition hover:text-indigo-500">+ Add number</button>
+            </div>
+            <div id="lead-create-phones-list" class="space-y-2"></div>
+            <p class="text-[10px] leading-snug text-slate-400">Default +60. Up to 8 numbers. Spaces/dashes stripped on save.</p>
+          </div>
+          <div class="space-y-1.5">
+            <label for="lead-create-type" class="text-xs font-semibold text-slate-700">Category</label>
+            <select id="lead-create-type" name="category" class="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15">
+              <option value="unknown">Unknown</option>
+              <option value="invalid">Invalid / irrelevant</option>
+              <option value="gp">GP</option>
+              <option value="aesthetic">Aesthetic</option>
+              <option value="dental">Dental</option>
+              <option value="fitness">Fitness / gym / yoga</option>
+              <option value="cafe">Café / restaurant / F&amp;B</option>
+              <option value="retail">Retail / shop</option>
+              <option value="service">Services / other business</option>
+            </select>
+          </div>
+        </div>
+        <div class="space-y-1.5">
+          <label for="lead-create-address" class="text-xs font-semibold text-slate-700">Address</label>
+          <textarea id="lead-create-address" name="address" rows="2" class="w-full resize-y rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15"></textarea>
+        </div>
+        <div class="space-y-1.5">
+          <label for="lead-create-website" class="text-xs font-semibold text-slate-700">Website</label>
+          <input id="lead-create-website" name="website" type="text" inputmode="url" placeholder="https://…" class="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15" />
+        </div>
+      </div>
+      <div class="flex flex-wrap items-center justify-end gap-2 border-t border-slate-100 bg-slate-50/50 px-5 py-3">
+        <button type="button" id="lead-create-cancel" class="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/30">Cancel</button>
+        <button type="submit" id="lead-create-submit" class="inline-flex items-center rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-md shadow-indigo-600/20 transition hover:bg-indigo-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60">
+          <span id="lead-create-submit-label">Create lead</span>
+          <svg id="lead-create-submit-spinner" class="ml-2 hidden h-4 w-4 animate-spin text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+        </button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="lead-conversation-log-dialog" class="z-[100] w-[calc(100%-1.5rem)] max-w-lg overflow-hidden rounded-2xl border border-slate-200/90 bg-white p-0 shadow-2xl ring-1 ring-slate-900/5 backdrop:bg-slate-900/45">
+    <form id="lead-conversation-log-form" class="flex max-h-[min(90vh,480px)] flex-col">
+      <div class="flex items-start justify-between gap-3 border-b border-slate-100 bg-slate-50/80 px-5 py-4">
+        <div>
+          <h2 class="text-base font-semibold tracking-tight text-slate-900">Conversation log</h2>
+          <p class="mt-0.5 text-xs text-slate-500">Record a call or chat outcome for this lead.</p>
+        </div>
+        <button type="button" id="lead-conversation-log-close-x" class="rounded-lg p-1.5 text-slate-400 transition hover:bg-white hover:text-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/40" aria-label="Close">
+          <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <div class="flex-1 space-y-3 overflow-y-auto px-5 py-4">
+        <input type="hidden" id="lead-conversation-log-id" value="" />
+        <p id="lead-conversation-log-error" class="hidden rounded-lg bg-red-50 px-3 py-2 text-xs font-medium text-red-800 ring-1 ring-red-200/80" role="alert"></p>
+        <p id="lead-conversation-log-ok" class="hidden rounded-lg bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-800 ring-1 ring-emerald-200/80" role="status" aria-live="polite"></p>
+        <div class="space-y-1.5 border-b border-slate-100 pb-3">
+          <p class="text-xs font-semibold text-slate-700">Recent logs</p>
+          <p id="lead-conversation-history-empty" class="text-xs text-slate-500">No conversation logs yet.</p>
+          <div id="lead-conversation-history-list" class="max-h-44 space-y-2 overflow-y-auto pr-1"></div>
+        </div>
+        <div class="space-y-1.5">
+          <label for="lead-conversation-date" class="text-xs font-semibold text-slate-700">Date <span class="text-red-600">*</span></label>
+          <input id="lead-conversation-date" type="date" class="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15" />
+        </div>
+        <div class="space-y-1.5">
+          <label for="lead-conversation-remarks" class="text-xs font-semibold text-slate-700">Remarks <span class="text-red-600">*</span></label>
+          <textarea id="lead-conversation-remarks" rows="5" placeholder="Example: Asked about pricing package, requested follow-up next week." class="w-full resize-y rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15"></textarea>
+        </div>
+      </div>
+      <div class="flex flex-wrap items-center justify-end gap-2 border-t border-slate-100 bg-slate-50/50 px-5 py-3">
+        <button type="button" id="lead-conversation-log-cancel" class="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/30">Cancel</button>
+        <button type="submit" id="lead-conversation-log-submit" class="inline-flex items-center rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-md shadow-indigo-600/20 transition hover:bg-indigo-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60">
+          <span id="lead-conversation-log-submit-label">Save log</span>
+          <svg id="lead-conversation-log-submit-spinner" class="ml-2 hidden h-4 w-4 animate-spin text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+        </button>
+      </div>
+    </form>
+  </dialog>
+
+  <template id="manual-phone-row-template">
+    <div class="manual-phone-row flex items-start gap-1.5">
+      <div class="flex min-w-0 flex-1 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm focus-within:border-indigo-500 focus-within:ring-2 focus-within:ring-indigo-500/15">
+        <span class="flex shrink-0 items-center border-r border-slate-200 bg-slate-50 px-2.5 text-sm font-medium tabular-nums text-slate-600">+60</span>
+        <input type="tel" class="manual-phone-local min-w-0 flex-1 border-0 bg-transparent py-2 pr-3 pl-2 text-sm outline-none focus:ring-0" inputmode="numeric" autocomplete="tel-national" placeholder="12-345 6789" />
+      </div>
+      <button type="button" class="manual-phone-remove flex h-[42px] w-9 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-lg leading-none text-slate-500 transition hover:border-red-200 hover:bg-red-50 hover:text-red-600" title="Remove number" aria-label="Remove number">&times;</button>
+    </div>
+  </template>
+
+  <dialog id="bulk-manual-dialog" class="z-[100] w-[calc(100%-1.5rem)] max-w-md overflow-hidden rounded-2xl border border-slate-200/90 bg-white p-0 shadow-2xl ring-1 ring-slate-900/5 backdrop:bg-slate-900/45">
+    <form id="bulk-manual-form" class="flex max-h-[min(90vh,480px)] flex-col">
+      <div class="flex items-start justify-between gap-3 border-b border-slate-100 bg-slate-50/80 px-5 py-4">
+        <div>
+          <h2 class="text-base font-semibold tracking-tight text-slate-900">Set category</h2>
+          <p class="mt-0.5 text-xs text-slate-500">Sets <strong class="font-medium text-slate-700">category</strong> and <strong class="font-medium text-slate-700">is processed</strong> for selected leads. No Serper calls.</p>
+        </div>
+        <button type="button" id="bulk-manual-close-x" class="rounded-lg p-1.5 text-slate-400 transition hover:bg-white hover:text-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/40" aria-label="Close">
+          <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <div class="flex-1 space-y-3 overflow-y-auto px-5 py-4">
+        <p id="bulk-manual-error" class="hidden rounded-lg bg-red-50 px-3 py-2 text-xs font-medium text-red-800 ring-1 ring-red-200/80" role="alert"></p>
+        <p id="bulk-manual-count" class="text-xs text-slate-600"></p>
+        <div class="space-y-1.5">
+          <label for="bulk-manual-category" class="text-xs font-semibold text-slate-700">Category</label>
+          <select id="bulk-manual-category" class="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15">
+            <option value="unknown">Unknown</option>
+            <option value="invalid">Invalid / irrelevant</option>
+            <option value="gp">GP</option>
+            <option value="aesthetic">Aesthetic</option>
+            <option value="dental">Dental</option>
+            <option value="fitness">Fitness / gym / yoga</option>
+            <option value="cafe">Café / restaurant / F&amp;B</option>
+            <option value="retail">Retail / shop</option>
+            <option value="service">Services / other business</option>
+          </select>
+        </div>
+      </div>
+      <div class="flex flex-wrap items-center justify-end gap-2 border-t border-slate-100 bg-slate-50/50 px-5 py-3">
+        <button type="button" id="bulk-manual-cancel" class="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/30">Cancel</button>
+        <button type="submit" id="bulk-manual-submit" class="inline-flex items-center rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-md shadow-indigo-600/20 transition hover:bg-indigo-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60">
+          <span id="bulk-manual-submit-label">Apply to selected</span>
+          <svg id="bulk-manual-spinner" class="ml-2 hidden h-4 w-4 animate-spin text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+        </button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="lead-group-move-menu" class="fixed z-[200] hidden w-[min(calc(100vw-1.5rem),17.5rem)] rounded-xl border border-slate-200/95 bg-white py-1 shadow-xl shadow-slate-900/15 ring-1 ring-slate-900/5" role="menu" aria-hidden="true" aria-label="Move leads to folder">
+    <p class="border-b border-slate-100 px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-slate-400">Move to…</p>
+    <p id="lead-group-move-menu-error" class="hidden border-b border-red-100 bg-red-50 px-3 py-2 text-xs font-medium text-red-800" role="alert"></p>
+    <p id="lead-group-move-menu-count" class="border-b border-slate-50 px-3 py-1.5 text-[11px] text-slate-500"></p>
+    <div class="max-h-[min(55vh,18rem)] overflow-y-auto py-0.5">
+      <button type="button" role="menuitem" class="lead-group-move-pick flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm font-medium text-slate-800 transition hover:bg-violet-50/90 focus:bg-violet-50/90 focus:outline-none disabled:cursor-wait disabled:opacity-60" data-group-id="">
+        <svg class="h-5 w-5 shrink-0 text-red-500" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"/></svg>
+        <span class="min-w-0 flex-1">Uncategorized</span>
+      </button>
+      <div id="lead-group-move-menu-groups">
+        {% for g in lead_groups %}
+        <button type="button" role="menuitem" class="lead-group-move-pick flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm font-medium text-slate-800 transition hover:bg-violet-50/90 focus:bg-violet-50/90 focus:outline-none disabled:cursor-wait disabled:opacity-60" data-group-id="{{ g.pk }}">
+          <svg class="h-5 w-5 shrink-0 text-amber-500" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z"/></svg>
+          <span class="min-w-0 flex-1 truncate">{{ g.name }}</span>
+        </button>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  <div id="bulk-action-dock" class="bulk-action-dock pointer-events-none fixed bottom-6 left-1/2 z-[90] -translate-x-1/2 opacity-0 transition-all duration-300 ease-out" hidden aria-hidden="true" role="region" aria-label="Bulk actions for selected leads">
+    <div class="pointer-events-auto flex items-center gap-3 rounded-2xl border border-slate-200/90 bg-white/95 py-2 pl-3 pr-2 shadow-2xl shadow-slate-900/10 ring-1 ring-slate-900/5 backdrop-blur-md sm:pl-4 sm:pr-3">
+      <span id="bulk-action-dock-count" class="shrink-0 text-xs font-semibold tabular-nums text-slate-600">0 selected</span>
+      <span class="h-5 w-px shrink-0 bg-slate-200" aria-hidden="true"></span>
+      <button type="button" id="bulk-wa-queue-btn"
+        class="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-emerald-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40 disabled:cursor-not-allowed disabled:opacity-60"
+        title="Enqueue selected leads for WhatsApp outreach">
+        <svg class="h-4 w-4 shrink-0" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.435 9.884-9.881 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z"/></svg>
+        Push to WhatsApp queue
+      </button>
+      <button type="button" id="bulk-choose-batch-btn" hidden
+        class="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-emerald-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40 disabled:cursor-not-allowed disabled:opacity-60"
+        title="Assign selected leads to a WhatsApp send batch">
+        <svg class="h-4 w-4 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+        Choose batch
+      </button>
+    </div>
+  </div>
+
+  <dialog id="choose-batch-dialog" class="z-[100] w-[calc(100%-1.5rem)] max-w-md overflow-hidden rounded-2xl border border-slate-200/90 bg-white p-0 shadow-2xl ring-1 ring-slate-900/5 backdrop:bg-slate-900/45">
+    <form id="choose-batch-form" class="flex max-h-[min(90vh,540px)] flex-col">
+      <div class="flex items-start justify-between gap-3 border-b border-slate-100 bg-slate-50/80 px-5 py-4">
+        <div>
+          <h2 class="text-base font-semibold tracking-tight text-slate-900">Choose batch</h2>
+          <p class="mt-0.5 text-xs text-slate-500"><span id="choose-batch-count">0</span> lead(s) will be assigned to the selected batch.</p>
+        </div>
+        <button type="button" id="choose-batch-close-x" class="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600" aria-label="Close">
+          <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <div class="flex-1 space-y-3 overflow-y-auto px-5 py-4">
+        <p id="choose-batch-error" class="hidden rounded-lg bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700 ring-1 ring-rose-200/70" role="alert"></p>
+        <div class="grid gap-1">
+          <label for="choose-batch-select" class="text-xs font-semibold text-slate-600">Batch</label>
+          <select id="choose-batch-select" class="h-10 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/15">
+            <option value="">Loading…</option>
+          </select>
+        </div>
+        <div id="choose-batch-new-fields" class="hidden space-y-3 rounded-xl border border-slate-100 bg-slate-50/60 p-3">
+          <div class="grid gap-1">
+            <label for="choose-batch-template" class="text-xs font-semibold text-slate-600">Outbound template</label>
+            <select id="choose-batch-template" class="h-10 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-mono shadow-sm outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/15"></select>
+          </div>
+          <div class="grid gap-3 sm:grid-cols-2">
+            <div class="grid gap-1">
+              <label for="choose-batch-date" class="text-xs font-semibold text-slate-600">Date</label>
+              <input id="choose-batch-date" type="date" class="h-10 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/15" />
+            </div>
+            <div class="grid gap-1">
+              <label for="choose-batch-time" class="text-xs font-semibold text-slate-600">Time</label>
+              <input id="choose-batch-time" type="time" class="h-10 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/15" />
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="flex flex-wrap items-center justify-end gap-2 border-t border-slate-100 bg-slate-50/80 px-5 py-3">
+        <button type="button" id="choose-batch-cancel" class="inline-flex h-9 items-center rounded-lg border border-slate-200 px-3.5 text-xs font-semibold text-slate-600 hover:bg-slate-100">Cancel</button>
+        <button type="submit" id="choose-batch-submit" class="inline-flex h-9 items-center rounded-lg bg-emerald-600 px-4 text-xs font-semibold text-white shadow-sm hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-60">Assign to batch</button>
+      </div>
+    </form>
+  </dialog>
+</div>

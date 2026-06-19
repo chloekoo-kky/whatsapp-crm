@@ -1,0 +1,21 @@
+<div id="outbound-template-field"{% if oob %} hx-swap-oob="true"{% endif %}>
+  <div class="min-w-0">
+    <label for="outbound-template-select" class="text-xs font-bold uppercase tracking-wide text-slate-500">Outbound Template</label>
+    <select
+      id="outbound-template-select"
+      name="outbound_template_name"
+      class="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-mono text-slate-800 shadow-sm outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/15">
+      {% for value, label in meta_template_choices %}
+      <option value="{{ value }}"{% if config.outbound_template_name == value or not config.outbound_template_name and value == "just_to_say_hi" %} selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <p class="mt-2 text-xs text-slate-500">
+    This Meta template is used for the scheduled batch below.
+    {% if meta_templates_synced_at %}
+    <span class="text-slate-400">· Synced {{ meta_templates_synced_at|date:"M j, g:i A" }}</span>
+    {% else %}
+    <span class="text-slate-400">· Use “Update” in the Active Meta Template panel to load templates from Meta</span>
+    {% endif %}
+  </p>
+</div>

@@ -1,0 +1,252 @@
+<script>
+(function () {
+  var CLEAR_POLL_SUPPRESS_MS = 12000;
+  var WA_ACTIVITY_LOG_POLL_KEY = "clinic_crm_wa_activity_log_poll";
+  var WA_TOAST_DISMISS_MS = 4200;
+
+  function showWaConfigToast() {
+    var toast = document.getElementById("wa-config-toast");
+    if (!toast) return;
+    toast.classList.remove("wa-toast--leaving");
+    window.requestAnimationFrame(function () {
+      toast.classList.add("wa-toast--visible");
+    });
+    if (toast.getAttribute("data-auto-dismiss") !== "1") return;
+    if (toast._dismissTimer) window.clearTimeout(toast._dismissTimer);
+    toast._dismissTimer = window.setTimeout(dismissWaConfigToast, WA_TOAST_DISMISS_MS);
+  }
+
+  function dismissWaConfigToast() {
+    var toast = document.getElementById("wa-config-toast");
+    var slot = document.getElementById("wa-config-toast-slot");
+    if (!toast || !slot) return;
+    if (toast._dismissTimer) {
+      window.clearTimeout(toast._dismissTimer);
+      toast._dismissTimer = null;
+    }
+    toast.classList.remove("wa-toast--visible");
+    toast.classList.add("wa-toast--leaving");
+    window.setTimeout(function () {
+      if (slot.contains(toast)) slot.innerHTML = "";
+    }, 280);
+  }
+
+  window.__showWaConfigToast = showWaConfigToast;
+  window.__dismissWaConfigToast = dismissWaConfigToast;
+
+  function readGatewayStatus() {
+    var statusPanel = document.getElementById("wa-server-status-panel");
+    if (statusPanel && statusPanel.getAttribute("data-wa-gateway-status")) {
+      return statusPanel.getAttribute("data-wa-gateway-status");
+    }
+    var panel = document.getElementById("live-activity-log-panel");
+    if (panel && panel.getAttribute("data-gateway-status")) {
+      return panel.getAttribute("data-gateway-status");
+    }
+    return "UNCONFIGURED";
+  }
+
+  function activityLogBaseUrl() {
+    var panel = document.getElementById("live-activity-log-panel");
+    if (!panel) return "";
+    var hxGet = panel.getAttribute("hx-get") || "";
+    if (hxGet) {
+      return hxGet.split("?")[0];
+    }
+    return "";
+  }
+
+  function isWhatsappWorkspaceVisible() {
+    var panel = document.getElementById("workspace-panel-whatsapp");
+    return panel && !panel.hasAttribute("hidden");
+  }
+
+  function isWaActivityLogPollingEnabled() {
+    var toggle = document.getElementById("wa-activity-log-poll-toggle");
+    if (toggle) return toggle.checked;
+    try {
+      var stored = localStorage.getItem(WA_ACTIVITY_LOG_POLL_KEY);
+      if (stored !== null) return stored === "1" || stored === "true";
+    } catch (e) { /* ignore */ }
+    return true;
+  }
+
+  function initWaActivityLogPollToggle() {
+    var toggle = document.getElementById("wa-activity-log-poll-toggle");
+    if (!toggle) return;
+    try {
+      var stored = localStorage.getItem(WA_ACTIVITY_LOG_POLL_KEY);
+      if (stored !== null) {
+        toggle.checked = stored === "1" || stored === "true";
+      }
+    } catch (e) { /* ignore */ }
+  }
+
+  function shouldPollActivityLog(panel) {
+    if (!panel) return false;
+    if (!isWhatsappWorkspaceVisible()) return false;
+    if (!isWaActivityLogPollingEnabled()) return false;
+    if (panel.getAttribute("data-wa-poll-suppressed") === "1") return false;
+    if (panel.getAttribute("data-wa-paused") !== "0") return false;
+    return panel.getAttribute("data-gateway-status") === "CONNECTED";
+  }
+
+  function updateWaActivityLogPollStatus(panel) {
+    var el = document.getElementById("wa-activity-log-poll-status");
+    if (!el) return;
+    if (!panel) {
+      el.textContent = "polling off";
+      el.className = "text-[10px] text-slate-500";
+      return;
+    }
+    var paused = panel.getAttribute("data-wa-paused") === "1";
+    var connected = panel.getAttribute("data-gateway-status") === "CONNECTED";
+    var enabled = isWaActivityLogPollingEnabled();
+    var visible = isWhatsappWorkspaceVisible();
+    if (paused) {
+      el.textContent = "paused — polling off";
+      el.className = "text-[10px] text-amber-400/90";
+    } else if (!visible) {
+      el.textContent = "polling off";
+      el.className = "text-[10px] text-slate-500";
+    } else if (!enabled) {
+      el.textContent = "polling off";
+      el.className = "text-[10px] text-slate-500";
+    } else if (!connected) {
+      el.textContent = "polling off";
+      el.className = "text-[10px] text-slate-500";
+    } else if (shouldPollActivityLog(panel)) {
+      el.textContent = "live · 5s";
+      el.className = "text-[10px] text-green-400/90";
+    } else {
+      el.textContent = "polling off";
+      el.className = "text-[10px] text-slate-500";
+    }
+  }
+
+  function abortActivityLogPolling(panel) {
+    if (!panel || !window.htmx) return;
+    panel.removeAttribute("hx-trigger");
+    htmx.trigger(panel, "htmx:abort");
+  }
+
+  function syncLiveActivityLogPolling(panel) {
+    if (!panel || !window.htmx) return;
+
+    abortActivityLogPolling(panel);
+
+    if (shouldPollActivityLog(panel)) {
+      panel.setAttribute("hx-trigger", "every 5s");
+    }
+
+    htmx.process(panel);
+    updateWaActivityLogPollStatus(panel);
+  }
+
+  function syncLiveActivityLogPanel() {
+    var panel = document.getElementById("live-activity-log-panel");
+    if (!panel || !window.htmx) return;
+
+    var baseUrl = activityLogBaseUrl();
+    if (!baseUrl) return;
+
+    var gatewayStatus = readGatewayStatus();
+    var connected = gatewayStatus === "CONNECTED";
+    var params = ["fragment=list"];
+    if (connected) params.push("connected=1");
+    var url = baseUrl + "?" + params.join("&");
+
+    panel.setAttribute("data-gateway-status", gatewayStatus);
+    panel.setAttribute("data-wa-connected", connected ? "1" : "0");
+    panel.setAttribute("hx-get", url);
+    panel.setAttribute("hx-target", "#live-activity-log-list");
+    panel.setAttribute("hx-swap", "innerHTML");
+
+    initWaActivityLogPollToggle();
+    syncLiveActivityLogPolling(panel);
+  }
+
+  function suppressActivityLogPolling(panel) {
+    if (!panel) return;
+    panel.setAttribute("data-wa-poll-suppressed", "1");
+    abortActivityLogPolling(panel);
+    updateWaActivityLogPollStatus(panel);
+    window.setTimeout(function () {
+      panel.removeAttribute("data-wa-poll-suppressed");
+      syncLiveActivityLogPolling(panel);
+    }, CLEAR_POLL_SUPPRESS_MS);
+  }
+
+  window.__setWaActivityLogConnected = syncLiveActivityLogPanel;
+  window.__syncWaActivityLogPolling = syncLiveActivityLogPanel;
+  window.__stopWaActivityLogPolling = function () {
+    var panel = document.getElementById("live-activity-log-panel");
+    abortActivityLogPolling(panel);
+    updateWaActivityLogPollStatus(panel);
+  };
+
+  function bindWaDashboardScripts() {
+    initWaActivityLogPollToggle();
+    syncLiveActivityLogPanel();
+
+    var activityPanel = document.getElementById("live-activity-log-panel");
+    if (activityPanel && window.htmx) {
+      window.htmx.process(activityPanel);
+    }
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", bindWaDashboardScripts);
+  } else {
+    bindWaDashboardScripts();
+  }
+
+  document.body.addEventListener("change", function (e) {
+    var target = e.target;
+    if (!target || target.id !== "wa-activity-log-poll-toggle") return;
+    try {
+      localStorage.setItem(WA_ACTIVITY_LOG_POLL_KEY, target.checked ? "1" : "0");
+    } catch (err) { /* ignore */ }
+    syncLiveActivityLogPolling(document.getElementById("live-activity-log-panel"));
+  });
+
+  function refreshSidebarPendingBadge() {
+    var badge = document.getElementById("wa-sidebar-pending-badge");
+    if (!badge || !window.htmx) return;
+    var url = badge.getAttribute("hx-get");
+    if (!url) return;
+    htmx.ajax("GET", url, { target: "#wa-sidebar-pending-badge", swap: "innerHTML" });
+  }
+
+  document.body.addEventListener("waActivityLogCleared", function () {
+    var panel = document.getElementById("live-activity-log-panel");
+    if (panel) suppressActivityLogPolling(panel);
+    refreshSidebarPendingBadge();
+  });
+
+  document.body.addEventListener("waSidebarBadgeRefresh", function () {
+    refreshSidebarPendingBadge();
+  });
+
+  document.body.addEventListener("htmx:afterSwap", function (evt) {
+    var target = evt.detail && evt.detail.target;
+    if (!target) return;
+        if (target.id === "wa-config-toast-slot") {
+      showWaConfigToast();
+    }
+    if (target.id === "outbound-template-field") {
+      if (window.htmx) window.htmx.process(target);
+    }
+    if (target.id === "wa-server-status-panel") {
+      syncLiveActivityLogPanel();
+    }
+    if (
+      target.id === "live-activity-log-panel"
+      || target.id === "wa-config-toast-slot"
+    ) {
+      initWaActivityLogPollToggle();
+      syncLiveActivityLogPolling(document.getElementById("live-activity-log-panel"));
+    }
+  });
+})();
+</script>

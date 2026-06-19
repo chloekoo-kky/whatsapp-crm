@@ -1,0 +1,59 @@
+{# HTMX partial: sliding chat inbox for active Meta Cloud API conversations #}
+<div class="chat-inbox-root pointer-events-auto fixed inset-0 z-[80] flex justify-end" role="dialog" aria-modal="true" aria-labelledby="chat-inbox-title-{{ lead.id }}">
+  <button type="button"
+    class="chat-inbox-backdrop absolute inset-0 bg-slate-900/40 backdrop-blur-[2px] transition-opacity"
+    aria-label="Close chat"
+    onclick="if(window.__stopChatInboxPolling)window.__stopChatInboxPolling();document.getElementById('chat-modal-container').innerHTML=''"></button>
+
+  <aside class="chat-inbox-panel relative flex h-full w-full max-w-md flex-col border-l border-slate-200/90 bg-white shadow-2xl shadow-slate-900/10 animate-[chatSlideIn_220ms_ease-out]">
+    <header class="flex shrink-0 items-start justify-between gap-3 border-b border-slate-200/90 bg-gradient-to-r from-emerald-50/90 via-white to-amber-50/60 px-4 py-4">
+      <div class="min-w-0">
+        <p class="text-[10px] font-bold uppercase tracking-wide text-emerald-700">Active Chat</p>
+        <h2 id="chat-inbox-title-{{ lead.id }}" class="mt-0.5 truncate text-base font-semibold text-slate-900">
+          Chatting with {{ lead.name }}
+        </h2>
+        <p class="mt-1 truncate text-sm text-slate-500">({{ phone_display }})</p>
+      </div>
+      <button type="button"
+        class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/50"
+        aria-label="Close chat panel"
+        onclick="if(window.__stopChatInboxPolling)window.__stopChatInboxPolling();document.getElementById('chat-modal-container').innerHTML=''">
+        <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+      </button>
+    </header>
+
+    <div class="flex min-h-0 flex-1 flex-col bg-slate-50/80">
+      <div
+        id="chat-messages-feed"
+        class="chat-inbox-messages flex-1 space-y-3 overflow-y-auto px-4 py-4"
+        data-chat-poll-url="{% url 'chat_inbox' pk=lead.id %}?fragment=messages">
+        {% include "leads/partials/_chat_inbox_messages.html" %}
+      </div>
+
+      <footer class="shrink-0 border-t border-slate-200/90 bg-white px-3 py-3">
+        <div id="chat-inbox-send-error-{{ lead.id }}" class="mb-2 empty:hidden"></div>
+        <form
+          id="chat-inbox-form-{{ lead.id }}"
+          class="flex items-end gap-2"
+          hx-post="{% url 'send_free_text' pk=lead.id %}"
+          hx-target="#chat-messages-feed"
+          hx-swap="beforeend"
+          hx-on::after-request="if(event.detail.successful){this.reset();document.querySelectorAll('#chat-messages-feed .chat-inbox-empty-hint').forEach(function(el){el.remove()});if(window.__scrollChatInboxToBottom)window.__scrollChatInboxToBottom(document.getElementById('chat-messages-feed'));document.getElementById('chat-inbox-send-error-{{ lead.id }}').innerHTML='';}else{document.getElementById('chat-inbox-send-error-{{ lead.id }}').innerHTML=event.detail.xhr.responseText;}">
+          <label class="sr-only" for="chat-inbox-input-{{ lead.id }}">Free-form reply</label>
+          <textarea id="chat-inbox-input-{{ lead.id }}"
+            name="message"
+            rows="1"
+            required
+            placeholder="Type a free-form text response (Meta 24h window active)..."
+            class="min-h-[2.75rem] max-h-28 flex-1 resize-none rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-700 placeholder:text-slate-400 focus:border-sky-300 focus:outline-none focus:ring-2 focus:ring-sky-400/25"
+            hx-on:keydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();this.form.requestSubmit()}"></textarea>
+          <button type="submit"
+            class="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-sky-500 text-white shadow-sm transition hover:bg-sky-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/60 disabled:cursor-wait disabled:opacity-60"
+            aria-label="Send message">
+            <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5"/></svg>
+          </button>
+        </form>
+      </footer>
+    </div>
+  </aside>
+</div>

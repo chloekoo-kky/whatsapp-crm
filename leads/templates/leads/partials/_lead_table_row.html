@@ -1,0 +1,126 @@
+{% load clinic_display %}
+{% with ck=c.name|lower %}
+<tr class="clinic-row clinic-row--selectable cursor-pointer border-b border-slate-100 transition-colors hover:bg-slate-50/90 {% if ck in multi_location_brands %}clinic-row--brand-group{% endif %}"
+  data-clinic-id="{{ c.id }}" aria-selected="false"
+  data-is-chain="{% if c.is_chain %}1{% else %}0{% endif %}"
+  data-category="{{ c.category }}"
+  data-very-important="{% if c.is_very_important %}1{% else %}0{% endif %}"
+  data-search-base="{{ c.name }} {{ c.address }} {{ c.dashboard_phones|join:' ' }} {{ c.website }} {{ c.shop_keyword }} {{ c.search_city|default_if_none:''|default:'' }} {{ c.search_country|default_if_none:''|default:'' }} {{ c.search_query|default_if_none:''|default:'' }}"
+  data-search="{{ c.name }} {{ c.address }} {{ c.dashboard_phones|join:' ' }} {{ c.website }} {{ c.shop_keyword }} {{ c.category }} {{ c.search_city|default_if_none:''|default:'' }} {{ c.search_country|default_if_none:''|default:'' }} {{ c.search_query|default_if_none:''|default:'' }} {% if c.is_chain %}chain{% endif %} {% if c.is_very_important %}important{% endif %}">
+  <td class="align-top px-2 py-3.5 text-center sm:px-3">
+    <div hidden class="whatsapp-draft-store">{{ c.whatsapp_draft }}</div>
+    <input type="checkbox" class="clinic-select-cb relative top-0.5 h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" value="{{ c.id }}" title="Select row" aria-label="Select {{ c.name }}" />
+  </td>
+  <td class="min-w-0 align-top px-2 py-3.5 sm:px-4">
+    <div class="clinic-type-cell mb-1.5 space-y-1">
+      {{ c.category|category_badge }}
+    </div>
+    <div class="clinic-name-cell-inner">
+      <a href="{{ c|google_maps_url }}" class="clinic-name-link text-sm font-bold text-slate-900 underline decoration-slate-300 decoration-1 underline-offset-2 transition hover:text-indigo-600 hover:decoration-indigo-300" target="_blank" rel="noopener" title="Open in Google Maps">
+        {{ c.name }}
+        {% if c.is_chain %}{% if c.dashboard_location_suffix %}<span class="text-xs text-gray-400">(@ {{ c.dashboard_location_suffix }})</span>{% endif %}{% endif %}
+      </a>
+    </div>
+    <p class="clinic-search-inner clinic-source-line mt-1 text-[11px] leading-snug text-slate-500">
+      {% with city=c.search_city|default_if_none:""|default:"" ctry=c.search_country|default_if_none:""|default:"" kw=c.shop_keyword|default_if_none:""|default:"" q=c.search_query|default_if_none:""|default:"" %}
+      {% if city or ctry or kw or q %}
+        {% if city %}{{ city }}{% endif %}
+        {% if ctry %}{% if city %} <span class="text-slate-400">/</span> {% endif %}{{ ctry }}{% endif %}
+        {% if kw %}{% if city or ctry %} <span class="text-slate-400">/</span> {% endif %}{{ kw }}{% endif %}
+        {% if q %}{% if city or ctry or kw %} <span class="text-slate-400">/</span> {% endif %}{{ q }}{% endif %}
+      {% else %}
+        <span class="text-slate-400">—</span>
+      {% endif %}
+      {% endwith %}
+    </p>
+    <p class="clinic-branches-line mt-1 text-[11px] leading-snug text-slate-600{% if c.dashboard_same_brand_count < 2 and not c.location_count_estimate %} hidden{% endif %}">
+      {% if c.dashboard_same_brand_count >= 2 %}
+        {{ c.dashboard_same_brand_count }} locations in CRM
+      {% elif c.location_count_estimate %}
+        ~{{ c.location_count_estimate }} branches <span class="text-slate-400">(estimate)</span>
+      {% endif %}
+    </p>
+    <p class="clinic-created-line mt-1 flex items-center gap-1 text-[11px] leading-snug text-slate-400" title="Date this lead was created">
+      <svg class="h-3.5 w-3.5 shrink-0 text-slate-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 012.25-2.25h13.5A2.25 2.25 0 0121 7.5v11.25m-18 0A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75m-18 0V11.25A2.25 2.25 0 015.25 9h13.5A2.25 2.25 0 0121 11.25v7.5"/></svg>
+      <span>Created {{ c.created_at|date:"M j, Y · g:i A" }}</span>
+    </p>
+    {% with batches=c.whatsapp_batches.all %}
+    {% if batches %}
+    <div class="clinic-batch-lines mt-1 flex flex-wrap items-center gap-1">
+      {% for b in batches %}
+        {% if b.status == 'pending' %}
+        <span class="clinic-batch-line inline-flex items-center gap-1 rounded-md bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold leading-snug text-emerald-700 ring-1 ring-emerald-200/70" title="Assigned to a scheduled WhatsApp batch">
+          <svg class="h-3 w-3 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+          <span>Batch · {{ b.scheduled_at|date:"M j, g:i A" }}</span>
+        </span>
+        {% elif b.status == 'completed' %}
+        <span class="clinic-batch-line inline-flex items-center gap-1 rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-semibold leading-snug text-slate-500 ring-1 ring-slate-200/80" title="Sent in a completed WhatsApp batch">
+          <svg class="h-3 w-3 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5"/></svg>
+          <span>Sent · {{ b.scheduled_at|date:"M j, g:i A" }}</span>
+        </span>
+        {% endif %}
+      {% endfor %}
+    </div>
+    {% endif %}
+    {% endwith %}
+  </td>
+  <td class="clinic-contact-cell align-top px-2 py-3.5 sm:px-4">
+    <button type="button"
+      class="clinic-address-inner address-copy-trigger relative z-0 block w-full max-w-full cursor-copy select-none rounded-lg border-0 bg-transparent p-0 text-left whitespace-normal break-words text-sm leading-snug text-slate-800 line-clamp-4 transition hover:bg-slate-100/90 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/35 disabled:cursor-not-allowed disabled:text-slate-400 disabled:hover:bg-transparent"
+      data-clinic-name="{{ c.name|default_if_none:''|escape }}"
+      data-address-copy="{{ c.address|default_if_none:''|escape }}"
+      title="{% if c.name or c.address %}Click to copy name &amp; address{% else %}Nothing to copy{% endif %}"
+      {% if not c.name and not c.address %}disabled{% endif %}>{{ c.address|default:"—" }}</button>
+    <p class="clinic-website-line mt-2 text-xs leading-snug{% if not c.website %} hidden{% endif %}">
+      {% if c.website %}
+        <a href="{{ c.website }}" class="break-all text-indigo-600 underline decoration-slate-300 decoration-1 underline-offset-2 transition hover:text-indigo-500" target="_blank" rel="noopener" title="{{ c.website|escape }}">{{ c.website }}</a>
+      {% endif %}
+    </p>
+  </td>
+  <td class="clinic-phone-cell align-top px-2 py-3.5 sm:px-3">
+    <div class="clinic-phone-cell-contents">
+      <div class="space-y-1">
+        {% for p in c.dashboard_phones %}
+        <div class="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5">
+          <p class="clinic-phone-inner min-w-0 whitespace-normal break-words text-sm font-medium tabular-nums text-slate-800">{{ p }}</p>
+          <span class="clinic-phone-wa-row inline-flex shrink-0 items-center leading-none">
+            {% with wapath=p|wa_me_path %}
+              {% if wapath %}
+                <button type="button" class="wa-me-link-copy-btn inline-flex rounded-lg p-1.5 text-emerald-600 transition hover:bg-emerald-50 hover:text-emerald-700" data-wa-me-copy="{{ wapath|escape }}" title="Copy WhatsApp link">
+                  <span class="sr-only">Copy WhatsApp link</span>
+                  <svg class="h-5 w-5" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.435 9.884-9.881 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z"/></svg>
+                </button>
+              {% else %}
+                <span class="text-xs text-slate-400">—</span>
+              {% endif %}
+            {% endwith %}
+          </span>
+        </div>
+        {% empty %}
+        <div class="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5">
+          <p class="clinic-phone-inner min-w-0 whitespace-normal break-words text-sm font-medium tabular-nums text-slate-800">—</p>
+          <span class="clinic-phone-wa-row inline-flex shrink-0 items-center leading-none"><span class="text-xs text-slate-400">—</span></span>
+        </div>
+        {% endfor %}
+      </div>
+      {% include "leads/partials/_whatsapp_status_badge.html" with lead=c %}
+    </div>
+  </td>
+  <td class="clinic-actions-cell align-top px-2 py-3.5 text-center sm:px-3">
+    <div class="inline-flex min-h-[2.25rem] flex-wrap items-center justify-center gap-0.5">
+      <button type="button" class="move-to-group-btn inline-flex shrink-0 rounded-lg p-1.5 text-violet-600 transition hover:bg-violet-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/40" data-clinic-id="{{ c.id }}" title="Move to group">
+        <span class="sr-only">Move to group</span>
+        <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z"/></svg>
+      </button>
+      <button type="button" class="lead-conversation-log-btn inline-flex shrink-0 rounded-lg p-1.5 text-sky-600 transition hover:bg-sky-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/40" data-clinic-id="{{ c.id }}" title="Add conversation log">
+        <span class="sr-only">Add conversation log</span>
+        <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M7.5 3.75h9A2.25 2.25 0 0118.75 6v12a2.25 2.25 0 01-2.25 2.25h-9A2.25 2.25 0 015.25 18V6A2.25 2.25 0 017.5 3.75zm2.25 4.5h4.5M9.75 12h4.5M9.75 15.75h3" /></svg>
+      </button>
+      <button type="button" class="clinic-edit-btn inline-flex shrink-0 rounded-lg p-1.5 text-slate-500 transition hover:bg-slate-100 hover:text-indigo-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/40" data-clinic-id="{{ c.id }}" title="Edit lead">
+        <span class="sr-only">Edit lead</span>
+        <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/></svg>
+      </button>
+    </div>
+  </td>
+</tr>
+{% endwith %}

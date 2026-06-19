@@ -1,0 +1,28 @@
+<div id="workspace-panel-whatsapp" class="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"{% if not workspace_fragment %} data-loaded="1"{% endif %}{% if workspace_fragment %} hidden{% endif %}>
+
+  <div id="wa-toast-stack" class="pointer-events-none fixed right-4 top-4 z-[100] flex w-[min(100%,20rem)] flex-col gap-2 sm:right-6 sm:top-6" aria-live="polite" aria-atomic="true">
+    <div id="wa-config-toast-slot" class="empty:hidden"></div>
+  </div>
+
+  <div class="min-h-0 flex-1 overflow-y-auto overscroll-y-contain bg-slate-100 px-4 py-6 sm:px-6 lg:px-8">
+    <header class="mb-6">
+      <h1 class="text-xl font-semibold tracking-tight text-slate-900">WhatsApp Sending</h1>
+      <p class="mt-1 max-w-3xl text-sm text-slate-600">Schedule batch sends and monitor queue health for Meta Cloud API template dispatch.</p>
+    </header>
+
+    <div class="mb-6 grid gap-6 xl:grid-cols-2 xl:items-stretch">
+      <div class="flex min-w-0 flex-col gap-6">
+        {% include "leads/partials/_whatsapp_server_status.html" %}
+
+        {% include "leads/partials/_whatsapp_script_templates_section.html" %}
+      </div>
+
+      {% include "leads/partials/_live_activity_log_panel.html" %}
+    </div>
+
+    <div class="mt-0">
+      {% include "leads/partials/_whatsapp_batch_schedule_card.html" %}
+    </div>
+  </div>
+  {% include "leads/partials/_whatsapp_qr_refresh_script.html" %}
+</div>

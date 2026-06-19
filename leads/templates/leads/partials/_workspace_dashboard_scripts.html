@@ -1,0 +1,3124 @@
+  <script>
+    /* Phone helpers on window: same-origin as server normalize_manual_phone; avoids ReferenceError if main bundle scope is wrong. */
+    (function (w) {
+      function phoneDigitsOnly(s) {
+        return String(s || '').replace(/\D/g, '');
+      }
+      w.normalizeManualPhoneFromLocal = function (localRaw) {
+        var s = String(localRaw || '').trim();
+        if (!s) return '';
+        var d = phoneDigitsOnly(s);
+        if (!d) return '';
+        if (d.indexOf('00') === 0) d = d.slice(2);
+        if (d.indexOf('60') === 0 && d.length >= 11) return '+' + d.slice(0, 15);
+        if (d.charAt(0) === '0' && d.length >= 9) return '+60' + d.slice(1, 15);
+        if (d.length >= 8 && d.length <= 10) return '+60' + d.slice(0, 15);
+        if (d.length >= 11) return '+' + d.slice(0, 15);
+        return '+60' + d.slice(0, 15);
+      };
+      w.phoneStoredToLocalField = function (stored) {
+        if (!stored || !String(stored).trim()) return '';
+        var d = phoneDigitsOnly(stored);
+        if (!d) return '';
+        if (d.indexOf('00') === 0) d = d.slice(2);
+        if (d.indexOf('60') === 0 && d.length > 2) return d.slice(2);
+        if (d.charAt(0) === '0' && d.length >= 9) return d.slice(1);
+        return d;
+      };
+    })(window);
+  </script>
+  <script>
+    (function () {
+      if (window.__leadsDashboardBooted) return;
+      window.__leadsDashboardBooted = true;
+      const huntApiPath = "{{ hunt_api_path|escapejs }}";
+      const getLeadsTableUrl = "{{ get_leads_table_url|escapejs }}" || "/leads/ajax/leads-table/";
+      const getLeadChatIndicatorsUrl = "{{ get_lead_chat_indicators_url|escapejs }}" || "/leads/ajax/chat-indicators/";
+      const createLeadGroupUrl = "{{ create_lead_group_url|escapejs }}" || "/leads/api/lead-groups/";
+      const bulkAssignGroupUrl = "{{ bulk_assign_group_url|escapejs }}" || "/leads/api/assign-group/";
+      const reorderLeadGroupsUrl = "{{ reorder_lead_groups_url|escapejs }}" || "/leads/api/lead-groups/reorder/";
+      const reorderLeadsUrl = "{{ reorder_leads_url|escapejs }}" || "/leads/api/leads/reorder/";
+      let activeSearchRecordId = {% if active_search_record_id %}{{ active_search_record_id }}{% else %}null{% endif %};
+      const initialLeadGroupTabIdFromPage = "{{ active_group_tab_id|escapejs }}";
+      const exportXlsxUrl = "{{ export_xlsx_url|escapejs }}" || "/leads/export/xlsx/";
+      const exportFullBackupUrl = "{{ export_full_backup_url|escapejs }}" || "/leads/export/backup/";
+      const importFullBackupUrl = "{{ import_full_backup_url|escapejs }}" || "/leads/import/backup/";
+      const bulkManualUrl = "{{ bulk_manual_url|escapejs }}" || "/leads/api/bulk-manual/";
+      const bulkWhatsappQueueUrl = "{{ bulk_whatsapp_queue_url|escapejs }}" || "/leads/api/bulk-whatsapp-queue/";
+      const bulkAssignBatchUrl = "{{ bulk_assign_batch_url|escapejs }}" || "/leads/api/bulk-assign-batch/";
+      const whatsappBatchesJsonUrl = "{{ whatsapp_batches_json_url|escapejs }}" || "/leads/ajax/whatsapp/batches/";
+      const queueGroupTabId = "{{ queue_group.pk|escapejs }}";
+      const trashGroupTabId = "{{ trash_group.pk|escapejs }}";
+      const leadManualCreateUrl = "{{ lead_manual_create_url|escapejs }}" || "/leads/api/leads/manual/";
+      /* Hardcoded URLs: avoids view-context + Gunicorn stale imports; matches leads/urls and Ninja mount. */
+      const clinicApiDetailPrefix = "/api/clinics/";
+      const clinicUpdateUrlTemplate = "/leads/api/clinic/__ID__/";
+      const leadDeleteUrlTemplate = "/leads/api/clinic/__ID__/delete/";
+      const leadVipUrlTemplate = "/leads/api/clinic/__ID__/very-important/";
+      const leadConversationLogUrlTemplate = "/leads/api/clinic/__ID__/conversation-log/";
+      const defaultLimit = {{ hunt_limit_default|default:20 }};
+      const REQUIRE_WEBSITE_KEY = "clinic_crm_require_website";
+      const CHAT_INDICATOR_POLL_KEY = "clinic_crm_chat_indicator_poll";
+      const VIEW_MODE_KEY = "clinic_crm_clinic_view";
+      const shopTypesApiPath = "/leads/api/shop-types/";
+      const shopTypeDeleteUrlTemplate = "/leads/api/shop-types/__ID__/";
+
+      function getCookie(name) {
+        var v = null;
+        if (document.cookie && document.cookie !== '') {
+          var parts = document.cookie.split(';');
+          for (var i = 0; i < parts.length; i++) {
+            var c = parts[i].trim();
+            if (c.substring(0, name.length + 1) === name + '=') {
+              v = decodeURIComponent(c.substring(name.length + 1));
+              break;
+            }
+          }
+        }
+        return v;
+      }
+
+      /** Prefer csrftoken cookie so the header always matches what Django validates (see Django AJAX CSRF docs). */
+      function getCsrfToken() {
+        var fromCookie = getCookie('csrftoken');
+        if (fromCookie) return fromCookie;
+        var m = document.querySelector('meta[name="csrf-token"]');
+        return m ? (m.getAttribute('content') || '') : '';
+      }
+
+      function dispatchHtmxTriggerHeader(headerValue) {
+        if (!headerValue) return;
+        try {
+          var events = JSON.parse(headerValue);
+          Object.keys(events).forEach(function (name) {
+            document.body.dispatchEvent(new CustomEvent(name, { detail: events[name] }));
+          });
+        } catch (err) {
+          console.error(err);
+        }
+      }
+
+      async function handleLeadDequeueClick(btn) {
+        if (!btn || btn.classList.contains('is-busy')) return;
+        var url = btn.getAttribute('data-dequeue-url');
+        var leadId = btn.getAttribute('data-lead-id');
+        if (!url || !leadId) return;
+        btn.classList.add('is-busy');
+        btn.disabled = true;
+        try {
+          var body = new FormData();
+          var groupId = btn.getAttribute('data-group-id');
+          if (groupId) body.append('group_id', groupId);
+          var res = await fetch(url, {
+            method: 'POST',
+            headers: { 'X-CSRFToken': getCsrfToken() },
+            credentials: 'same-origin',
+            body: body,
+          });
+          var html = await res.text();
+          if (!res.ok) {
+            window.alert('Could not remove this lead from the WhatsApp queue.');
+            return;
+          }
+          if (btn.getAttribute('data-queue-view') === '1') {
+            var cell = document.getElementById('lead-grid-cell-' + leadId);
+            if (cell) {
+              cell.classList.add('lead-card--sinking');
+              window.setTimeout(function () { cell.remove(); }, 300);
+            }
+          } else {
+            var slot = document.getElementById('lead-queue-slot-' + leadId);
+            if (slot) {
+              slot.innerHTML = html;
+              if (window.htmx) window.htmx.process(slot);
+            }
+          }
+          dispatchHtmxTriggerHeader(res.headers.get('HX-Trigger'));
+          if (typeof window.refreshSelectAllState === 'function') window.refreshSelectAllState();
+          if (typeof window.refreshSelectionVisuals === 'function') window.refreshSelectionVisuals();
+          if (typeof window.refreshSetCategoryButtonState === 'function') window.refreshSetCategoryButtonState();
+          if (typeof window.refreshBulkAssignGroupButtonState === 'function') window.refreshBulkAssignGroupButtonState();
+          if (typeof window.applyTableFilter === 'function') window.applyTableFilter();
+        } catch (err) {
+          console.error(err);
+          window.alert('Network error while removing lead from queue.');
+        } finally {
+          btn.classList.remove('is-busy');
+          btn.disabled = false;
+        }
+      }
+
+      var MANUAL_PHONE_MAX = 8;
+      var manualPhoneRowTpl = document.getElementById('manual-phone-row-template');
+
+      function syncManualPhoneRemoveVisibility(container) {
+        if (!container) return;
+        var rows = container.querySelectorAll('.manual-phone-row');
+        var multi = rows.length > 1;
+        rows.forEach(function (row) {
+          var btn = row.querySelector('.manual-phone-remove');
+          if (btn) {
+            btn.style.visibility = multi ? 'visible' : 'hidden';
+            btn.disabled = !multi;
+          }
+        });
+      }
+
+      function appendManualPhoneRow(container, localDigits, skipCapCheck) {
+        if (!container || !manualPhoneRowTpl) return;
+        if (!skipCapCheck && container.querySelectorAll('.manual-phone-row').length >= MANUAL_PHONE_MAX) return;
+        var frag = manualPhoneRowTpl.content.cloneNode(true);
+        var inp = frag.querySelector('.manual-phone-local');
+        if (inp && localDigits != null && localDigits !== '') inp.value = localDigits;
+        container.appendChild(frag);
+        syncManualPhoneRemoveVisibility(container);
+      }
+
+      function fillManualPhoneList(container, storedPhonesE164) {
+        if (!container) return;
+        container.innerHTML = '';
+        var localList = [];
+        if (Array.isArray(storedPhonesE164) && storedPhonesE164.length) {
+          storedPhonesE164.forEach(function (s) {
+            localList.push(window.phoneStoredToLocalField(s));
+          });
+        } else {
+          localList.push('');
+        }
+        localList.forEach(function (localVal) {
+          appendManualPhoneRow(container, localVal, true);
+        });
+        if (!container.querySelector('.manual-phone-row')) appendManualPhoneRow(container, '', true);
+        syncManualPhoneRemoveVisibility(container);
+      }
+
+      function collectManualPhonePayload(container) {
+        var out = [];
+        if (!container) return out;
+        container.querySelectorAll('.manual-phone-local').forEach(function (inp) {
+          var n = window.normalizeManualPhoneFromLocal(inp.value || '');
+          if (n && out.indexOf(n) === -1) out.push(n);
+        });
+        return out;
+      }
+
+      document.getElementById('clinic-edit-add-phone')?.addEventListener('click', function () {
+        var c = document.getElementById('clinic-edit-phones-list');
+        if (c && c.querySelectorAll('.manual-phone-row').length < MANUAL_PHONE_MAX) appendManualPhoneRow(c, '');
+      });
+      document.getElementById('lead-create-add-phone')?.addEventListener('click', function () {
+        var c = document.getElementById('lead-create-phones-list');
+        if (c && c.querySelectorAll('.manual-phone-row').length < MANUAL_PHONE_MAX) appendManualPhoneRow(c, '');
+      });
+      document.getElementById('clinic-edit-phones-list')?.addEventListener('click', function (e) {
+        var b = e.target.closest('.manual-phone-remove');
+        if (!b || !this.contains(b)) return;
+        e.preventDefault();
+        var row = b.closest('.manual-phone-row');
+        if (row && this.querySelectorAll('.manual-phone-row').length > 1) row.remove();
+        syncManualPhoneRemoveVisibility(this);
+      });
+      document.getElementById('lead-create-phones-list')?.addEventListener('click', function (e) {
+        var b = e.target.closest('.manual-phone-remove');
+        if (!b || !this.contains(b)) return;
+        e.preventDefault();
+        var row = b.closest('.manual-phone-row');
+        if (row && this.querySelectorAll('.manual-phone-row').length > 1) row.remove();
+        syncManualPhoneRemoveVisibility(this);
+      });
+
+      const huntLimitInput = document.getElementById('hunt-limit-value');
+      const limitButtons = document.querySelectorAll('.limit-btn');
+
+      function setLimit(limit, syncButtons) {
+        const n = parseInt(limit, 10);
+        const v = (isNaN(n) ? defaultLimit : n).toString();
+        if (huntLimitInput) huntLimitInput.value = v;
+        if (syncButtons) {
+          limitButtons.forEach(function (btn) {
+            const active = btn.getAttribute('data-limit') === v;
+            btn.classList.toggle('limit-btn--active', active);
+            btn.classList.toggle('bg-indigo-600', active);
+            btn.classList.toggle('text-white', active);
+            btn.classList.toggle('shadow-sm', active);
+            btn.classList.toggle('text-slate-600', !active);
+            btn.classList.toggle('hover:bg-slate-50', !active);
+            btn.classList.toggle('hover:text-slate-900', !active);
+          });
+        }
+      }
+
+      limitButtons.forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          setLimit(btn.getAttribute('data-limit'), true);
+        });
+      });
+      setLimit(huntLimitInput ? huntLimitInput.value : defaultLimit, true);
+
+      function bindHuntOptionToggle(el, storageKey) {
+        if (!el) return;
+        try {
+          var stored = localStorage.getItem(storageKey);
+          if (stored !== null) {
+            el.checked = stored === "1" || stored === "true";
+          }
+        } catch (e) { /* ignore */ }
+        el.addEventListener('change', function () {
+          try {
+            localStorage.setItem(storageKey, el.checked ? "1" : "0");
+          } catch (e) { /* ignore */ }
+        });
+      }
+
+      const requireWebsiteToggle = document.getElementById('hunt-require-website');
+      bindHuntOptionToggle(requireWebsiteToggle, REQUIRE_WEBSITE_KEY);
+
+      const chatIndicatorPollToggle = document.getElementById('chat-indicator-poll-toggle');
+      bindHuntOptionToggle(chatIndicatorPollToggle, CHAT_INDICATOR_POLL_KEY);
+
+      function isChatIndicatorPollingEnabled() {
+        if (chatIndicatorPollToggle) return chatIndicatorPollToggle.checked;
+        try {
+          var stored = localStorage.getItem(CHAT_INDICATOR_POLL_KEY);
+          if (stored !== null) return stored === '1' || stored === 'true';
+        } catch (e) { /* ignore */ }
+        return true;
+      }
+
+      function setLeadVipStarVisual(btn, on) {
+        if (!btn) return;
+        btn.setAttribute('data-vip', on ? 'true' : 'false');
+        btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+        btn.setAttribute('title', on ? 'Very important — click to clear' : 'Mark as very important');
+        var o = btn.querySelector('.lead-vip-icon-outline');
+        var s = btn.querySelector('.lead-vip-icon-solid');
+        if (o) o.classList.toggle('hidden', on);
+        if (s) s.classList.toggle('hidden', !on);
+        btn.classList.toggle('text-amber-500', on);
+        btn.classList.toggle('hover:bg-amber-50/90', on);
+        btn.classList.toggle('hover:text-amber-600', on);
+        btn.classList.toggle('text-slate-300', !on);
+        btn.classList.toggle('hover:bg-amber-50/80', !on);
+        btn.classList.toggle('hover:text-amber-500', !on);
+      }
+
+      function syncRowDataSearch(row, category, isChain, isVeryImportant) {
+        const base = (row.getAttribute('data-search-base') || '').trim();
+        var t = (row.getAttribute('data-category') || '').trim();
+        if (category !== undefined && category !== null) {
+          t = String(category).trim();
+          row.setAttribute('data-category', t);
+        }
+        var chain = row.getAttribute('data-is-chain') === '1';
+        if (isChain !== undefined && isChain !== null) {
+          chain = !!isChain;
+          row.setAttribute('data-is-chain', chain ? '1' : '0');
+        }
+        var vip = row.getAttribute('data-very-important') === '1';
+        if (isVeryImportant !== undefined && isVeryImportant !== null) {
+          vip = !!isVeryImportant;
+          row.setAttribute('data-very-important', vip ? '1' : '0');
+        }
+        const bits = [base, t];
+        if (chain) bits.push('chain');
+        if (vip) bits.push('important');
+        row.setAttribute('data-search', bits.join(' ').replace(/\s+/g, ' ').trim());
+      }
+
+      function escapeHtml(s) {
+        if (s == null) return '';
+        return String(s)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;');
+      }
+
+      function escapeAttr(s) {
+        return escapeHtml(s).replace(/'/g, '&#39;');
+      }
+
+      function renderSourceLineText(searchCity, searchCountry, shopKeyword, searchQuery) {
+        const parts = [
+          (searchCity || '').trim(),
+          (searchCountry || '').trim(),
+          (shopKeyword || '').trim(),
+          (searchQuery || '').trim(),
+        ].filter(function (s) { return s.length > 0; });
+        if (!parts.length) return '<span class="text-slate-400">—</span>';
+        return parts.map(escapeHtml).join(' <span class="text-slate-400">/</span> ');
+      }
+
+      function renderWebsiteLineHtml(website) {
+        const w = (website || '').trim();
+        if (!w) return '';
+        return (
+          '<a href="' +
+          escapeAttr(w) +
+          '" class="break-all text-indigo-600 underline decoration-slate-300 decoration-1 underline-offset-2 transition hover:text-indigo-500" target="_blank" rel="noopener" title="' +
+          escapeAttr(w) +
+          '">' +
+          escapeHtml(w) +
+          '</a>'
+        );
+      }
+
+      function setRowWhatsappDraft(row, draft) {
+        if (!row) return;
+        var store = row.querySelector('.whatsapp-draft-store');
+        var btn = row.querySelector('.whatsapp-copy-btn');
+        var t = draft != null ? String(draft) : '';
+        if (store) store.textContent = t;
+        if (btn) {
+          var has = t.trim().length > 0;
+          btn.disabled = !has;
+          btn.title = has ? 'Copy WhatsApp draft to clipboard' : 'No draft yet — add one in Edit';
+        }
+      }
+
+      let clinicSaveStatusTimer = null;
+      function showClinicSaveSuccess(name) {
+        const el = document.getElementById('clinic-save-status');
+        if (!el) return;
+        const label = (name != null && String(name).trim()) ? String(name).trim() : 'Clinic';
+        el.textContent = 'Saved — ' + label + ' updated.';
+        el.classList.remove('hidden');
+        if (clinicSaveStatusTimer) clearTimeout(clinicSaveStatusTimer);
+        clinicSaveStatusTimer = setTimeout(function () {
+          el.classList.add('hidden');
+          el.textContent = '';
+          clinicSaveStatusTimer = null;
+        }, 4200);
+      }
+
+      function flashClinicRowAfterSave(clinicId) {
+        const sel = '.clinic-row[data-clinic-id="' + clinicId + '"]';
+        document.querySelectorAll(sel).forEach(function (row) {
+          row.classList.add('clinic-row--updated');
+          window.setTimeout(function () {
+            row.classList.remove('clinic-row--updated');
+          }, 1200);
+        });
+      }
+
+      function applyClinicEditToDom(d) {
+        if (!d || !d.ok || d.id == null) return;
+        const id = d.id;
+        var phonesSearch = '';
+        if (Array.isArray(d.phone_numbers) && d.phone_numbers.length) {
+          phonesSearch = d.phone_numbers.join(' ');
+        } else if (d.phone_number) {
+          phonesSearch = String(d.phone_number);
+        }
+        const baseStr = [d.name, d.address, phonesSearch, d.website, d.shop_keyword, d.search_city, d.search_country, d.search_query]
+          .join(' ')
+          .replace(/\s+/g, ' ')
+          .trim();
+
+        document.querySelectorAll('.clinic-row[data-clinic-id="' + id + '"]').forEach(function (row) {
+          row.setAttribute('data-search-base', baseStr);
+          row.setAttribute('data-is-chain', d.is_chain ? '1' : '0');
+          const typeCell = row.querySelector('.clinic-type-cell');
+          if (typeCell && d.type_html) typeCell.innerHTML = d.type_html;
+          if (d.is_very_important !== undefined) {
+            row.querySelectorAll('.lead-vip-star-btn').forEach(function (b) {
+              setLeadVipStarVisual(b, !!d.is_very_important);
+            });
+          }
+          syncRowDataSearch(
+            row,
+            d.category || d.clinic_type,
+            d.is_chain,
+            d.is_very_important
+          );
+
+          const nameInner = row.querySelector('.clinic-name-cell-inner');
+          if (nameInner && d.name_cell_html) nameInner.innerHTML = d.name_cell_html;
+
+          const sourceLine = row.querySelector('.clinic-source-line');
+          if (sourceLine) sourceLine.innerHTML = renderSourceLineText(d.search_city, d.search_country, d.shop_keyword, d.search_query);
+
+          const branchesLine = row.querySelector('.clinic-branches-line');
+          if (branchesLine) {
+            if (d.branches_line_html) {
+              branchesLine.innerHTML = d.branches_line_html;
+              branchesLine.classList.remove('hidden');
+            } else {
+              branchesLine.innerHTML = '';
+              branchesLine.classList.add('hidden');
+            }
+          }
+
+          const addrEl = row.querySelector('.clinic-address-inner');
+          if (addrEl) {
+            const a = d.address != null ? String(d.address).trim() : '';
+            const nm = d.name != null ? String(d.name).trim() : '';
+            addrEl.textContent = a || '—';
+            addrEl.setAttribute('data-clinic-name', nm);
+            addrEl.setAttribute('data-address-copy', a);
+            const hasAddrCopy = !!(nm || a);
+            addrEl.setAttribute('title', hasAddrCopy ? 'Click to copy name & address' : 'Nothing to copy');
+            if (addrEl.tagName === 'BUTTON') addrEl.disabled = !hasAddrCopy;
+          }
+
+          const webLine = row.querySelector('.clinic-website-line');
+          if (webLine) {
+            const wh = renderWebsiteLineHtml(d.website);
+            if (wh) {
+              webLine.innerHTML = wh;
+              webLine.classList.remove('hidden');
+            } else {
+              webLine.innerHTML = '';
+              webLine.classList.add('hidden');
+            }
+          }
+
+          row.querySelectorAll('td.clinic-phone-cell').forEach(function (td) {
+            if (d.phone_td_inner_list) td.innerHTML = d.phone_td_inner_list;
+          });
+          row.querySelectorAll('.clinic-phone-slot').forEach(function (slot) {
+            if (d.phone_slot_inner_grid) slot.outerHTML = d.phone_slot_inner_grid;
+          });
+
+          var copyPhone = '';
+          if (Array.isArray(d.phone_numbers) && d.phone_numbers.length) {
+            copyPhone = d.phone_numbers.join(' ; ');
+          } else if (d.phone_number != null) {
+            copyPhone = String(d.phone_number);
+          }
+          row.querySelectorAll('.lead-card-copy-details-btn').forEach(function (btn) {
+            btn.setAttribute('data-copy-name', d.name != null ? String(d.name) : '');
+            btn.setAttribute('data-copy-address', d.address != null ? String(d.address) : '');
+            btn.setAttribute('data-copy-phone', copyPhone);
+            btn.setAttribute('data-copy-website', d.website != null ? String(d.website) : '');
+          });
+
+          const actCell = row.querySelector('.clinic-actions-cell');
+          if (actCell && !row.classList.contains('clinic-card')) {
+            if (d.actions_cell_html != null && d.actions_cell_html !== '') {
+              actCell.innerHTML = d.actions_cell_html;
+            }
+          }
+
+          if (d.whatsapp_draft !== undefined) setRowWhatsappDraft(row, d.whatsapp_draft);
+        });
+
+        flashClinicRowAfterSave(id);
+        applyTableFilter();
+        refreshSelectAllState();
+        refreshSelectionVisuals();
+      }
+
+      const selectAll = document.getElementById('select-all-clinics');
+
+      function getActiveClinicsViewRoot() {
+        const listEl = document.getElementById('clinics-view-list');
+        const gridEl = document.getElementById('clinics-view-grid');
+        if (listEl && !listEl.classList.contains('hidden')) return listEl;
+        if (gridEl && !gridEl.classList.contains('hidden')) return gridEl;
+        return listEl || gridEl || null;
+      }
+
+      function getVisibleClinicRows(root) {
+        const scope = root || getActiveClinicsViewRoot();
+        if (!scope) return [];
+        return Array.from(scope.querySelectorAll('.clinic-row:not(.hidden)'));
+      }
+
+      function setLeadCheckboxSelected(leadId, on) {
+        const id = leadId != null ? String(leadId) : '';
+        if (!id) return;
+        document.querySelectorAll('.clinic-select-cb').forEach(function (cb) {
+          if (cb.value === id) cb.checked = !!on;
+        });
+      }
+
+      function clearSelectionsForHiddenRows() {
+        document.querySelectorAll('.clinic-row.hidden').forEach(function (row) {
+          const cb = row.querySelector('.clinic-select-cb');
+          if (cb && cb.checked) setLeadCheckboxSelected(cb.value, false);
+        });
+      }
+
+      function refreshSelectAllState() {
+        if (!selectAll) return;
+        const boxes = getVisibleClinicRows().map(function (row) {
+          return row.querySelector('.clinic-select-cb');
+        }).filter(Boolean);
+        if (!boxes.length) {
+          selectAll.checked = false;
+          selectAll.indeterminate = false;
+          return;
+        }
+        let nOn = 0;
+        boxes.forEach(function (b) { if (b.checked) nOn += 1; });
+        selectAll.checked = nOn === boxes.length;
+        selectAll.indeterminate = nOn > 0 && nOn < boxes.length;
+      }
+
+      function refreshSelectionVisuals() {
+        const byId = {};
+        document.querySelectorAll('.clinic-select-cb').forEach(function (cb) {
+          byId[cb.value] = cb.checked;
+        });
+        document.querySelectorAll('.clinic-row[data-clinic-id]').forEach(function (row) {
+          const id = row.getAttribute('data-clinic-id');
+          const on = byId[id] === true;
+          row.classList.toggle('clinic-row--selected', on);
+          row.setAttribute('aria-selected', on ? 'true' : 'false');
+        });
+        refreshSetCategoryButtonState();
+        refreshBulkAssignGroupButtonState();
+        refreshBulkActionDock();
+      }
+
+      window.__refreshFunnelMetricsStrip = async function () {
+        try {
+          var gid = typeof currentLeadGroupTabId !== 'undefined' && currentLeadGroupTabId != null
+            ? String(currentLeadGroupTabId)
+            : 'uncategorized';
+          var data = await fetchLeadsTableFragment(gid);
+          if (data && data.funnel_metrics) updateFunnelMetricsStrip(data.funnel_metrics);
+          if (data && data.group_counts) updateLeadGroupTabCounts(data.group_counts);
+        } catch (e) {
+          console.error(e);
+        }
+      };
+
+      var folderTotalPipelineCount = 0;
+
+      function countUniqueLeadIdsFromRows(rows) {
+        var seen = Object.create(null);
+        (rows || []).forEach(function (row) {
+          var id = row.getAttribute('data-clinic-id');
+          if (id) seen[id] = true;
+        });
+        return Object.keys(seen).length;
+      }
+
+      function getAllClinicRowsInActiveView() {
+        var scope = getActiveClinicsViewRoot();
+        if (!scope) return [];
+        return Array.from(scope.querySelectorAll('.clinic-row'));
+      }
+
+      function isLeadTableFilterActive() {
+        var si = document.getElementById('table-search');
+        if (si && si.value.trim()) return true;
+        var vip = document.getElementById('filter-very-important-only');
+        return !!(vip && vip.getAttribute('aria-pressed') === 'true');
+      }
+
+      function getFolderLeadCount() {
+        var domCount = countUniqueLeadIdsFromRows(getAllClinicRowsInActiveView());
+        return Math.max(domCount, folderTotalPipelineCount);
+      }
+
+      function refreshFilteredLeadCount() {
+        var totalEl = document.getElementById('funnel-metric-total');
+        var labelEl = document.getElementById('funnel-metric-total-label');
+        var hintEl = document.getElementById('funnel-metric-total-filtered-hint');
+        var folderEl = document.getElementById('funnel-metric-total-folder');
+        if (!totalEl || !labelEl) return;
+
+        var folderCount = getFolderLeadCount();
+
+        if (!isLeadTableFilterActive()) {
+          labelEl.textContent = 'Total Pipeline';
+          totalEl.textContent = String(folderCount);
+          if (hintEl) {
+            hintEl.classList.add('hidden');
+            hintEl.setAttribute('aria-hidden', 'true');
+          }
+          return;
+        }
+
+        var allRows = getAllClinicRowsInActiveView();
+        var visibleRows = allRows.filter(function (r) { return !r.classList.contains('hidden'); });
+        labelEl.textContent = 'Filtered count';
+        totalEl.textContent = String(countUniqueLeadIdsFromRows(visibleRows));
+        if (hintEl && folderEl) {
+          folderEl.textContent = String(folderCount);
+          hintEl.classList.remove('hidden');
+          hintEl.setAttribute('aria-hidden', 'false');
+        }
+      }
+
+      function updateFunnelMetricsStrip(metrics) {
+        if (!metrics || typeof metrics !== 'object') return;
+        if (metrics.total_pipeline != null) {
+          folderTotalPipelineCount = Number(metrics.total_pipeline) || 0;
+        }
+        var map = {
+          in_queue: 'funnel-metric-queue',
+          outbound_sent: 'funnel-metric-sent',
+          live_responses: 'funnel-metric-responses',
+        };
+        Object.keys(map).forEach(function (key) {
+          var el = document.getElementById(map[key]);
+          if (el && metrics[key] != null) el.textContent = String(metrics[key]);
+        });
+        refreshFilteredLeadCount();
+      }
+
+      function updateLeadGroupTabCounts(counts) {
+        if (!counts || typeof counts !== 'object') return;
+        document
+          .querySelectorAll('#lead-group-tabs .lead-group-tab[data-group-id]')
+          .forEach(function (tab) {
+            var id = tab.getAttribute('data-group-id') || '';
+            if (!Object.prototype.hasOwnProperty.call(counts, id)) return;
+            var badge = tab.querySelector('.lead-group-count');
+            if (!badge) return;
+            var n = counts[id];
+            badge.textContent = String(n);
+            badge.title = n + ' lead(s) in this group';
+          });
+      }
+
+      var leadChatIndicatorPollTimer = null;
+      var leadChatIndicatorSnapshot = '';
+
+      function createLeadChatAwaitingPulse() {
+        var wrap = document.createElement('span');
+        wrap.className = 'lead-chat-awaiting-pulse absolute right-1 top-1 flex h-2 w-2';
+        wrap.setAttribute('aria-hidden', 'true');
+        var dot = document.createElement('span');
+        dot.className = 'relative inline-flex h-2 w-2 rounded-full bg-emerald-500 ring-2 ring-white';
+        dot.setAttribute('aria-hidden', 'true');
+        wrap.appendChild(dot);
+        return wrap;
+      }
+
+      function updateActiveChatCountBadge(count) {
+        var badge = document.getElementById('active-chat-count-badge');
+        if (!badge) return;
+        var n = Number(count) || 0;
+        badge.textContent = String(n);
+        badge.setAttribute('aria-label', n + ' active chats');
+        badge.setAttribute('title', n + ' chats awaiting your reply');
+        badge.classList.toggle('hidden', n === 0);
+      }
+
+      function setLeadCardAwaitingPulse(leadId, awaiting) {
+        var cell = document.getElementById('lead-grid-cell-' + leadId);
+        if (!cell) return false;
+        var wants = awaiting ? '1' : '0';
+        if (cell.getAttribute('data-awaiting-client-reply') === wants) return false;
+        cell.setAttribute('data-awaiting-client-reply', wants);
+        var btn = cell.querySelector('.lead-card-active-chat-btn');
+        if (!btn) return true;
+        var pulse = btn.querySelector('.lead-chat-awaiting-pulse');
+        if (awaiting) {
+          if (!pulse) btn.appendChild(createLeadChatAwaitingPulse());
+        } else if (pulse) {
+          pulse.remove();
+        }
+        return false;
+      }
+
+      function leadChatIndicatorSnapshotFromMap(leads) {
+        var keys = Object.keys(leads || {}).sort();
+        var parts = [];
+        keys.forEach(function (id) {
+          var row = leads[id] || {};
+          parts.push(
+            id + ':' + (row.awaiting ? '1' : '0') + ':' + (row.dispatched ? '1' : '0')
+          );
+        });
+        return parts.join('|');
+      }
+
+      async function silentRefreshCurrentLeadGrid() {
+        var data = await fetchLeadsTableFragment(currentLeadGroupTabId);
+        if (!data || !data.ok) return;
+        var tb = document.getElementById('clinics-table-body');
+        var gridInner = document.getElementById('clinics-grid-inner');
+        if (tb) tb.innerHTML = data.tbody_html;
+        if (gridInner) gridInner.innerHTML = data.grid_html;
+        if (data.funnel_metrics) updateFunnelMetricsStrip(data.funnel_metrics);
+        if (data.group_counts) updateLeadGroupTabCounts(data.group_counts);
+        syncLeadsAfterGroupFragmentSwap();
+        leadChatIndicatorSnapshot = leadChatIndicatorSnapshotFromMap(
+          (await fetchLeadChatIndicators())?.leads || {}
+        );
+      }
+
+      async function fetchLeadChatIndicators() {
+        var u = new URL(getLeadChatIndicatorsUrl, window.location.origin);
+        var gid = normalizeLeadGroupTabId(currentLeadGroupTabId);
+        u.searchParams.set('group_id', gid === 'uncategorized' ? 'uncategorized' : String(gid));
+        if (activeSearchRecordId != null) u.searchParams.set('search_record', String(activeSearchRecordId));
+        var res = await fetch(u.toString(), { headers: { Accept: 'application/json' }, credentials: 'same-origin' });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        return res.json();
+      }
+
+      window.__refreshLeadChatIndicators = async function () {
+        var gridInner = document.getElementById('clinics-grid-inner');
+        if (!gridInner || !document.getElementById('clinics-panel')) return;
+        try {
+          var data = await fetchLeadChatIndicators();
+          if (!data || !data.ok) return;
+          if (data.funnel_metrics) updateFunnelMetricsStrip(data.funnel_metrics);
+          if (data.group_counts) updateLeadGroupTabCounts(data.group_counts);
+          if (data.active_chat_count != null) updateActiveChatCountBadge(data.active_chat_count);
+          var snapshot = leadChatIndicatorSnapshotFromMap(data.leads || {});
+          if (snapshot !== leadChatIndicatorSnapshot) {
+            var apiLeadIds = Object.keys(data.leads || {});
+            var domLeadIds = Array.prototype.slice.call(
+              document.querySelectorAll('#clinics-grid-inner .lead-card-container')
+            ).map(function (cell) {
+              return (cell.id || '').replace('lead-grid-cell-', '');
+            }).filter(Boolean);
+
+            var rosterChanged = apiLeadIds.length !== domLeadIds.length;
+            if (!rosterChanged) {
+              for (var i = 0; i < apiLeadIds.length; i += 1) {
+                if (domLeadIds.indexOf(apiLeadIds[i]) === -1) {
+                  rosterChanged = true;
+                  break;
+                }
+              }
+            }
+            if (!rosterChanged) {
+              for (var j = 0; j < domLeadIds.length; j += 1) {
+                if (!data.leads || !data.leads[domLeadIds[j]]) {
+                  rosterChanged = true;
+                  break;
+                }
+              }
+            }
+
+            if (rosterChanged) {
+              await silentRefreshCurrentLeadGrid();
+            } else {
+              apiLeadIds.forEach(function (leadId) {
+                var row = data.leads[leadId] || {};
+                setLeadCardAwaitingPulse(leadId, !!row.awaiting);
+                var cell = document.getElementById('lead-grid-cell-' + leadId);
+                if (cell) {
+                  cell.setAttribute('data-whatsapp-dispatched', row.dispatched ? '1' : '0');
+                }
+              });
+              leadChatIndicatorSnapshot = snapshot;
+            }
+          }
+        } catch (e) {
+          console.error(e);
+        }
+      };
+
+      window.__startLeadChatIndicatorPolling = function () {
+        window.__stopLeadChatIndicatorPolling();
+        if (!isChatIndicatorPollingEnabled()) return;
+        if (!document.getElementById('clinics-grid-inner')) return;
+        window.__refreshLeadChatIndicators();
+        leadChatIndicatorPollTimer = window.setInterval(function () {
+          window.__refreshLeadChatIndicators();
+        }, 3000);
+      };
+
+      window.__syncLeadChatIndicatorPolling = function () {
+        if (!document.getElementById('clinics-grid-inner')) return;
+        if (isChatIndicatorPollingEnabled()) {
+          window.__startLeadChatIndicatorPolling();
+        } else {
+          window.__stopLeadChatIndicatorPolling();
+        }
+      };
+
+      window.__stopLeadChatIndicatorPolling = function () {
+        if (leadChatIndicatorPollTimer) {
+          window.clearInterval(leadChatIndicatorPollTimer);
+          leadChatIndicatorPollTimer = null;
+        }
+      };
+
+      function refreshBulkActionDock() {
+        var dock = document.getElementById('bulk-action-dock');
+        if (!dock) return;
+        var n = getUniqueSelectedLeadIds().length;
+        var countEl = document.getElementById('bulk-action-dock-count');
+        if (countEl) {
+          countEl.textContent = n + (n === 1 ? ' selected' : ' selected');
+        }
+
+        // Only ever show the dock on the Leads workspace panel.
+        var dashPanel = document.getElementById('workspace-panel-dashboard');
+        var onLeadsPage = !!dashPanel && !dashPanel.hasAttribute('hidden');
+
+        var onQueueTab = queueGroupTabId &&
+          String(currentLeadGroupTabId) === String(queueGroupTabId);
+        var onTrashTab = trashGroupTabId &&
+          String(currentLeadGroupTabId) === String(trashGroupTabId);
+
+        // Queue → "Choose batch"; Trash → no bulk action; everything else → "Push to queue".
+        var showQueueBtn = onLeadsPage && !onQueueTab && !onTrashTab;
+        var showBatchBtn = onLeadsPage && onQueueTab;
+
+        var visible = n > 0 && onLeadsPage && (showQueueBtn || showBatchBtn);
+        dock.hidden = !visible;
+        dock.setAttribute('aria-hidden', visible ? 'false' : 'true');
+        dock.classList.toggle('bulk-action-dock--visible', visible);
+
+        var queueBtn = document.getElementById('bulk-wa-queue-btn');
+        var batchBtn = document.getElementById('bulk-choose-batch-btn');
+        // NOTE: the Tailwind `inline-flex` utility on these buttons overrides the
+        // `[hidden]` UA rule, so toggling the `hidden` property alone won't hide
+        // them. Force visibility via inline `display` (highest specificity).
+        if (queueBtn) {
+          queueBtn.hidden = !showQueueBtn;
+          queueBtn.style.display = showQueueBtn ? '' : 'none';
+        }
+        if (batchBtn) {
+          batchBtn.hidden = !showBatchBtn;
+          batchBtn.style.display = showBatchBtn ? '' : 'none';
+        }
+      }
+
+      async function bulkPushSelectedToWhatsappQueue() {
+        var ids = getUniqueSelectedLeadIds();
+        if (!ids.length) return;
+        var btn = document.getElementById('bulk-wa-queue-btn');
+        if (btn) btn.disabled = true;
+        try {
+          var res = await fetch(bulkWhatsappQueueUrl, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-CSRFToken': getCsrfToken(),
+            },
+            body: JSON.stringify({ ids: ids }),
+          });
+          var data = await res.json();
+          if (!res.ok || !data.ok) {
+            throw new Error((data.detail && String(data.detail)) || ('HTTP ' + res.status));
+          }
+          var statusEl = document.getElementById('clinic-save-status');
+          if (statusEl) {
+            statusEl.textContent = 'Queued ' + (data.updated || 0) + ' lead(s) for WhatsApp outreach.';
+            statusEl.classList.remove('hidden');
+            window.setTimeout(function () { statusEl.classList.add('hidden'); }, 3200);
+          }
+          if (selectAll) selectAll.checked = false;
+          await switchLeadGroupTab(currentLeadGroupTabId, { force: true, skipHistory: true });
+        } catch (err) {
+          console.error(err);
+          window.alert((err && err.message) || 'Could not queue selected leads.');
+        } finally {
+          if (btn) btn.disabled = false;
+        }
+      }
+
+      if (chatIndicatorPollToggle) {
+        chatIndicatorPollToggle.addEventListener('change', function () {
+          window.__syncLeadChatIndicatorPolling();
+        });
+      }
+
+      document.getElementById('bulk-wa-queue-btn')?.addEventListener('click', function () {
+        bulkPushSelectedToWhatsappQueue();
+      });
+
+      // --- Choose batch (assign selected Queue leads to a WhatsApp batch) ---
+      var chooseBatchDialog = document.getElementById('choose-batch-dialog');
+
+      function showChooseBatchError(msg) {
+        var el = document.getElementById('choose-batch-error');
+        if (!el) return;
+        el.textContent = msg || 'Something went wrong.';
+        el.classList.remove('hidden');
+      }
+      function clearChooseBatchError() {
+        var el = document.getElementById('choose-batch-error');
+        if (el) el.classList.add('hidden');
+      }
+      function toggleChooseBatchNewFields() {
+        var sel = document.getElementById('choose-batch-select');
+        var fields = document.getElementById('choose-batch-new-fields');
+        if (!sel || !fields) return;
+        fields.classList.toggle('hidden', sel.value !== 'new');
+      }
+
+      async function populateChooseBatchDialog() {
+        var sel = document.getElementById('choose-batch-select');
+        var tplSel = document.getElementById('choose-batch-template');
+        if (sel) sel.innerHTML = '<option value="">Loading…</option>';
+        try {
+          var res = await fetch(whatsappBatchesJsonUrl, { credentials: 'same-origin' });
+          var data = await res.json();
+          if (!res.ok || !data.ok) throw new Error('HTTP ' + res.status);
+          if (sel) {
+            sel.innerHTML = '';
+            (data.batches || []).forEach(function (b) {
+              var opt = document.createElement('option');
+              opt.value = String(b.id);
+              opt.textContent = b.label;
+              sel.appendChild(opt);
+            });
+            var newOpt = document.createElement('option');
+            newOpt.value = 'new';
+            newOpt.textContent = '+ New batch…';
+            sel.appendChild(newOpt);
+            if (!data.batches || !data.batches.length) sel.value = 'new';
+          }
+          if (tplSel) {
+            tplSel.innerHTML = '';
+            (data.templates || []).forEach(function (pair) {
+              var opt = document.createElement('option');
+              opt.value = pair[0];
+              opt.textContent = pair[1];
+              if (pair[0] === data.default_template) opt.selected = true;
+              tplSel.appendChild(opt);
+            });
+          }
+          toggleChooseBatchNewFields();
+        } catch (e) {
+          showChooseBatchError('Could not load batches.');
+        }
+      }
+
+      function openChooseBatchDialog() {
+        var ids = getUniqueSelectedLeadIds();
+        if (!ids.length || !chooseBatchDialog) return;
+        clearChooseBatchError();
+        var countEl = document.getElementById('choose-batch-count');
+        if (countEl) countEl.textContent = String(ids.length);
+        chooseBatchDialog.showModal();
+        populateChooseBatchDialog();
+      }
+      function closeChooseBatchDialog() {
+        if (chooseBatchDialog) chooseBatchDialog.close();
+      }
+
+      async function submitChooseBatch() {
+        var ids = getUniqueSelectedLeadIds();
+        if (!ids.length) return;
+        var sel = document.getElementById('choose-batch-select');
+        var submitBtn = document.getElementById('choose-batch-submit');
+        clearChooseBatchError();
+        var payload = { ids: ids, batch_id: sel ? sel.value : '' };
+        if (!payload.batch_id) {
+          showChooseBatchError('Pick a batch or create a new one.');
+          return;
+        }
+        if (payload.batch_id === 'new') {
+          payload.new_batch = {
+            outbound_template_name: (document.getElementById('choose-batch-template') || {}).value || '',
+            scheduled_date: (document.getElementById('choose-batch-date') || {}).value || '',
+            scheduled_time: (document.getElementById('choose-batch-time') || {}).value || '',
+          };
+        }
+        if (submitBtn) submitBtn.disabled = true;
+        try {
+          var res = await fetch(bulkAssignBatchUrl, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+            body: JSON.stringify(payload),
+          });
+          var data = await res.json();
+          if (!res.ok || !data.ok) {
+            throw new Error((data.detail && String(data.detail)) || ('HTTP ' + res.status));
+          }
+          var assigned = data.updated || 0;
+          var skipped = data.skipped || 0;
+          var msg = 'Assigned ' + assigned + ' lead' + (assigned === 1 ? '' : 's') + ' to the batch.';
+          if (skipped > 0) {
+            msg += ' ' + skipped + ' already in a pending batch — skipped.';
+          }
+          var statusEl = document.getElementById('clinic-save-status');
+          if (statusEl) {
+            var warnClasses = ['bg-amber-50', 'text-amber-900', 'ring-amber-200/90'];
+            var okClasses = ['bg-emerald-50', 'text-emerald-900', 'ring-emerald-200/90'];
+            statusEl.classList.remove.apply(statusEl.classList, skipped > 0 ? okClasses : warnClasses);
+            statusEl.classList.add.apply(statusEl.classList, skipped > 0 ? warnClasses : okClasses);
+            statusEl.textContent = msg;
+            statusEl.classList.remove('hidden');
+            window.setTimeout(function () { statusEl.classList.add('hidden'); }, skipped > 0 ? 5200 : 3200);
+          }
+          closeChooseBatchDialog();
+          if (selectAll) selectAll.checked = false;
+          await switchLeadGroupTab(currentLeadGroupTabId, { force: true, skipHistory: true });
+        } catch (err) {
+          showChooseBatchError((err && err.message) || 'Could not assign leads.');
+        } finally {
+          if (submitBtn) submitBtn.disabled = false;
+        }
+      }
+
+      document.getElementById('bulk-choose-batch-btn')?.addEventListener('click', openChooseBatchDialog);
+      document.getElementById('choose-batch-select')?.addEventListener('change', toggleChooseBatchNewFields);
+      document.getElementById('choose-batch-close-x')?.addEventListener('click', closeChooseBatchDialog);
+      document.getElementById('choose-batch-cancel')?.addEventListener('click', closeChooseBatchDialog);
+      document.getElementById('choose-batch-form')?.addEventListener('submit', function (e) {
+        e.preventDefault();
+        submitChooseBatch();
+      });
+      chooseBatchDialog?.addEventListener('click', function (e) {
+        if (e.target === chooseBatchDialog) closeChooseBatchDialog();
+      });
+
+      /** Unique lead ids among checked boxes in the current visible filter/view. */
+      function getUniqueSelectedLeadIds() {
+        const seen = Object.create(null);
+        const out = [];
+        getVisibleClinicRows().forEach(function (row) {
+          const cb = row.querySelector('.clinic-select-cb');
+          if (!cb || !cb.checked) return;
+          const v = cb.value;
+          if (v != null && v !== '' && !seen[v]) {
+            seen[v] = true;
+            out.push(v);
+          }
+        });
+        return out;
+      }
+
+      function refreshSetCategoryButtonState() {
+        const btn = document.getElementById('bulk-manual-open');
+        if (!btn) return;
+        const n = getUniqueSelectedLeadIds().length;
+        btn.disabled = n < 1;
+      }
+
+      function refreshBulkAssignGroupButtonState() {
+        const btn = document.getElementById('bulk-assign-group-open');
+        if (!btn) return;
+        const n = getUniqueSelectedLeadIds().length;
+        btn.disabled = n < 1;
+      }
+
+      // Lead id of the last plainly-selected card; anchor for shift+click ranges.
+      let selectionAnchorId = null;
+
+      function bindSelectableSurface(root) {
+        if (!root) return;
+        // Stop shift+click from highlighting card text as a side-effect.
+        root.addEventListener('mousedown', function (e) {
+          if (!e.shiftKey) return;
+          const row = e.target.closest('.clinic-row--selectable');
+          if (!row || !root.contains(row)) return;
+          if (e.target.closest('a, button, input, textarea, select, label')) return;
+          e.preventDefault();
+        });
+        root.addEventListener('click', function (e) {
+          const row = e.target.closest('.clinic-row--selectable');
+          if (!row || !root.contains(row)) return;
+          if (e.target.closest('a, button, input, textarea, select, label')) return;
+          const cb = row.querySelector('.clinic-select-cb');
+          if (!cb) return;
+
+          // Shift+click selects the contiguous range from the anchor to here.
+          if (e.shiftKey && selectionAnchorId != null) {
+            const rows = getVisibleClinicRows(root);
+            const clickedIdx = rows.indexOf(row);
+            let anchorIdx = -1;
+            for (let i = 0; i < rows.length; i++) {
+              const rcb = rows[i].querySelector('.clinic-select-cb');
+              if (rcb && rcb.value === selectionAnchorId) { anchorIdx = i; break; }
+            }
+            if (anchorIdx >= 0 && clickedIdx >= 0) {
+              const newState = !cb.checked;
+              const start = Math.min(anchorIdx, clickedIdx);
+              const end = Math.max(anchorIdx, clickedIdx);
+              const seen = Object.create(null);
+              for (let i = start; i <= end; i++) {
+                const rcb = rows[i].querySelector('.clinic-select-cb');
+                if (!rcb || seen[rcb.value]) continue;
+                seen[rcb.value] = true;
+                setLeadCheckboxSelected(rcb.value, newState);
+              }
+              selectionAnchorId = cb.value;
+              if (window.getSelection) { try { window.getSelection().removeAllRanges(); } catch (err) {} }
+              refreshSelectAllState();
+              refreshSelectionVisuals();
+              return;
+            }
+          }
+
+          cb.checked = !cb.checked;
+          selectionAnchorId = cb.value;
+          cb.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+      }
+
+      if (selectAll) {
+        selectAll.addEventListener('change', function () {
+          const seen = Object.create(null);
+          getVisibleClinicRows().forEach(function (row) {
+            const cb = row.querySelector('.clinic-select-cb');
+            if (!cb || seen[cb.value]) return;
+            seen[cb.value] = true;
+            setLeadCheckboxSelected(cb.value, selectAll.checked);
+          });
+          refreshSelectAllState();
+          refreshSelectionVisuals();
+        });
+      }
+      refreshBulkActionDock();
+
+      const exportXlsxBtn = document.getElementById('export-xlsx-btn');
+      const exportXlsxStatus = document.getElementById('export-xlsx-status');
+      const exportXlsxIcon = document.getElementById('export-xlsx-icon');
+      const exportXlsxSpinner = document.getElementById('export-xlsx-spinner');
+      function exportXlsxSetBusy(busy) {
+        if (!exportXlsxBtn) return;
+        exportXlsxBtn.disabled = !!busy;
+        if (exportXlsxIcon) exportXlsxIcon.classList.toggle('hidden', !!busy);
+        if (exportXlsxSpinner) exportXlsxSpinner.classList.toggle('hidden', !busy);
+      }
+      function exportXlsxShowErr(msg) {
+        if (!exportXlsxStatus) return;
+        exportXlsxStatus.textContent = msg || '';
+        exportXlsxStatus.classList.toggle('hidden', !msg);
+      }
+      if (exportXlsxBtn) {
+        exportXlsxBtn.addEventListener('click', function () {
+          exportXlsxShowErr('');
+          const ids = getUniqueSelectedLeadIds();
+          var url = exportXlsxUrl || '/leads/export/xlsx/';
+          var gid = typeof currentLeadGroupTabId !== 'undefined' && currentLeadGroupTabId != null
+            ? String(currentLeadGroupTabId)
+            : 'uncategorized';
+          var q = new URLSearchParams();
+          q.set('group_id', gid);
+          if (ids.length) q.set('ids', ids.join(','));
+          url += (url.indexOf('?') >= 0 ? '&' : '?') + q.toString();
+          exportXlsxSetBusy(true);
+          fetch(url, { method: 'GET', credentials: 'same-origin' })
+            .then(function (res) {
+              if (!res.ok) {
+                return res.text().then(function (txt) {
+                  throw new Error((txt && txt.slice(0, 200)) || ('HTTP ' + res.status));
+                });
+              }
+              var cd = res.headers.get('Content-Disposition') || '';
+              var m = /filename="([^"]+)"/i.exec(cd) || /filename=([^;]+)/i.exec(cd);
+              var fname = (m && m[1] ? m[1].trim() : '') || 'clinic_leads.xlsx';
+              return res.blob().then(function (blob) {
+                return { blob: blob, fname: fname };
+              });
+            })
+            .then(function (o) {
+              var a = document.createElement('a');
+              a.href = URL.createObjectURL(o.blob);
+              a.download = o.fname;
+              document.body.appendChild(a);
+              a.click();
+              a.remove();
+              window.setTimeout(function () {
+                URL.revokeObjectURL(a.href);
+              }, 60_000);
+            })
+            .catch(function (err) {
+              exportXlsxShowErr((err && err.message ? err.message : String(err)) || 'Export failed.');
+            })
+            .finally(function () {
+              exportXlsxSetBusy(false);
+            });
+        });
+      }
+      // ----- Full backup (all folders) download -----
+      const backupAllBtn = document.getElementById('backup-all-btn');
+      const backupAllIcon = document.getElementById('backup-all-icon');
+      const backupAllSpinner = document.getElementById('backup-all-spinner');
+      function backupAllSetBusy(busy) {
+        if (!backupAllBtn) return;
+        backupAllBtn.disabled = !!busy;
+        if (backupAllIcon) backupAllIcon.classList.toggle('hidden', !!busy);
+        if (backupAllSpinner) backupAllSpinner.classList.toggle('hidden', !busy);
+      }
+      if (backupAllBtn) {
+        backupAllBtn.addEventListener('click', function () {
+          exportXlsxShowErr('');
+          backupAllSetBusy(true);
+          fetch(exportFullBackupUrl, { method: 'GET', credentials: 'same-origin' })
+            .then(function (res) {
+              if (!res.ok) {
+                return res.text().then(function (txt) {
+                  throw new Error((txt && txt.slice(0, 200)) || ('HTTP ' + res.status));
+                });
+              }
+              var cd = res.headers.get('Content-Disposition') || '';
+              var m = /filename="([^"]+)"/i.exec(cd) || /filename=([^;]+)/i.exec(cd);
+              var fname = (m && m[1] ? m[1].trim() : '') || 'clinic_crm_backup.xlsx';
+              return res.blob().then(function (blob) {
+                return { blob: blob, fname: fname };
+              });
+            })
+            .then(function (o) {
+              var a = document.createElement('a');
+              a.href = URL.createObjectURL(o.blob);
+              a.download = o.fname;
+              document.body.appendChild(a);
+              a.click();
+              a.remove();
+              window.setTimeout(function () {
+                URL.revokeObjectURL(a.href);
+              }, 60_000);
+            })
+            .catch(function (err) {
+              exportXlsxShowErr((err && err.message ? err.message : String(err)) || 'Backup failed.');
+            })
+            .finally(function () {
+              backupAllSetBusy(false);
+            });
+        });
+      }
+
+      // ----- Restore from backup upload -----
+      const restoreBackupBtn = document.getElementById('restore-backup-btn');
+      const restoreBackupInput = document.getElementById('restore-backup-input');
+      const restoreBackupIcon = document.getElementById('restore-backup-icon');
+      const restoreBackupSpinner = document.getElementById('restore-backup-spinner');
+      function restoreBackupSetBusy(busy) {
+        if (!restoreBackupBtn) return;
+        restoreBackupBtn.disabled = !!busy;
+        if (restoreBackupIcon) restoreBackupIcon.classList.toggle('hidden', !!busy);
+        if (restoreBackupSpinner) restoreBackupSpinner.classList.toggle('hidden', !busy);
+      }
+      if (restoreBackupBtn && restoreBackupInput) {
+        restoreBackupBtn.addEventListener('click', function () {
+          exportXlsxShowErr('');
+          restoreBackupInput.click();
+        });
+        restoreBackupInput.addEventListener('change', function () {
+          var file = restoreBackupInput.files && restoreBackupInput.files[0];
+          if (!file) return;
+          if (!window.confirm('Restore leads from "' + file.name + '"?\n\nExisting leads (same name & address) are skipped; only missing leads and their history are added.')) {
+            restoreBackupInput.value = '';
+            return;
+          }
+          var fd = new FormData();
+          fd.append('backup', file);
+          restoreBackupSetBusy(true);
+          fetch(importFullBackupUrl, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'X-CSRFToken': getCsrfToken() },
+            body: fd,
+          })
+            .then(function (res) {
+              return res.json().then(function (data) {
+                return { ok: res.ok, data: data };
+              });
+            })
+            .then(function (o) {
+              if (!o.ok || !o.data.ok) {
+                throw new Error((o.data && o.data.detail) || 'Restore failed.');
+              }
+              var d = o.data;
+              window.alert(
+                'Restore complete:\n' +
+                  '• ' + (d.leads_created || 0) + ' leads added (' + (d.leads_skipped || 0) + ' already existed)\n' +
+                  '• ' + (d.groups_created || 0) + ' groups, ' + (d.scripts_created || 0) + ' script templates\n' +
+                  '• ' + (d.chats_created || 0) + ' chat messages, ' + (d.logs_created || 0) + ' conversation logs\n' +
+                  '• ' + (d.config_created || 0) + ' WhatsApp config'
+              );
+              window.location.reload();
+            })
+            .catch(function (err) {
+              exportXlsxShowErr((err && err.message ? err.message : String(err)) || 'Restore failed.');
+            })
+            .finally(function () {
+              restoreBackupSetBusy(false);
+              restoreBackupInput.value = '';
+            });
+        });
+      }
+
+      const clinicsPanelEl = document.getElementById('clinics-panel');
+      if (clinicsPanelEl) {
+        clinicsPanelEl.addEventListener('change', function (e) {
+          const t = e.target;
+          if (!t.classList || !t.classList.contains('clinic-select-cb')) return;
+          const v = t.value;
+          const on = t.checked;
+          clinicsPanelEl.querySelectorAll('.clinic-select-cb').forEach(function (other) {
+            if (other.value === v) other.checked = on;
+          });
+          refreshSelectAllState();
+          refreshSelectionVisuals();
+        });
+      }
+      refreshSelectAllState();
+      refreshSelectionVisuals();
+
+      const clinicsViewList = document.getElementById('clinics-view-list');
+      const clinicsViewGrid = document.getElementById('clinics-view-grid');
+      const viewModeBtns = document.querySelectorAll('.view-mode-btn');
+
+      function setClinicViewMode(mode) {
+        const isGrid = mode === 'grid';
+        if (clinicsViewList) clinicsViewList.classList.toggle('hidden', isGrid);
+        if (clinicsViewGrid) clinicsViewGrid.classList.toggle('hidden', !isGrid);
+        viewModeBtns.forEach(function (btn) {
+          const active = btn.getAttribute('data-view-mode') === (isGrid ? 'grid' : 'list');
+          btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+          btn.classList.toggle('bg-white', active);
+          btn.classList.toggle('text-indigo-700', active);
+          btn.classList.toggle('shadow-sm', active);
+          btn.classList.toggle('ring-1', active);
+          btn.classList.toggle('ring-slate-200/80', active);
+          btn.classList.toggle('text-slate-600', !active);
+        });
+        try {
+          localStorage.setItem(VIEW_MODE_KEY, isGrid ? 'grid' : 'list');
+        } catch (e) { /* ignore */ }
+        refreshSelectAllState();
+        refreshSelectionVisuals();
+        applyTableFilter();
+        if (typeof window.__ensureGridHtmxBound === "function") window.__ensureGridHtmxBound();
+      }
+
+      viewModeBtns.forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          setClinicViewMode(btn.getAttribute('data-view-mode') || 'list');
+        });
+      });
+      try {
+        if (localStorage.getItem(VIEW_MODE_KEY) === 'grid') setClinicViewMode('grid');
+        else setClinicViewMode('list');
+      } catch (e) {
+        setClinicViewMode('list');
+      }
+
+      bindSelectableSurface(clinicsViewList);
+      bindSelectableSurface(clinicsViewGrid);
+
+      function refreshTableSearchClearVisibility() {
+        var si = document.getElementById('table-search');
+        var btn = document.getElementById('table-search-clear');
+        if (!btn) return;
+        var has = si && si.value.trim().length > 0;
+        btn.hidden = !has;
+        btn.setAttribute('aria-hidden', has ? 'false' : 'true');
+        refreshLeadFilterTagSaveButton();
+        refreshLeadFilterTagActiveState();
+      }
+
+      const LEAD_FILTER_TAGS_KEY = 'clinic_crm_lead_filter_tags';
+      const LEAD_FILTER_TAG_MAX = 24;
+      const LEAD_FILTER_TAG_LEN_MAX = 80;
+
+      function loadLeadFilterTags() {
+        try {
+          var raw = localStorage.getItem(LEAD_FILTER_TAGS_KEY);
+          if (!raw) return [];
+          var parsed = JSON.parse(raw);
+          if (!Array.isArray(parsed)) return [];
+          var out = [];
+          var seen = Object.create(null);
+          parsed.forEach(function (item) {
+            var text = String(item || '').trim().slice(0, LEAD_FILTER_TAG_LEN_MAX);
+            if (!text || seen[text]) return;
+            seen[text] = true;
+            out.push(text);
+          });
+          return out.slice(0, LEAD_FILTER_TAG_MAX);
+        } catch (e) {
+          return [];
+        }
+      }
+
+      function saveLeadFilterTags(tags) {
+        try {
+          localStorage.setItem(LEAD_FILTER_TAGS_KEY, JSON.stringify(tags.slice(0, LEAD_FILTER_TAG_MAX)));
+        } catch (e) { /* ignore */ }
+      }
+
+      function escapeLeadFilterTagHtml(text) {
+        return String(text)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;');
+      }
+
+      function refreshLeadFilterTagSaveButton() {
+        var saveBtn = document.getElementById('lead-filter-tag-save');
+        var si = document.getElementById('table-search');
+        if (!saveBtn || !si) return;
+        var text = si.value.trim();
+        var tags = loadLeadFilterTags();
+        saveBtn.disabled = !text || tags.indexOf(text) !== -1;
+      }
+
+      function refreshLeadFilterTagActiveState() {
+        var si = document.getElementById('table-search');
+        var current = si ? si.value.trim() : '';
+        document.querySelectorAll('.lead-filter-tag').forEach(function (chip) {
+          var label = chip.getAttribute('data-tag') || '';
+          var active = current && label === current;
+          chip.classList.toggle('lead-filter-tag--active', active);
+          var applyBtn = chip.querySelector('.lead-filter-tag-apply');
+          if (applyBtn) applyBtn.setAttribute('aria-pressed', active ? 'true' : 'false');
+        });
+      }
+
+      function renderLeadFilterTags() {
+        var list = document.getElementById('lead-filter-tags-list');
+        if (!list) return;
+        var tags = loadLeadFilterTags();
+        var si = document.getElementById('table-search');
+        var current = si ? si.value.trim() : '';
+        list.innerHTML = tags.map(function (tag) {
+          var active = current && tag === current;
+          return (
+            '<span class="lead-filter-tag' + (active ? ' lead-filter-tag--active' : '') + '" data-tag="' + escapeLeadFilterTagHtml(tag) + '" role="listitem">' +
+              '<button type="button" class="lead-filter-tag-apply" aria-pressed="' + (active ? 'true' : 'false') + '" title="Apply filter: ' + escapeLeadFilterTagHtml(tag) + '">' +
+                escapeLeadFilterTagHtml(tag) +
+              '</button>' +
+              '<button type="button" class="lead-filter-tag-remove" aria-label="Remove tag ' + escapeLeadFilterTagHtml(tag) + '" title="Remove tag">×</button>' +
+            '</span>'
+          );
+        }).join('');
+        refreshLeadFilterTagSaveButton();
+      }
+
+      function applyLeadFilterTag(text) {
+        var si = document.getElementById('table-search');
+        if (!si) return;
+        si.value = text;
+        applyTableFilter();
+        si.focus();
+      }
+
+      function addLeadFilterTag(text) {
+        var cleaned = String(text || '').trim().slice(0, LEAD_FILTER_TAG_LEN_MAX);
+        if (!cleaned) return;
+        var tags = loadLeadFilterTags();
+        if (tags.indexOf(cleaned) !== -1) return;
+        tags.unshift(cleaned);
+        saveLeadFilterTags(tags);
+        renderLeadFilterTags();
+      }
+
+      function removeLeadFilterTag(text) {
+        var cleaned = String(text || '').trim();
+        if (!cleaned) return;
+        var tags = loadLeadFilterTags().filter(function (t) { return t !== cleaned; });
+        saveLeadFilterTags(tags);
+        renderLeadFilterTags();
+        refreshLeadFilterTagActiveState();
+      }
+
+      document.getElementById('lead-filter-tag-save')?.addEventListener('click', function () {
+        var si = document.getElementById('table-search');
+        if (!si) return;
+        addLeadFilterTag(si.value);
+      });
+
+      document.getElementById('lead-filter-tags-list')?.addEventListener('click', function (e) {
+        var removeBtn = e.target.closest('.lead-filter-tag-remove');
+        if (removeBtn) {
+          e.preventDefault();
+          e.stopPropagation();
+          var chip = removeBtn.closest('.lead-filter-tag');
+          if (!chip) return;
+          removeLeadFilterTag(chip.getAttribute('data-tag') || '');
+          return;
+        }
+        var applyBtn = e.target.closest('.lead-filter-tag-apply');
+        if (!applyBtn) return;
+        var chip = applyBtn.closest('.lead-filter-tag');
+        if (!chip) return;
+        var tag = chip.getAttribute('data-tag') || '';
+        var si = document.getElementById('table-search');
+        if (si && si.value.trim() === tag) {
+          si.value = '';
+          applyTableFilter();
+        } else {
+          applyLeadFilterTag(tag);
+        }
+        refreshLeadFilterTagActiveState();
+      });
+
+      function applyTableFilter() {
+        const searchInput = document.getElementById('table-search');
+        const q = searchInput ? searchInput.value.trim().toLowerCase() : '';
+        const vipBtn = document.getElementById('filter-very-important-only');
+        const vipOnly = vipBtn && vipBtn.getAttribute('aria-pressed') === 'true';
+        document.querySelectorAll('.clinic-row').forEach(function (row) {
+          const hay = (row.getAttribute('data-search') || '').toLowerCase();
+          const isVip = row.getAttribute('data-very-important') === '1';
+          let hide = false;
+          if (q && !hay.includes(q)) hide = true;
+          if (vipOnly && !isVip) hide = true;
+          row.classList.toggle('hidden', hide);
+          var cell = row.closest('.lead-card-container');
+          if (cell) cell.classList.toggle('hidden', hide);
+        });
+        clearSelectionsForHiddenRows();
+        refreshGridCardsDraggable();
+        refreshTableSearchClearVisibility();
+        refreshSelectAllState();
+        refreshSelectionVisuals();
+        refreshFilteredLeadCount();
+      }
+
+      function canReorderGridCards() {
+        if (!document.documentElement.classList.contains('cv-grid')) return false;
+        var si = document.getElementById('table-search');
+        if (si && si.value.trim()) return false;
+        var vip = document.getElementById('filter-very-important-only');
+        if (vip && vip.getAttribute('aria-pressed') === 'true') return false;
+        return true;
+      }
+
+      function refreshGridCardsDraggable() {
+        var ok = canReorderGridCards();
+        document.querySelectorAll('#clinics-grid-inner .clinic-card').forEach(function (card) {
+          if (ok) {
+            card.setAttribute('draggable', 'true');
+            card.classList.add('clinic-card--sortable');
+          } else {
+            card.removeAttribute('draggable');
+            card.classList.remove('clinic-card--sortable');
+          }
+        });
+      }
+
+      const searchInput = document.getElementById('table-search');
+      if (searchInput) {
+        searchInput.addEventListener('input', function () {
+          applyTableFilter();
+          refreshLeadFilterTagActiveState();
+        });
+      }
+      document.getElementById('table-search-clear')?.addEventListener('click', function () {
+        var si = document.getElementById('table-search');
+        if (si) {
+          si.value = '';
+          si.focus();
+        }
+        applyTableFilter();
+        refreshLeadFilterTagActiveState();
+      });
+      refreshTableSearchClearVisibility();
+      renderLeadFilterTags();
+
+      const filterVipBtn = document.getElementById('filter-very-important-only');
+      if (filterVipBtn) {
+        filterVipBtn.addEventListener('click', function () {
+          const on = filterVipBtn.getAttribute('aria-pressed') !== 'true';
+          filterVipBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+          filterVipBtn.classList.toggle('border-amber-500', on);
+          filterVipBtn.classList.toggle('bg-amber-50', on);
+          filterVipBtn.classList.toggle('text-amber-950', on);
+          filterVipBtn.classList.toggle('shadow-inner', on);
+          filterVipBtn.classList.toggle('ring-1', on);
+          filterVipBtn.classList.toggle('ring-amber-400/50', on);
+          applyTableFilter();
+          refreshSelectAllState();
+          refreshSelectionVisuals();
+        });
+      }
+
+      function normalizeLeadGroupTabId(groupId) {
+        if (groupId === 'uncategorized' || groupId === 'all' || groupId === '' || groupId == null) return 'uncategorized';
+        return String(groupId);
+      }
+
+      function dashboardHistoryState() {
+        return {
+          leadGroupTabId: normalizeLeadGroupTabId(currentLeadGroupTabId),
+          searchRecordId: activeSearchRecordId,
+        };
+      }
+
+      function applyDashboardUrlFromState(state, url) {
+        var u = url ? new URL(url, window.location.origin) : new URL(window.location.href);
+        var gid = 'uncategorized';
+        if (state && state.leadGroupTabId) {
+          gid = normalizeLeadGroupTabId(state.leadGroupTabId);
+        } else {
+          var rawGid = u.searchParams.get('group_id');
+          if (rawGid) gid = normalizeLeadGroupTabId(rawGid);
+        }
+        if (state && 'searchRecordId' in state) {
+          activeSearchRecordId = state.searchRecordId;
+        } else {
+          var rawSr = u.searchParams.get('search_record');
+          activeSearchRecordId = rawSr && String(rawSr).match(/^\d+$/) ? parseInt(rawSr, 10) : null;
+        }
+        return gid;
+      }
+
+      function replaceDashboardUrlForCurrentTab(historyMode) {
+        var u = new URL(window.location.href);
+        var gid = normalizeLeadGroupTabId(currentLeadGroupTabId);
+        if (gid === 'uncategorized') {
+          u.searchParams.delete('group_id');
+        } else {
+          u.searchParams.set('group_id', String(gid));
+        }
+        if (activeSearchRecordId != null) {
+          u.searchParams.set('search_record', String(activeSearchRecordId));
+        } else {
+          u.searchParams.delete('search_record');
+        }
+        u.searchParams.delete('collapse_chains');
+        var nextUrl = u.pathname + u.search + u.hash;
+        var state = dashboardHistoryState();
+        if (historyMode === 'push') {
+          window.history.pushState(state, '', nextUrl);
+        } else {
+          window.history.replaceState(state, '', nextUrl);
+        }
+      }
+
+      var currentLeadGroupTabId = normalizeLeadGroupTabId(
+        typeof initialLeadGroupTabIdFromPage === 'string' && initialLeadGroupTabIdFromPage
+          ? initialLeadGroupTabIdFromPage
+          : 'uncategorized'
+      );
+
+      function setLeadGroupTabActive(groupId) {
+        var want = normalizeLeadGroupTabId(groupId);
+        currentLeadGroupTabId = want;
+        document.querySelectorAll('#lead-group-tabs .lead-group-tab[data-group-id]').forEach(function (btn) {
+          var id = btn.getAttribute('data-group-id') || 'uncategorized';
+          var active = id === want;
+          btn.classList.toggle('lead-group-tab--active', active);
+          btn.setAttribute('aria-selected', active ? 'true' : 'false');
+        });
+      }
+
+      function syncLeadsAfterGroupFragmentSwap() {
+        refreshSelectAllState();
+        refreshSelectionVisuals();
+        refreshSetCategoryButtonState();
+        refreshBulkAssignGroupButtonState();
+        applyTableFilter();
+        if (window.htmx) {
+          var tb = document.getElementById('clinics-table-body');
+          if (tb) window.htmx.process(tb);
+        }
+        if (typeof window.__ensureGridHtmxBound === "function") window.__ensureGridHtmxBound();
+      }
+
+      (function bindLeadGroupTabDragDrop() {
+        var wrap = document.getElementById('lead-group-tabs');
+        if (!wrap) return;
+        var dragTabEl = null;
+
+        function enforceTabAfterUncategorized() {
+          var unc = wrap.querySelector('.lead-group-tab[data-group-id="uncategorized"]');
+          if (!unc || !dragTabEl) return;
+          var uncIdx = Array.prototype.indexOf.call(wrap.children, unc);
+          var dragIdx = Array.prototype.indexOf.call(wrap.children, dragTabEl);
+          if (dragIdx !== -1 && dragIdx < uncIdx) {
+            wrap.insertBefore(dragTabEl, unc.nextElementSibling);
+          }
+        }
+
+        function placeDragTabByPointer(clientX) {
+          var newBtn = document.getElementById('lead-group-new-btn');
+          var unc = wrap.querySelector('.lead-group-tab[data-group-id="uncategorized"]');
+          var list = wrap.querySelectorAll('.lead-group-tab--draggable');
+          if (!list.length) return;
+          var firstOther = null;
+          for (var j = 0; j < list.length; j++) {
+            if (list[j] !== dragTabEl) {
+              firstOther = list[j];
+              break;
+            }
+          }
+          if (firstOther) {
+            var r0 = firstOther.getBoundingClientRect();
+            if (clientX < r0.left + r0.width / 2) {
+              wrap.insertBefore(dragTabEl, firstOther);
+              return;
+            }
+          }
+          for (var i = 0; i < list.length; i++) {
+            var btn = list[i];
+            if (btn === dragTabEl) continue;
+            var rect = btn.getBoundingClientRect();
+            if (clientX < rect.left + rect.width / 2) {
+              wrap.insertBefore(dragTabEl, btn);
+              return;
+            }
+          }
+          if (newBtn) wrap.insertBefore(dragTabEl, newBtn);
+          else if (unc) {
+            var ref = unc.nextElementSibling;
+            while (ref && ref === dragTabEl) ref = ref.nextElementSibling;
+            if (ref) wrap.insertBefore(dragTabEl, ref);
+          }
+        }
+
+        wrap.addEventListener('dragstart', function (e) {
+          var t = e.target.closest('.lead-group-tab--draggable');
+          if (!t || !wrap.contains(t)) return;
+          dragTabEl = t;
+          e.dataTransfer.effectAllowed = 'move';
+          e.dataTransfer.setData('text/plain', t.getAttribute('data-group-id') || '');
+          t.classList.add('lead-group-tab--dragging');
+        });
+        wrap.addEventListener('dragend', function () {
+          if (dragTabEl) dragTabEl.classList.remove('lead-group-tab--dragging');
+          dragTabEl = null;
+        });
+        wrap.addEventListener('dragover', function (e) {
+          if (!dragTabEl) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'move';
+
+          var newBtn = document.getElementById('lead-group-new-btn');
+          var unc = wrap.querySelector('.lead-group-tab[data-group-id="uncategorized"]');
+
+          if (newBtn && (e.target === newBtn || newBtn.contains(e.target))) {
+            wrap.insertBefore(dragTabEl, newBtn);
+            enforceTabAfterUncategorized();
+            return;
+          }
+
+          var t = e.target.closest('.lead-group-tab[data-group-id]');
+          if (t && wrap.contains(t) && t !== dragTabEl) {
+            if (t.getAttribute('data-group-id') === 'uncategorized' && unc) {
+              var refU = unc.nextElementSibling;
+              while (refU && refU === dragTabEl) refU = refU.nextElementSibling;
+              if (refU) wrap.insertBefore(dragTabEl, refU);
+              else if (newBtn) wrap.insertBefore(dragTabEl, newBtn);
+              enforceTabAfterUncategorized();
+              return;
+            }
+            if (t.classList.contains('lead-group-tab--draggable')) {
+              var rect = t.getBoundingClientRect();
+              var before = e.clientX < rect.left + rect.width / 2;
+              if (before) {
+                wrap.insertBefore(dragTabEl, t);
+              } else {
+                var nextEl = t.nextElementSibling;
+                while (nextEl && nextEl !== newBtn && nextEl.classList && !nextEl.classList.contains('lead-group-tab--draggable')) {
+                  nextEl = nextEl.nextElementSibling;
+                }
+                if (!nextEl || nextEl === newBtn) wrap.insertBefore(dragTabEl, newBtn);
+                else wrap.insertBefore(dragTabEl, nextEl);
+              }
+            }
+          } else {
+            placeDragTabByPointer(e.clientX);
+          }
+          enforceTabAfterUncategorized();
+        });
+        wrap.addEventListener('drop', function (e) {
+          e.preventDefault();
+          var ids = [];
+          wrap.querySelectorAll('.lead-group-tab--draggable').forEach(function (btn) {
+            var id = parseInt(btn.getAttribute('data-group-id'), 10);
+            if (!isNaN(id)) ids.push(id);
+          });
+          if (!ids.length) return;
+          fetch(reorderLeadGroupsUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+            credentials: 'same-origin',
+            body: JSON.stringify({ order: ids }),
+          })
+            .then(function (res) {
+              return res.json().then(function (data) {
+                return { res: res, data: data };
+              });
+            })
+            .then(function (o) {
+              if (!o.res.ok) {
+                window.alert(typeof o.data.detail === 'string' ? o.data.detail : 'Could not save tab order.');
+                window.location.reload();
+              }
+            })
+            .catch(function () {
+              window.alert('Could not save tab order.');
+              window.location.reload();
+            });
+        });
+      })();
+
+      (function bindGridCardDragDrop() {
+        var inner = document.getElementById('clinics-grid-inner');
+        if (!inner) return;
+        var dragCardEl = null;
+        inner.addEventListener('dragstart', function (e) {
+          if (!canReorderGridCards()) return;
+          if (e.target.closest('a, button, input, textarea, label')) {
+            e.preventDefault();
+            return;
+          }
+          var card = e.target.closest('.clinic-card');
+          if (!card || !inner.contains(card)) return;
+          dragCardEl = card;
+          e.dataTransfer.effectAllowed = 'move';
+          e.dataTransfer.setData('text/plain', card.getAttribute('data-clinic-id') || '');
+          card.classList.add('clinic-card--card-dragging');
+        });
+        inner.addEventListener('dragend', function () {
+          if (dragCardEl) dragCardEl.classList.remove('clinic-card--card-dragging');
+          dragCardEl = null;
+        });
+        inner.addEventListener('dragover', function (e) {
+          if (!dragCardEl || !canReorderGridCards()) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'move';
+          var card = e.target.closest('.clinic-card');
+          if (!card || !inner.contains(card)) {
+            inner.appendChild(dragCardEl);
+            return;
+          }
+          if (card === dragCardEl) return;
+          var rect = card.getBoundingClientRect();
+          var before = e.clientY < rect.top + rect.height / 2;
+          if (before) inner.insertBefore(dragCardEl, card);
+          else inner.insertBefore(dragCardEl, card.nextSibling);
+        });
+        inner.addEventListener('drop', function (e) {
+          e.preventDefault();
+          if (!canReorderGridCards()) return;
+          var ids = [];
+          inner.querySelectorAll('.clinic-card').forEach(function (card) {
+            var id = card.getAttribute('data-clinic-id');
+            if (id) ids.push(parseInt(id, 10));
+          });
+          if (!ids.length) return;
+          var gid = normalizeLeadGroupTabId(currentLeadGroupTabId);
+          var body = { group_id: gid, order: ids };
+          if (activeSearchRecordId != null) body.search_record = activeSearchRecordId;
+          fetch(reorderLeadsUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+            credentials: 'same-origin',
+            body: JSON.stringify(body),
+          })
+            .then(function (res) {
+              return res.json().then(function (data) {
+                return { res: res, data: data };
+              });
+            })
+            .then(function (o) {
+              if (!o.res.ok) {
+                window.alert(typeof o.data.detail === 'string' ? o.data.detail : 'Could not save card order.');
+                switchLeadGroupTab(currentLeadGroupTabId, { force: true, skipHistory: true });
+              }
+            })
+            .catch(function () {
+              window.alert('Could not save card order.');
+              switchLeadGroupTab(currentLeadGroupTabId, { force: true, skipHistory: true });
+            });
+        });
+      })();
+
+      async function fetchLeadsTableFragment(groupId) {
+        var u = new URL(getLeadsTableUrl, window.location.origin);
+        var gid = normalizeLeadGroupTabId(groupId);
+        u.searchParams.set('group_id', gid === 'uncategorized' ? 'uncategorized' : String(gid));
+        if (activeSearchRecordId != null) u.searchParams.set('search_record', String(activeSearchRecordId));
+        var res = await fetch(u.toString(), { headers: { Accept: 'application/json' }, credentials: 'same-origin' });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        return res.json();
+      }
+
+      var leadGroupTabBusy = false;
+      async function switchLeadGroupTab(groupId, opts) {
+        opts = opts || {};
+        var want = normalizeLeadGroupTabId(groupId);
+        if (!opts.force && want === normalizeLeadGroupTabId(currentLeadGroupTabId)) {
+          return;
+        }
+        if (leadGroupTabBusy) return;
+        leadGroupTabBusy = true;
+        try {
+          var data = await fetchLeadsTableFragment(want);
+          if (!data.ok) throw new Error((data.detail && String(data.detail)) || 'Bad response');
+          var tb = document.getElementById('clinics-table-body');
+          var gridInner = document.getElementById('clinics-grid-inner');
+          if (tb) tb.innerHTML = data.tbody_html;
+          if (gridInner) gridInner.innerHTML = data.grid_html;
+          if (data.funnel_metrics) updateFunnelMetricsStrip(data.funnel_metrics);
+          if (data.group_counts) updateLeadGroupTabCounts(data.group_counts);
+          setLeadGroupTabActive(want);
+          if (!opts.skipHistory) {
+            replaceDashboardUrlForCurrentTab(opts.historyMode || (opts.fromPopstate ? 'replace' : 'push'));
+          }
+          syncLeadsAfterGroupFragmentSwap();
+          leadChatIndicatorSnapshot = '';
+          if (typeof window.__refreshLeadChatIndicators === 'function') {
+            window.__refreshLeadChatIndicators();
+          }
+        } catch (err) {
+          console.error(err);
+          window.alert('Could not load leads for this group.');
+        } finally {
+          leadGroupTabBusy = false;
+        }
+      }
+
+      document.getElementById('lead-group-tabs')?.addEventListener('click', function (e) {
+        var tab = e.target.closest('.lead-group-tab[data-group-id]');
+        if (!tab || tab.id === 'lead-group-new-btn') return;
+        e.preventDefault();
+        e.stopPropagation();
+        var gid = normalizeLeadGroupTabId(tab.getAttribute('data-group-id') || 'uncategorized');
+        if (gid === normalizeLeadGroupTabId(currentLeadGroupTabId)) return;
+        switchLeadGroupTab(gid, { historyMode: 'push' });
+      });
+
+      window.__dashboardHandlePopstate = function (e) {
+        var gid = applyDashboardUrlFromState(e.state, window.location.href);
+        switchLeadGroupTab(gid, { fromPopstate: true, skipHistory: true, force: true });
+      };
+
+      replaceDashboardUrlForCurrentTab('replace');
+
+      document.getElementById('lead-group-new-btn')?.addEventListener('click', async function (e) {
+        e.preventDefault();
+        var name = window.prompt('Name for the new group');
+        if (name == null) return;
+        name = String(name).trim().slice(0, 100);
+        if (!name) return;
+        try {
+          var res = await fetch(createLeadGroupUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-CSRFToken': getCsrfToken(),
+            },
+            credentials: 'same-origin',
+            body: JSON.stringify({ name: name }),
+          });
+          var data = await res.json().catch(function () { return {}; });
+          if (!res.ok || !data.ok) {
+            window.alert(typeof data.detail === 'string' ? data.detail : 'Could not create group.');
+            return;
+          }
+          var wrap = document.getElementById('lead-group-tabs');
+          var newBtn = document.getElementById('lead-group-new-btn');
+          if (wrap && newBtn) {
+            var b = document.createElement('button');
+            b.type = 'button';
+            b.setAttribute('role', 'tab');
+            b.className = 'lead-group-tab lead-group-tab--draggable rounded-t-md';
+            b.setAttribute('draggable', 'true');
+            b.setAttribute('data-group-id', String(data.id));
+            b.setAttribute('aria-selected', 'false');
+            var label = document.createElement('span');
+            label.className = 'relative inline-flex';
+            label.textContent = data.name;
+            var cnt = document.createElement('span');
+            cnt.className = 'lead-group-count absolute -right-3.5 -top-2.5 inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-slate-200 px-1.5 py-0.5 text-[11px] font-bold leading-none text-slate-600 ring-1 ring-white';
+            cnt.title = '0 lead(s) in this group';
+            cnt.textContent = '0';
+            label.appendChild(cnt);
+            b.appendChild(label);
+            wrap.insertBefore(b, newBtn);
+          }
+          var moveMenuWrap = document.getElementById('lead-group-move-menu-groups');
+          if (moveMenuWrap) {
+            var mb = document.createElement('button');
+            mb.type = 'button';
+            mb.setAttribute('role', 'menuitem');
+            mb.className =
+              'lead-group-move-pick flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm font-medium text-slate-800 transition hover:bg-violet-50/90 focus:bg-violet-50/90 focus:outline-none disabled:cursor-wait disabled:opacity-60';
+            mb.setAttribute('data-group-id', String(data.id));
+            mb.innerHTML =
+              '<svg class="h-5 w-5 shrink-0 text-amber-500" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z"/></svg><span class="min-w-0 flex-1 truncate"></span>';
+            mb.querySelector('span').textContent = data.name;
+            moveMenuWrap.appendChild(mb);
+          }
+          refreshBulkAssignGroupButtonState();
+          switchLeadGroupTab(String(data.id));
+        } catch (err) {
+          console.error(err);
+          window.alert('Network error creating group.');
+        }
+      });
+
+      var pendingMoveLeadIds = [];
+      var leadGroupMoveMenuOpen = false;
+      var leadGroupMoveMenuAnchor = null;
+
+      function clearLeadGroupMoveMenuErr() {
+        var el = document.getElementById('lead-group-move-menu-error');
+        if (!el) return;
+        el.classList.add('hidden');
+        el.textContent = '';
+      }
+
+      function closeLeadGroupMoveMenu() {
+        var m = document.getElementById('lead-group-move-menu');
+        if (m) {
+          m.classList.add('hidden');
+          m.setAttribute('aria-hidden', 'true');
+        }
+        var bulk = document.getElementById('bulk-assign-group-open');
+        if (bulk) bulk.setAttribute('aria-expanded', 'false');
+        leadGroupMoveMenuOpen = false;
+        leadGroupMoveMenuAnchor = null;
+        pendingMoveLeadIds = [];
+        clearLeadGroupMoveMenuErr();
+      }
+
+      function positionLeadGroupMoveMenu(anchor) {
+        var menu = document.getElementById('lead-group-move-menu');
+        if (!menu || !anchor) return;
+        menu.classList.remove('hidden');
+        menu.setAttribute('aria-hidden', 'false');
+        var mw = menu.offsetWidth;
+        var mh = menu.offsetHeight;
+        var r = anchor.getBoundingClientRect();
+        var left = r.left + r.width / 2 - mw / 2;
+        var top = r.bottom + 6;
+        left = Math.max(8, Math.min(left, window.innerWidth - mw - 8));
+        if (top + mh > window.innerHeight - 8) top = Math.max(8, r.top - mh - 6);
+        menu.style.left = left + 'px';
+        menu.style.top = top + 'px';
+      }
+
+      function openLeadGroupMoveMenu(anchor, ids) {
+        var list = (ids || []).map(function (x) { return String(x); }).filter(function (x) { return x; });
+        if (!list.length || !anchor) return;
+        pendingMoveLeadIds = list;
+        clearLeadGroupMoveMenuErr();
+        var cnt = document.getElementById('lead-group-move-menu-count');
+        if (cnt) {
+          var n = list.length;
+          cnt.textContent = n === 1 ? '1 lead selected' : n + ' leads selected';
+        }
+        leadGroupMoveMenuOpen = true;
+        leadGroupMoveMenuAnchor = anchor;
+        if (anchor.id === 'bulk-assign-group-open') anchor.setAttribute('aria-expanded', 'true');
+        positionLeadGroupMoveMenu(anchor);
+      }
+
+      function toggleLeadGroupMoveMenu(anchor, ids) {
+        if (leadGroupMoveMenuOpen && leadGroupMoveMenuAnchor === anchor) {
+          closeLeadGroupMoveMenu();
+          return;
+        }
+        if (leadGroupMoveMenuOpen) closeLeadGroupMoveMenu();
+        openLeadGroupMoveMenu(anchor, ids);
+      }
+
+      document.getElementById('bulk-assign-group-open')?.addEventListener('click', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        var ids = getUniqueSelectedLeadIds();
+        if (ids.length < 1) return;
+        toggleLeadGroupMoveMenu(this, ids);
+      });
+
+      document.addEventListener(
+        'click',
+        function (e) {
+          if (!leadGroupMoveMenuOpen) return;
+          var t = e.target;
+          if (t.closest && t.closest('#lead-group-move-menu')) return;
+          if (t.closest && t.closest('#bulk-assign-group-open')) return;
+          if (t.closest && t.closest('.move-to-group-btn')) return;
+          closeLeadGroupMoveMenu();
+        },
+        true
+      );
+
+      document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && leadGroupMoveMenuOpen) closeLeadGroupMoveMenu();
+      });
+
+      window.addEventListener('resize', function () {
+        if (leadGroupMoveMenuOpen && leadGroupMoveMenuAnchor) positionLeadGroupMoveMenu(leadGroupMoveMenuAnchor);
+      });
+
+      document.getElementById('lead-group-move-menu')?.addEventListener('click', async function (e) {
+        var pick = e.target.closest('.lead-group-move-pick');
+        if (!pick || !this.contains(pick)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        var raw = pick.getAttribute('data-group-id');
+        var groupId = raw === '' || raw === null ? null : parseInt(raw, 10);
+        if (groupId !== null && isNaN(groupId)) return;
+        var ids = pendingMoveLeadIds.map(function (v) { return parseInt(v, 10); }).filter(function (n) { return !isNaN(n); });
+        if (!ids.length) {
+          closeLeadGroupMoveMenu();
+          return;
+        }
+        var menu = document.getElementById('lead-group-move-menu');
+        var picks = menu ? menu.querySelectorAll('.lead-group-move-pick') : [];
+        picks.forEach(function (b) {
+          b.disabled = true;
+        });
+        clearLeadGroupMoveMenuErr();
+        try {
+          var res = await fetch(bulkAssignGroupUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-CSRFToken': getCsrfToken(),
+            },
+            credentials: 'same-origin',
+            body: JSON.stringify({ ids: ids, group_id: groupId }),
+          });
+          var data = await res.json().catch(function () { return {}; });
+          if (!res.ok) {
+            var errEl = document.getElementById('lead-group-move-menu-error');
+            if (errEl) {
+              errEl.textContent =
+                typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail || res.statusText);
+              errEl.classList.remove('hidden');
+              positionLeadGroupMoveMenu(leadGroupMoveMenuAnchor);
+            }
+            return;
+          }
+          closeLeadGroupMoveMenu();
+          await switchLeadGroupTab(currentLeadGroupTabId, { force: true, skipHistory: true });
+        } catch (err) {
+          var errEl2 = document.getElementById('lead-group-move-menu-error');
+          if (errEl2) {
+            errEl2.textContent = 'Network error: ' + err;
+            errEl2.classList.remove('hidden');
+            positionLeadGroupMoveMenu(leadGroupMoveMenuAnchor);
+          }
+        } finally {
+          picks.forEach(function (b) {
+            b.disabled = false;
+          });
+        }
+      });
+
+      const editDialog = document.getElementById('clinic-edit-dialog');
+      const editForm = document.getElementById('clinic-edit-form');
+      const editErr = document.getElementById('clinic-edit-error');
+      const editSaveBtn = document.getElementById('clinic-edit-save');
+      const editSaveLabel = document.getElementById('clinic-edit-save-label');
+      const editSaveSpin = document.getElementById('clinic-edit-save-spinner');
+
+      function closeClinicEditDialog() {
+        if (editDialog) editDialog.close();
+      }
+
+      function showEditError(msg) {
+        if (!editErr) return;
+        editErr.textContent = msg;
+        editErr.classList.remove('hidden');
+      }
+
+      function clearEditError() {
+        if (!editErr) return;
+        editErr.classList.add('hidden');
+        editErr.textContent = '';
+      }
+
+      async function openClinicEditModal(clinicId) {
+        if (!editDialog || !editForm) return;
+        clearEditError();
+        var idHidden = document.getElementById('clinic-edit-id');
+        if (idHidden) idHidden.value = '';
+        if (editSaveBtn) editSaveBtn.disabled = true;
+        editDialog.showModal();
+        try {
+          const res = await fetch(clinicApiDetailPrefix + clinicId, { credentials: 'same-origin' });
+          const data = await res.json().catch(function () { return null; });
+          if (!res.ok || !data) {
+            showEditError(data && data.detail ? String(data.detail) : 'Could not load lead.');
+            return;
+          }
+          document.getElementById('clinic-edit-id').value = String(data.id);
+          document.getElementById('clinic-edit-name').value = data.name || '';
+          var nums = Array.isArray(data.phone_numbers) && data.phone_numbers.length
+            ? data.phone_numbers
+            : (data.phone_number ? [data.phone_number] : []);
+          fillManualPhoneList(document.getElementById('clinic-edit-phones-list'), nums);
+          document.getElementById('clinic-edit-address').value = data.address || '';
+          document.getElementById('clinic-edit-website').value = data.website || '';
+          document.getElementById('clinic-edit-search-city').value = data.search_city || '';
+          document.getElementById('clinic-edit-search-country').value = data.search_country || '';
+          document.getElementById('clinic-edit-search-query').value = data.search_query || '';
+          var cat = (data.category || data.clinic_type || 'unknown').toLowerCase();
+          document.getElementById('clinic-edit-type').value = cat;
+          document.getElementById('clinic-edit-chain').checked = !!data.is_chain;
+          var waEl = document.getElementById('clinic-edit-whatsapp');
+          if (waEl) waEl.value = data.whatsapp_draft || '';
+          if (editSaveBtn) editSaveBtn.disabled = false;
+        } catch (e) {
+          showEditError('Could not load clinic.');
+        }
+      }
+
+      /** Name + address only for “click address to copy” (DOM + data-* fallbacks). */
+      function leadRowSnippetFromAddressTrigger(addrBtn) {
+        var row = addrBtn.closest('.clinic-row');
+        var name = '';
+        if (row) {
+          var link = row.querySelector('.clinic-name-link');
+          if (link) name = (link.textContent || '').replace(/\s+/g, ' ').trim();
+        }
+        var addr = (addrBtn.getAttribute('data-address-copy') || '').trim();
+        if (!addr) {
+          var clone = addrBtn.cloneNode(true);
+          var badge = clone.querySelector('.address-copy-done');
+          if (badge) badge.remove();
+          var tx = (clone.textContent || '').replace(/\s+/g, ' ').trim();
+          if (tx && tx !== '—') addr = tx;
+        }
+        if (!name) name = (addrBtn.getAttribute('data-clinic-name') || '').trim();
+        return { name: name, address: addr };
+      }
+
+      document.getElementById('clinics-panel')?.addEventListener('click', function (e) {
+        var dequeueBtn = e.target.closest('.lead-dequeue-btn');
+        if (dequeueBtn && this.contains(dequeueBtn)) {
+          e.preventDefault();
+          e.stopPropagation();
+          handleLeadDequeueClick(dequeueBtn);
+          return;
+        }
+        var moveGrpBtn = e.target.closest('.move-to-group-btn');
+        if (moveGrpBtn && this.contains(moveGrpBtn)) {
+          e.preventDefault();
+          e.stopPropagation();
+          var rawM = moveGrpBtn.getAttribute('data-clinic-id');
+          if (rawM) toggleLeadGroupMoveMenu(moveGrpBtn, [rawM]);
+          return;
+        }
+        var conversationLogBtn = e.target.closest('.lead-conversation-log-btn');
+        if (conversationLogBtn && this.contains(conversationLogBtn)) {
+          e.preventDefault();
+          e.stopPropagation();
+          var rawLog = conversationLogBtn.getAttribute('data-clinic-id');
+          var idLog = rawLog ? parseInt(rawLog, 10) : NaN;
+          if (!isNaN(idLog)) openLeadConversationLogDialog(idLog);
+          return;
+        }
+        var vipStarBtn = e.target.closest('.lead-vip-star-btn');
+        if (vipStarBtn && this.contains(vipStarBtn)) {
+          e.preventDefault();
+          e.stopPropagation();
+          var rawV = vipStarBtn.getAttribute('data-clinic-id');
+          var idV = rawV ? parseInt(rawV, 10) : NaN;
+          if (isNaN(idV)) return;
+          var nextVip = vipStarBtn.getAttribute('data-vip') !== 'true';
+          var starNodes = document.querySelectorAll('.clinic-row[data-clinic-id="' + idV + '"] .lead-vip-star-btn');
+          starNodes.forEach(function (b) { b.disabled = true; });
+          var urlV = leadVipUrlTemplate.replace('__ID__', String(idV));
+          fetch(urlV, {
+            method: 'PATCH',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-CSRFToken': getCsrfToken(),
+            },
+            body: JSON.stringify({ is_very_important: nextVip }),
+            credentials: 'same-origin',
+          })
+            .then(function (res) {
+              return res.json().then(function (data) {
+                if (!res.ok) throw new Error((data && data.detail) ? data.detail : 'Request failed');
+                return data;
+              });
+            })
+            .then(function (data) {
+              document.querySelectorAll('.clinic-row[data-clinic-id="' + idV + '"]').forEach(function (row) {
+                row.querySelectorAll('.lead-vip-star-btn').forEach(function (b) {
+                  setLeadVipStarVisual(b, !!data.is_very_important);
+                  b.disabled = false;
+                });
+                syncRowDataSearch(row, undefined, undefined, data.is_very_important);
+              });
+              applyTableFilter();
+            })
+            .catch(function () {
+              starNodes.forEach(function (b) { b.disabled = false; });
+            });
+          return;
+        }
+        var copyDetailsBtn = e.target.closest('.lead-card-copy-details-btn');
+        if (copyDetailsBtn && this.contains(copyDetailsBtn)) {
+          e.preventDefault();
+          e.stopPropagation();
+          var dn = (copyDetailsBtn.getAttribute('data-copy-name') || '').trim();
+          var da = (copyDetailsBtn.getAttribute('data-copy-address') || '').trim();
+          var dp = (copyDetailsBtn.getAttribute('data-copy-phone') || '').trim();
+          var dw = (copyDetailsBtn.getAttribute('data-copy-website') || '').trim();
+          var detailLines = [];
+          if (dn) detailLines.push('*' + dn + '*');
+          if (da) detailLines.push(da);
+          if (dp) detailLines.push(dp);
+          if (dw) detailLines.push(dw);
+          var clipText = detailLines.join('\n');
+          if (!clipText) return;
+          function copyDetailsDone() {
+            var prevTitle = copyDetailsBtn.getAttribute('title') || '';
+            copyDetailsBtn.setAttribute('title', 'Copied!');
+            copyDetailsBtn.classList.add('border-emerald-300', 'bg-emerald-50/90', 'text-emerald-800');
+            setTimeout(function () {
+              copyDetailsBtn.setAttribute('title', prevTitle || 'Copy name, address, phone & website');
+              copyDetailsBtn.classList.remove('border-emerald-300', 'bg-emerald-50/90', 'text-emerald-800');
+            }, 1600);
+          }
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(clipText).then(copyDetailsDone).catch(function () {
+              window.prompt('Copy:', clipText);
+              copyDetailsDone();
+            });
+          } else {
+            window.prompt('Copy:', clipText);
+            copyDetailsDone();
+          }
+          return;
+        }
+        var deleteLeadBtn = e.target.closest('.lead-card-delete-btn');
+        if (deleteLeadBtn && this.contains(deleteLeadBtn)) {
+          e.preventDefault();
+          e.stopPropagation();
+          var rawDel = deleteLeadBtn.getAttribute('data-clinic-id');
+          var idDel = rawDel ? parseInt(rawDel, 10) : NaN;
+          if (isNaN(idDel)) return;
+          if (!window.confirm('Delete this lead permanently? This cannot be undone.')) return;
+          deleteLeadBtn.disabled = true;
+          var urlDel = leadDeleteUrlTemplate.replace('__ID__', String(idDel));
+          fetch(urlDel, {
+            method: 'DELETE',
+            headers: {
+              'X-CSRFToken': getCsrfToken(),
+            },
+            credentials: 'same-origin',
+          })
+            .then(function (res) {
+              return res.json().then(function (data) {
+                return { res: res, data: data };
+              });
+            })
+            .then(function (o) {
+              if (!o.res.ok) {
+                var msg = typeof o.data.detail === 'string' ? o.data.detail : 'Could not delete.';
+                window.alert(msg);
+                return;
+              }
+              document.querySelectorAll('.clinic-row[data-clinic-id="' + idDel + '"]').forEach(function (row) {
+                row.remove();
+              });
+              refreshSelectAllState();
+              refreshSelectionVisuals();
+              refreshSetCategoryButtonState();
+              refreshBulkAssignGroupButtonState();
+              refreshTableSearchClearVisibility();
+              applyTableFilter();
+            })
+            .catch(function () {
+              window.alert('Network error while deleting.');
+            })
+            .finally(function () {
+              var still = document.querySelector('.lead-card-delete-btn[data-clinic-id="' + idDel + '"]');
+              if (still) still.disabled = false;
+            });
+          return;
+        }
+        var addrCopyBtn = e.target.closest('.address-copy-trigger');
+        if (addrCopyBtn && this.contains(addrCopyBtn)) {
+          e.preventDefault();
+          e.stopPropagation();
+          if (addrCopyBtn.disabled) return;
+          var sp = leadRowSnippetFromAddressTrigger(addrCopyBtn);
+          var addrLines = [];
+          if (sp.name) addrLines.push('*' + sp.name + '*');
+          if (sp.address) addrLines.push(sp.address);
+          var addrText = addrLines.join('\n');
+          if (!addrText) return;
+          function addrCopiedOk() {
+            var prev = addrCopyBtn.querySelector('.address-copy-done');
+            if (prev) prev.remove();
+            var prevTitle = addrCopyBtn.getAttribute('title') || '';
+            addrCopyBtn.setAttribute('title', 'Copied!');
+            addrCopyBtn.style.backgroundColor = 'rgb(236 253 245)';
+            addrCopyBtn.style.boxShadow = 'inset 0 0 0 2px rgba(52, 211, 153, 0.55)';
+            var tag = document.createElement('span');
+            tag.className = 'address-copy-done';
+            tag.textContent = 'Copied!';
+            tag.setAttribute('aria-hidden', 'true');
+            tag.style.cssText = 'position:absolute;top:2px;right:2px;z-index:2;font-size:10px;font-weight:700;line-height:1.2;color:#065f46;background:#a7f3d0;padding:2px 6px;border-radius:4px;pointer-events:none;box-shadow:0 1px 2px rgba(0,0,0,.08)';
+            addrCopyBtn.appendChild(tag);
+            setTimeout(function () {
+              addrCopyBtn.setAttribute('title', prevTitle);
+              addrCopyBtn.style.backgroundColor = '';
+              addrCopyBtn.style.boxShadow = '';
+              var t = addrCopyBtn.querySelector('.address-copy-done');
+              if (t) t.remove();
+            }, 1600);
+          }
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(addrText).then(addrCopiedOk).catch(function () {
+              window.prompt('Copy:', addrText);
+              addrCopiedOk();
+            });
+          } else {
+            window.prompt('Copy:', addrText);
+            addrCopiedOk();
+          }
+          return;
+        }
+        var waMeCopyBtn = e.target.closest('.wa-me-link-copy-btn');
+        if (waMeCopyBtn && this.contains(waMeCopyBtn)) {
+          e.preventDefault();
+          e.stopPropagation();
+          var waMeText = (waMeCopyBtn.getAttribute('data-wa-me-copy') || '').trim();
+          if (!waMeText) return;
+          function waMeCopiedOk() {
+            var prevTitle = waMeCopyBtn.getAttribute('title') || '';
+            waMeCopyBtn.setAttribute('title', 'Copied!');
+            waMeCopyBtn.classList.add('ring-2', 'ring-emerald-400/60');
+            setTimeout(function () {
+              waMeCopyBtn.setAttribute('title', prevTitle || 'Copy WhatsApp link');
+              waMeCopyBtn.classList.remove('ring-2', 'ring-emerald-400/60');
+            }, 1600);
+          }
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(waMeText).then(waMeCopiedOk).catch(function () {
+              window.prompt('Copy:', waMeText);
+              waMeCopiedOk();
+            });
+          } else {
+            window.prompt('Copy:', waMeText);
+            waMeCopiedOk();
+          }
+          return;
+        }
+        var waBtn = e.target.closest('.whatsapp-copy-btn');
+        if (waBtn && this.contains(waBtn)) {
+          e.preventDefault();
+          e.stopPropagation();
+          if (waBtn.disabled) return;
+          var rowWa = waBtn.closest('.clinic-row');
+          var storeWa = rowWa && rowWa.querySelector('.whatsapp-draft-store');
+          var text = storeWa ? storeWa.textContent : '';
+          if (!String(text).trim()) return;
+          function copiedOk() {
+            var label = waBtn.querySelector('span');
+            if (!label) return;
+            var prev = label.textContent;
+            label.textContent = 'Copied!';
+            setTimeout(function () { label.textContent = prev; }, 1600);
+          }
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text).then(copiedOk).catch(function () {
+              window.prompt('Copy message:', text);
+            });
+          } else {
+            window.prompt('Copy message:', text);
+          }
+          return;
+        }
+        const btn = e.target.closest('.clinic-edit-btn');
+        if (!btn || !this.contains(btn)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const raw = btn.getAttribute('data-clinic-id');
+        const id = raw ? parseInt(raw, 10) : NaN;
+        if (!isNaN(id)) openClinicEditModal(id);
+      });
+
+      document.getElementById('clinic-edit-close-x')?.addEventListener('click', closeClinicEditDialog);
+      document.getElementById('clinic-edit-cancel')?.addEventListener('click', closeClinicEditDialog);
+
+      editDialog?.addEventListener('click', function (e) {
+        if (e.target === editDialog) closeClinicEditDialog();
+      });
+
+      editForm?.addEventListener('submit', async function (e) {
+        e.preventDefault();
+        clearEditError();
+        const idEl = document.getElementById('clinic-edit-id');
+        const id = idEl ? String(idEl.value || '').trim() : '';
+        if (!id) {
+          showEditError('Lead is still loading — wait a moment, then try again. If this persists, close and reopen Edit.');
+          return;
+        }
+        const nameVal = document.getElementById('clinic-edit-name')
+          ? document.getElementById('clinic-edit-name').value.trim()
+          : '';
+        if (!nameVal) {
+          showEditError('Business name is required.');
+          return;
+        }
+        const url = clinicUpdateUrlTemplate.replace('__ID__', id);
+        const body = {
+          name: nameVal,
+          phone_numbers: collectManualPhonePayload(document.getElementById('clinic-edit-phones-list')),
+          address: document.getElementById('clinic-edit-address').value.trim(),
+          website: document.getElementById('clinic-edit-website').value.trim(),
+          search_city: document.getElementById('clinic-edit-search-city').value.trim(),
+          search_country: document.getElementById('clinic-edit-search-country').value.trim(),
+          search_query: document.getElementById('clinic-edit-search-query').value.trim(),
+          category: document.getElementById('clinic-edit-type').value,
+          is_chain: document.getElementById('clinic-edit-chain').checked,
+          whatsapp_draft: document.getElementById('clinic-edit-whatsapp')
+            ? document.getElementById('clinic-edit-whatsapp').value.trim()
+            : '',
+        };
+        if (editSaveBtn) editSaveBtn.disabled = true;
+        if (editSaveSpin) editSaveSpin.classList.remove('hidden');
+        if (editSaveLabel) editSaveLabel.textContent = 'Saving…';
+        try {
+          const res = await fetch(url, {
+            method: 'PATCH',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-CSRFToken': getCsrfToken(),
+            },
+            credentials: 'same-origin',
+            body: JSON.stringify(body),
+          });
+          const data = await res.json().catch(function () { return {}; });
+          if (!res.ok) {
+            showEditError(typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail || res.statusText));
+            return;
+          }
+          applyClinicEditToDom(data);
+          showClinicSaveSuccess(data.name);
+          closeClinicEditDialog();
+        } catch (err) {
+          showEditError('Network error: ' + err);
+        } finally {
+          if (editSaveBtn) editSaveBtn.disabled = false;
+          if (editSaveSpin) editSaveSpin.classList.add('hidden');
+          if (editSaveLabel) editSaveLabel.textContent = 'Save changes';
+        }
+      });
+
+      const leadCreateDialog = document.getElementById('lead-create-dialog');
+      const leadCreateForm = document.getElementById('lead-create-form');
+      const leadCreateErr = document.getElementById('lead-create-error');
+      const leadCreateSubmit = document.getElementById('lead-create-submit');
+      const leadCreateSubmitLabel = document.getElementById('lead-create-submit-label');
+      const leadCreateSubmitSpinner = document.getElementById('lead-create-submit-spinner');
+
+      function closeLeadCreateDialog() {
+        if (leadCreateDialog) leadCreateDialog.close();
+      }
+      function clearLeadCreateError() {
+        if (!leadCreateErr) return;
+        leadCreateErr.classList.add('hidden');
+        leadCreateErr.textContent = '';
+      }
+      function showLeadCreateError(msg) {
+        if (!leadCreateErr) return;
+        leadCreateErr.textContent = msg;
+        leadCreateErr.classList.remove('hidden');
+      }
+      function resetLeadCreateForm() {
+        if (!leadCreateForm) return;
+        leadCreateForm.reset();
+        var t = document.getElementById('lead-create-type');
+        if (t) t.value = 'unknown';
+        fillManualPhoneList(document.getElementById('lead-create-phones-list'), []);
+      }
+
+      document.getElementById('lead-manual-create-open')?.addEventListener('click', function () {
+        clearLeadCreateError();
+        resetLeadCreateForm();
+        leadCreateDialog?.showModal();
+        window.setTimeout(function () {
+          document.getElementById('lead-create-name')?.focus();
+        }, 0);
+      });
+      document.getElementById('lead-create-close-x')?.addEventListener('click', closeLeadCreateDialog);
+      document.getElementById('lead-create-cancel')?.addEventListener('click', closeLeadCreateDialog);
+      leadCreateDialog?.addEventListener('click', function (e) {
+        if (e.target === leadCreateDialog) closeLeadCreateDialog();
+      });
+      leadCreateForm?.addEventListener('submit', async function (e) {
+        e.preventDefault();
+        clearLeadCreateError();
+        var gid = normalizeLeadGroupTabId(currentLeadGroupTabId);
+        var payload = {
+          name: document.getElementById('lead-create-name').value.trim(),
+          phone_numbers: collectManualPhonePayload(document.getElementById('lead-create-phones-list')),
+          address: document.getElementById('lead-create-address').value.trim(),
+          website: document.getElementById('lead-create-website').value.trim(),
+          category: document.getElementById('lead-create-type').value,
+          group_id: gid === 'uncategorized' ? 'uncategorized' : gid,
+        };
+        if (!payload.name) {
+          showLeadCreateError('Name is required.');
+          return;
+        }
+        if (leadCreateSubmit) leadCreateSubmit.disabled = true;
+        if (leadCreateSubmitSpinner) leadCreateSubmitSpinner.classList.remove('hidden');
+        if (leadCreateSubmitLabel) leadCreateSubmitLabel.textContent = 'Creating…';
+        try {
+          var res = await fetch(leadManualCreateUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-CSRFToken': getCsrfToken(),
+            },
+            credentials: 'same-origin',
+            body: JSON.stringify(payload),
+          });
+          var data = await res.json().catch(function () { return {}; });
+          if (!res.ok) {
+            showLeadCreateError(typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail || res.statusText));
+            return;
+          }
+          closeLeadCreateDialog();
+          await switchLeadGroupTab(currentLeadGroupTabId, { force: true, skipHistory: true });
+        } catch (err) {
+          showLeadCreateError('Network error: ' + err);
+        } finally {
+          if (leadCreateSubmit) leadCreateSubmit.disabled = false;
+          if (leadCreateSubmitSpinner) leadCreateSubmitSpinner.classList.add('hidden');
+          if (leadCreateSubmitLabel) leadCreateSubmitLabel.textContent = 'Create lead';
+        }
+      });
+
+      const leadConversationLogDialog = document.getElementById('lead-conversation-log-dialog');
+      const leadConversationLogForm = document.getElementById('lead-conversation-log-form');
+      const leadConversationLogErr = document.getElementById('lead-conversation-log-error');
+      const leadConversationLogOk = document.getElementById('lead-conversation-log-ok');
+      const leadConversationLogSubmitBtn = document.getElementById('lead-conversation-log-submit');
+      const leadConversationLogSubmitLabel = document.getElementById('lead-conversation-log-submit-label');
+      const leadConversationLogSubmitSpinner = document.getElementById('lead-conversation-log-submit-spinner');
+      const leadConversationHistoryList = document.getElementById('lead-conversation-history-list');
+      const leadConversationHistoryEmpty = document.getElementById('lead-conversation-history-empty');
+
+      function closeLeadConversationLogDialog() {
+        if (leadConversationLogDialog) leadConversationLogDialog.close();
+      }
+
+      function clearLeadConversationLogMessages() {
+        if (leadConversationLogErr) {
+          leadConversationLogErr.classList.add('hidden');
+          leadConversationLogErr.textContent = '';
+        }
+        if (leadConversationLogOk) {
+          leadConversationLogOk.classList.add('hidden');
+          leadConversationLogOk.textContent = '';
+        }
+      }
+
+      function showLeadConversationLogError(msg) {
+        if (!leadConversationLogErr) return;
+        leadConversationLogErr.textContent = msg;
+        leadConversationLogErr.classList.remove('hidden');
+      }
+
+      function setLeadConversationLogVisual(leadId, hasLogs) {
+        // The left green "conversation log" ribbon was removed; the green frame
+        // (chat-record dispatched chrome) is the only card indicator now.
+      }
+
+      function renderLeadConversationHistory(logs) {
+        if (!leadConversationHistoryList || !leadConversationHistoryEmpty) return;
+        leadConversationHistoryList.innerHTML = '';
+        var list = Array.isArray(logs) ? logs.slice() : [];
+        list.sort(function (a, b) {
+          var ad = String((a && a.conversation_date) || '');
+          var bd = String((b && b.conversation_date) || '');
+          if (ad !== bd) return ad.localeCompare(bd);
+          var ac = String((a && a.created_at) || '');
+          var bc = String((b && b.created_at) || '');
+          return ac.localeCompare(bc);
+        });
+        if (!list.length) {
+          leadConversationHistoryEmpty.classList.remove('hidden');
+          return;
+        }
+        leadConversationHistoryEmpty.classList.add('hidden');
+        list.forEach(function (item) {
+          var wrap = document.createElement('div');
+          wrap.className = 'grid grid-cols-[9rem,1fr] gap-3 rounded-xl border border-slate-200/90 bg-slate-50/70 px-3 py-2';
+          var dateP = document.createElement('p');
+          dateP.className = 'text-[11px] font-semibold text-slate-700';
+          dateP.textContent = String(item && item.conversation_date ? item.conversation_date : '');
+          var rightCol = document.createElement('div');
+          rightCol.className = 'min-w-0 flex items-start gap-2';
+          var remarksP = document.createElement('p');
+          remarksP.className = 'min-w-0 flex-1 whitespace-pre-wrap break-words text-xs text-slate-700';
+          remarksP.textContent = String(item && item.remarks ? item.remarks : '');
+          var delBtn = document.createElement('button');
+          delBtn.type = 'button';
+          delBtn.className = 'lead-conversation-log-delete-btn inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-red-200 bg-white text-red-700 transition hover:bg-red-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500/30';
+          delBtn.setAttribute('data-log-id', String(item && item.id ? item.id : ''));
+          delBtn.setAttribute('title', 'Delete log');
+          delBtn.setAttribute('aria-label', 'Delete log');
+          delBtn.innerHTML = '<svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>';
+          wrap.appendChild(dateP);
+          rightCol.appendChild(remarksP);
+          rightCol.appendChild(delBtn);
+          wrap.appendChild(rightCol);
+          leadConversationHistoryList.appendChild(wrap);
+        });
+      }
+
+      async function loadLeadConversationHistory(leadId) {
+        if (!leadId) return;
+        if (leadConversationHistoryList) {
+          leadConversationHistoryList.innerHTML = '<p class="text-xs text-slate-400">Loading history...</p>';
+        }
+        if (leadConversationHistoryEmpty) {
+          leadConversationHistoryEmpty.classList.add('hidden');
+        }
+        var url = leadConversationLogUrlTemplate.replace('__ID__', String(leadId));
+        try {
+          var res = await fetch(url, { credentials: 'same-origin' });
+          var data = await res.json().catch(function () { return {}; });
+          if (!res.ok) {
+            renderLeadConversationHistory([]);
+            setLeadConversationLogVisual(leadId, false);
+            return;
+          }
+          var logs = data.logs || [];
+          renderLeadConversationHistory(logs);
+          setLeadConversationLogVisual(leadId, Array.isArray(logs) && logs.length > 0);
+        } catch (err) {
+          renderLeadConversationHistory([]);
+          setLeadConversationLogVisual(leadId, false);
+        }
+      }
+
+      async function deleteLeadConversationLog(leadId, logId) {
+        if (!leadId || !logId) return;
+        var url = leadConversationLogUrlTemplate.replace('__ID__', String(leadId)) + String(logId) + '/delete/';
+        try {
+          var res = await fetch(url, {
+            method: 'DELETE',
+            headers: {
+              'X-CSRFToken': getCsrfToken(),
+            },
+            credentials: 'same-origin',
+          });
+          var data = await res.json().catch(function () { return {}; });
+          if (!res.ok) {
+            showLeadConversationLogError(typeof data.detail === 'string' ? data.detail : 'Could not delete log.');
+            return;
+          }
+          await loadLeadConversationHistory(leadId);
+        } catch (err) {
+          showLeadConversationLogError('Network error while deleting log.');
+        }
+      }
+
+      function openLeadConversationLogDialog(clinicId) {
+        if (!leadConversationLogDialog) return;
+        clearLeadConversationLogMessages();
+        var idEl = document.getElementById('lead-conversation-log-id');
+        var dateEl = document.getElementById('lead-conversation-date');
+        var remarksEl = document.getElementById('lead-conversation-remarks');
+        if (idEl) idEl.value = String(clinicId);
+        if (dateEl) dateEl.value = new Date().toISOString().slice(0, 10);
+        if (remarksEl) {
+          remarksEl.value = '';
+          remarksEl.focus();
+        }
+        if (leadConversationLogSubmitBtn) leadConversationLogSubmitBtn.disabled = false;
+        leadConversationLogDialog.showModal();
+        loadLeadConversationHistory(clinicId);
+      }
+
+      document.getElementById('lead-conversation-log-close-x')?.addEventListener('click', closeLeadConversationLogDialog);
+      document.getElementById('lead-conversation-log-cancel')?.addEventListener('click', closeLeadConversationLogDialog);
+      leadConversationLogDialog?.addEventListener('click', function (e) {
+        if (e.target === leadConversationLogDialog) closeLeadConversationLogDialog();
+      });
+
+      leadConversationLogForm?.addEventListener('submit', async function (e) {
+        e.preventDefault();
+        clearLeadConversationLogMessages();
+        var idEl = document.getElementById('lead-conversation-log-id');
+        var dateEl = document.getElementById('lead-conversation-date');
+        var remarksEl = document.getElementById('lead-conversation-remarks');
+        var leadId = idEl ? String(idEl.value || '').trim() : '';
+        var dateVal = dateEl ? String(dateEl.value || '').trim() : '';
+        var remarksVal = remarksEl ? String(remarksEl.value || '').trim() : '';
+        if (!leadId) {
+          showLeadConversationLogError('Lead id is missing. Reopen the modal and try again.');
+          return;
+        }
+        if (!dateVal) {
+          showLeadConversationLogError('Date is required.');
+          return;
+        }
+        if (!remarksVal) {
+          showLeadConversationLogError('Remarks are required.');
+          return;
+        }
+        var url = leadConversationLogUrlTemplate.replace('__ID__', leadId);
+        if (leadConversationLogSubmitBtn) leadConversationLogSubmitBtn.disabled = true;
+        if (leadConversationLogSubmitSpinner) leadConversationLogSubmitSpinner.classList.remove('hidden');
+        if (leadConversationLogSubmitLabel) leadConversationLogSubmitLabel.textContent = 'Saving...';
+        try {
+          var res = await fetch(url, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-CSRFToken': getCsrfToken(),
+            },
+            credentials: 'same-origin',
+            body: JSON.stringify({
+              conversation_date: dateVal,
+              remarks: remarksVal,
+            }),
+          });
+          var data = await res.json().catch(function () { return {}; });
+          if (!res.ok) {
+            showLeadConversationLogError(typeof data.detail === 'string' ? data.detail : 'Could not save conversation log.');
+            return;
+          }
+          if (leadConversationLogOk) {
+            leadConversationLogOk.textContent = 'Conversation log saved.';
+            leadConversationLogOk.classList.remove('hidden');
+          }
+          await loadLeadConversationHistory(leadId);
+          if (remarksEl) remarksEl.value = '';
+          showClinicSaveSuccess('Conversation log');
+        } catch (err) {
+          showLeadConversationLogError('Network error while saving conversation log.');
+        } finally {
+          if (leadConversationLogSubmitBtn) leadConversationLogSubmitBtn.disabled = false;
+          if (leadConversationLogSubmitSpinner) leadConversationLogSubmitSpinner.classList.add('hidden');
+          if (leadConversationLogSubmitLabel) leadConversationLogSubmitLabel.textContent = 'Save log';
+        }
+      });
+
+      leadConversationHistoryList?.addEventListener('click', async function (e) {
+        var btn = e.target.closest('.lead-conversation-log-delete-btn');
+        if (!btn || !this.contains(btn)) return;
+        var idEl = document.getElementById('lead-conversation-log-id');
+        var leadId = idEl ? String(idEl.value || '').trim() : '';
+        var rawLogId = btn.getAttribute('data-log-id') || '';
+        var logId = rawLogId ? parseInt(rawLogId, 10) : NaN;
+        if (!leadId || isNaN(logId)) return;
+        if (!window.confirm('Delete this conversation log?')) return;
+        btn.disabled = true;
+        await deleteLeadConversationLog(leadId, logId);
+      });
+
+      const bulkManualDialog = document.getElementById('bulk-manual-dialog');
+      const bulkManualForm = document.getElementById('bulk-manual-form');
+      const bulkManualErr = document.getElementById('bulk-manual-error');
+      const bulkManualCount = document.getElementById('bulk-manual-count');
+      const bulkManualSubmit = document.getElementById('bulk-manual-submit');
+      const bulkManualSubmitLabel = document.getElementById('bulk-manual-submit-label');
+      const bulkManualSpinner = document.getElementById('bulk-manual-spinner');
+
+      function closeBulkManualDialog() {
+        if (bulkManualDialog) bulkManualDialog.close();
+      }
+
+      function clearBulkManualErr() {
+        if (!bulkManualErr) return;
+        bulkManualErr.classList.add('hidden');
+        bulkManualErr.textContent = '';
+      }
+
+      document.getElementById('bulk-manual-open')?.addEventListener('click', function () {
+        const ids = getUniqueSelectedLeadIds();
+        if (ids.length < 1) return;
+        clearBulkManualErr();
+        if (bulkManualCount) {
+          bulkManualCount.classList.remove('text-amber-800', 'font-medium');
+          const n = ids.length;
+          bulkManualCount.textContent =
+            n === 1 ? '1 lead selected.' : n + ' leads selected.';
+        }
+        bulkManualDialog?.showModal();
+      });
+
+      document.getElementById('bulk-manual-close-x')?.addEventListener('click', closeBulkManualDialog);
+      document.getElementById('bulk-manual-cancel')?.addEventListener('click', closeBulkManualDialog);
+      bulkManualDialog?.addEventListener('click', function (e) {
+        if (e.target === bulkManualDialog) closeBulkManualDialog();
+      });
+
+      bulkManualForm?.addEventListener('submit', async function (e) {
+        e.preventDefault();
+        clearBulkManualErr();
+        const ids = getUniqueSelectedLeadIds().map(function (v) {
+          return parseInt(v, 10);
+        }).filter(function (n) { return !isNaN(n); });
+        if (!ids.length) {
+          if (bulkManualErr) {
+            bulkManualErr.textContent = 'No rows selected.';
+            bulkManualErr.classList.remove('hidden');
+          }
+          return;
+        }
+        const category = document.getElementById('bulk-manual-category').value;
+        if (bulkManualSubmit) bulkManualSubmit.disabled = true;
+        if (bulkManualSpinner) bulkManualSpinner.classList.remove('hidden');
+        if (bulkManualSubmitLabel) bulkManualSubmitLabel.textContent = 'Applying…';
+        try {
+          const res = await fetch(bulkManualUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-CSRFToken': getCsrfToken(),
+            },
+            credentials: 'same-origin',
+            body: JSON.stringify({ ids: ids, category: category }),
+          });
+          const data = await res.json().catch(function () { return {}; });
+          if (!res.ok) {
+            if (bulkManualErr) {
+              bulkManualErr.textContent = typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail || res.statusText);
+              bulkManualErr.classList.remove('hidden');
+            }
+            return;
+          }
+          closeBulkManualDialog();
+          window.location.reload();
+        } catch (err) {
+          if (bulkManualErr) {
+            bulkManualErr.textContent = 'Network error: ' + err;
+            bulkManualErr.classList.remove('hidden');
+          }
+        } finally {
+          if (bulkManualSubmit) bulkManualSubmit.disabled = false;
+          if (bulkManualSpinner) bulkManualSpinner.classList.add('hidden');
+          if (bulkManualSubmitLabel) bulkManualSubmitLabel.textContent = 'Apply to selected';
+        }
+      });
+
+      window.__dashboardOnWorkspaceShown = function () {
+        if (typeof window.__ensureGridHtmxBound === 'function') window.__ensureGridHtmxBound();
+        if (typeof window.__syncLeadChatIndicatorPolling === 'function') {
+          window.__syncLeadChatIndicatorPolling();
+        }
+      };
+      window.__dashboardOnWorkspaceShown();
+
+      const huntForm = document.getElementById('hunt-form');
+      const huntStatus = document.getElementById('hunt-status');
+      const huntBtn = document.getElementById('hunt-btn');
+      const huntBtnLabel = document.getElementById('hunt-btn-label');
+      const huntSpinner = document.getElementById('hunt-spinner');
+
+      async function runHunt() {
+        huntStatus.textContent = '';
+        huntBtn.disabled = true;
+        huntSpinner.classList.remove('hidden');
+        const requireWebsiteEl = document.getElementById('hunt-require-website');
+        const require_website = !!(requireWebsiteEl && requireWebsiteEl.checked);
+        huntBtnLabel.textContent = 'Scraping…';
+
+        const city = document.getElementById('city').value.trim();
+        const stateEl = document.getElementById('hunt-state');
+        const state = stateEl ? stateEl.value.trim() : '';
+        const countryEl = document.getElementById('hunt-country');
+        const country = countryEl ? countryEl.value.trim() : '';
+        const query = document.getElementById('query').value.trim();
+        const shopKeywordEl = document.getElementById('hunt-shop-keyword');
+        const shop_keyword = shopKeywordEl ? shopKeywordEl.value.trim() : '';
+        const limitRaw = huntLimitInput ? huntLimitInput.value : String(defaultLimit);
+        const limit = parseInt(limitRaw, 10) || defaultLimit;
+        const qs = new URLSearchParams({ limit: String(limit) });
+        const url = huntApiPath + (huntApiPath.indexOf('?') >= 0 ? '&' : '?') + qs.toString();
+
+        try {
+          const res = await fetch(url, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-CSRFToken': getCsrfToken(),
+            },
+            credentials: 'same-origin',
+            body: JSON.stringify({ city, state, country, query, shop_keyword, require_website }),
+          });
+          const data = await res.json().catch(function () { return {}; });
+
+          if (!res.ok) {
+            const detail = data.detail || data.message || res.statusText;
+            huntStatus.textContent = 'Error: ' + (typeof detail === 'string' ? detail : JSON.stringify(detail));
+            huntStatus.classList.add('text-red-600');
+            return;
+          }
+
+          huntStatus.classList.remove('text-red-600');
+          huntStatus.textContent = data.message || ('Created ' + data.created + ', skipped ' + data.skipped_existing + '.');
+          if (data.errors && data.errors.length) {
+            huntStatus.textContent += ' Notes: ' + data.errors.join(' ');
+          }
+          if (data.enrich_errors && data.enrich_errors.length) {
+            huntStatus.textContent += ' Enrich warnings: ' + data.enrich_errors.length + ' issue(s).';
+          }
+          if (data.search_record_id != null) {
+            activeSearchRecordId = parseInt(String(data.search_record_id), 10) || data.search_record_id;
+          }
+          replaceDashboardUrlForCurrentTab('replace');
+          await switchLeadGroupTab(currentLeadGroupTabId, { force: true, skipHistory: true });
+        } catch (err) {
+          huntStatus.classList.add('text-red-600');
+          huntStatus.textContent = 'Network error: ' + err;
+        } finally {
+          huntBtn.disabled = false;
+          huntSpinner.classList.add('hidden');
+          huntBtnLabel.textContent = 'Run hunt';
+        }
+      }
+
+      if (huntForm) {
+        huntForm.addEventListener('submit', function (e) {
+          e.preventDefault();
+          runHunt();
+        });
+      }
+
+      const STATE_CITY_SUGGESTIONS = {
+        'Johor': ['Johor Bahru', 'Iskandar Puteri', 'Batu Pahat', 'Muar', 'Kluang', 'Skudai', 'Pasir Gudang', 'Segamat'],
+        'Kedah': ['Alor Setar', 'Sungai Petani', 'Kulim', 'Jitra', 'Langkawi', 'Gurun'],
+        'Kelantan': ['Kota Bharu', 'Pasir Mas', 'Tanah Merah', 'Tumpat', 'Gua Musang'],
+        'Kuala Lumpur': ['Bukit Bintang', 'Cheras', 'Kepong', 'Setapak', 'Bangsar', 'Mont Kiara', 'Sentul', 'Wangsa Maju'],
+        'Labuan': ['Victoria', 'Labuan Town'],
+        'Melaka': ['Melaka City', 'Ayer Keroh', 'Alor Gajah', 'Jasin', 'Batu Berendam'],
+        'Negeri Sembilan': ['Seremban', 'Port Dickson', 'Nilai', 'Bahau', 'Tampin'],
+        'Pahang': ['Kuantan', 'Temerloh', 'Bentong', 'Raub', 'Cameron Highlands', 'Pekan'],
+        'Penang': ['George Town', 'Bayan Lepas', 'Butterworth', 'Bukit Mertajam', 'Seberang Jaya', 'Tanjung Tokong'],
+        'Perak': ['Ipoh', 'Taiping', 'Teluk Intan', 'Sitiawan', 'Kampar', 'Batu Gajah', 'Lumut'],
+        'Perlis': ['Kangar', 'Arau', 'Padang Besar'],
+        'Putrajaya': ['Putrajaya'],
+        'Sabah': ['Kota Kinabalu', 'Sandakan', 'Tawau', 'Lahad Datu', 'Keningau', 'Penampang'],
+        'Sarawak': ['Kuching', 'Miri', 'Sibu', 'Bintulu', 'Samarahan', 'Sri Aman'],
+        'Selangor': ['Shah Alam', 'Petaling Jaya', 'Subang Jaya', 'Klang', 'Kajang', 'Puchong', 'Ampang', 'Cyberjaya', 'Rawang', 'Cheras'],
+        'Terengganu': ['Kuala Terengganu', 'Kemaman', 'Dungun', 'Chukai', 'Marang'],
+      };
+
+      const citySuggestBtn = document.getElementById('hunt-city-suggest');
+      const cityInput = document.getElementById('city');
+      const stateSelect = document.getElementById('hunt-state');
+      let citySuggestIndex = 0;
+      let citySuggestState = stateSelect ? stateSelect.value : '';
+
+      if (citySuggestBtn && cityInput && stateSelect) {
+        stateSelect.addEventListener('change', function () {
+          citySuggestIndex = 0;
+          citySuggestState = stateSelect.value;
+        });
+        citySuggestBtn.addEventListener('click', function () {
+          const state = stateSelect.value;
+          const options = STATE_CITY_SUGGESTIONS[state] || [];
+          if (!options.length) return;
+          if (state !== citySuggestState) {
+            citySuggestState = state;
+            citySuggestIndex = 0;
+          }
+          cityInput.value = options[citySuggestIndex % options.length];
+          citySuggestIndex += 1;
+          cityInput.dispatchEvent(new Event('input', { bubbles: true }));
+          cityInput.focus();
+        });
+      }
+
+      window.applyTableFilter = applyTableFilter;
+      window.refreshSelectAllState = refreshSelectAllState;
+      window.refreshSelectionVisuals = refreshSelectionVisuals;
+
+      (function initFolderTotalPipelineCount() {
+        var totalEl = document.getElementById('funnel-metric-total');
+        if (totalEl) {
+          var parsed = parseInt(String(totalEl.textContent || '').trim(), 10);
+          if (!isNaN(parsed)) folderTotalPipelineCount = parsed;
+        }
+        refreshFilteredLeadCount();
+      })();
+    })();
+  </script>

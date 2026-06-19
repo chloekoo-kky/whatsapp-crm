@@ -1,0 +1,8 @@
+{% for msg in messages %}
+  {% include "leads/partials/_chat_inbox_message_bubble.html" %}
+{% empty %}
+<p class="chat-inbox-empty-hint py-8 text-center text-xs text-slate-400">
+  No messages yet. After you force-send, the outbound template appears here.
+  Client replies require Meta webhook POSTs to <span class="font-mono">/whatsapp/webhook/</span>.
+</p>
+{% endfor %}

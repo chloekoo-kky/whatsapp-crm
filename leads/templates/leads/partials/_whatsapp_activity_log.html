@@ -1,0 +1,33 @@
+<div id="wa-activity-log" class="flex h-full min-h-[16rem] flex-col rounded-2xl border border-slate-200/80 bg-slate-950 text-slate-100 shadow-inner">
+  <div class="flex items-center justify-between gap-2 border-b border-slate-800 px-4 py-3">
+    <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400">Live activity</h3>
+    <div class="flex flex-wrap items-center justify-end gap-2">
+      <label
+        class="wa-activity-poll-toggle inline-flex cursor-pointer select-none items-center gap-1.5 rounded-md border border-slate-700 bg-slate-900 px-2 py-1 transition hover:border-slate-600 hover:bg-slate-800"
+        title="Periodic refresh of dispatch and gateway log entries (every 5s)">
+        <input type="checkbox" id="wa-activity-log-poll-toggle" class="sr-only" checked aria-describedby="wa-activity-log-poll-desc" />
+        <span class="hunt-option-switch hunt-option-switch--compact" aria-hidden="true">
+          <span class="hunt-option-switch__thumb"></span>
+        </span>
+        <span class="text-[10px] font-medium text-slate-300">Live poll</span>
+        <span id="wa-activity-log-poll-desc" class="sr-only">When on, refresh the activity log every few seconds while this page is open.</span>
+      </label>
+      <button
+        type="button"
+        class="inline-flex items-center gap-1 rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-[10px] font-medium text-slate-400 transition hover:border-slate-600 hover:bg-slate-800 hover:text-slate-200"
+        hx-post="{% url 'clear_live_activity_logs' %}"
+        hx-target="#live-activity-log-list"
+        hx-swap="innerHTML"
+        hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
+        hx-on::before-request="if (window.htmx) { var p = document.getElementById('live-activity-log-panel'); if (p) { htmx.trigger(p, 'htmx:abort'); p.removeAttribute('hx-trigger'); p.setAttribute('data-wa-poll-suppressed','1'); } }"
+        title="Clear dispatch and gateway log entries">
+        <span aria-hidden="true">🧹</span>
+        Reset
+      </button>
+      <span id="wa-activity-log-poll-status" class="text-[10px] text-slate-500">polling off</span>
+    </div>
+  </div>
+  <div id="live-activity-log-list" class="min-h-0 flex-1 overflow-y-auto px-3 py-2 font-mono text-[11px] leading-relaxed">
+    {% include "leads/partials/_whatsapp_activity_log_list.html" %}
+  </div>
+</div>

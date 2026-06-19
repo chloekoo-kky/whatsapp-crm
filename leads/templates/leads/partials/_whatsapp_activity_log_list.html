@@ -1,0 +1,5 @@
+{% for item in activity %}
+<p class="border-b border-slate-800/80 py-2 last:border-0 text-slate-300">{{ item.display_line }}</p>
+{% empty %}
+<p class="py-6 text-center text-slate-500">{% if cleared %}Logs cleared. Awaiting new activity…{% else %}No WhatsApp activity yet.{% endif %}</p>
+{% endfor %}

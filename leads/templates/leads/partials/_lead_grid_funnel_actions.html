@@ -1,0 +1,128 @@
+<div id="lead-queue-slot-{{ lead.id }}" class="inline-flex items-center" onclick="event.stopPropagation()">
+
+  {% if lead.whatsapp_status == 'pending' or lead.whatsapp_status == 'processing' or lead.whatsapp_status == 'sent' %}
+
+  <span class="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200/80" title="{% if lead.whatsapp_status == 'pending' %}In queue{% elif lead.whatsapp_status == 'sent' %}Dispatched{% else %}Sending{% endif %}">
+
+    <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+
+    <span class="sr-only">Queued</span>
+
+  </span>
+
+  {% else %}
+
+  <button type="button"
+
+    class="lead-join-queue-btn relative inline-flex h-8 w-8 items-center justify-center rounded-lg border border-sky-200 bg-sky-50 text-sky-700 shadow-sm transition hover:border-sky-300 hover:bg-sky-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/35"
+
+    hx-post="{% url 'lead_join_whatsapp_queue' pk=lead.id %}"
+
+    hx-target="#lead-queue-slot-{{ lead.id }}"
+
+    hx-swap="innerHTML"
+
+    hx-indicator="this"
+
+    title="Join WhatsApp queue">
+
+    <span class="sr-only">Join queue</span>
+
+    <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+
+    <svg class="htmx-indicator absolute h-3.5 w-3.5 animate-spin text-sky-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+
+  </button>
+
+  {% endif %}
+
+</div>
+
+{% if is_trash_view %}
+
+<button type="button"
+
+  class="lead-mark-junk-btn relative inline-flex h-8 w-8 items-center justify-center rounded-lg border border-rose-200 bg-rose-50 text-rose-700 shadow-sm transition hover:border-rose-300 hover:bg-rose-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500/35"
+
+  hx-delete="{% url 'delete_lead_permanently' pk=lead.id %}"
+
+  hx-target="#lead-grid-cell-{{ lead.id }}"
+
+  hx-swap="delete swap:300ms"
+
+  hx-confirm="Are you sure you want to permanently delete this lead from the database?"
+
+  hx-indicator="this"
+
+  hx-target-error="#lead-junk-error-{{ lead.id }}"
+
+  onclick="event.stopPropagation()"
+
+  title="Permanently delete lead">
+
+  <span class="sr-only">Permanently delete</span>
+
+  <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0"/></svg>
+
+  <svg class="htmx-indicator absolute h-3.5 w-3.5 animate-spin text-rose-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+
+</button>
+
+{% elif is_queue_view %}
+
+<button type="button"
+
+  class="lead-remove-pipeline-btn relative inline-flex h-8 w-8 items-center justify-center rounded-lg border border-rose-200 bg-rose-50 text-rose-700 shadow-sm transition hover:border-rose-300 hover:bg-rose-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500/35"
+
+  hx-post="{% url 'move_to_trash_group' pk=lead.id %}"
+
+  hx-target="#lead-grid-cell-{{ lead.id }}"
+
+  hx-target-error="#lead-junk-error-{{ lead.id }}"
+
+  hx-swap="delete swap:300ms"
+
+  hx-indicator="this"
+
+  onclick="event.stopPropagation()"
+
+  title="Remove from pipeline">
+
+  <span class="sr-only">Remove from pipeline</span>
+
+  <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"/></svg>
+
+  <svg class="htmx-indicator absolute h-3.5 w-3.5 animate-spin text-rose-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+
+</button>
+
+{% else %}
+
+<button type="button"
+
+  class="lead-mark-junk-btn relative inline-flex h-8 w-8 items-center justify-center rounded-lg border border-rose-200 bg-rose-50 text-rose-700 shadow-sm transition hover:border-rose-300 hover:bg-rose-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500/35"
+
+  hx-post="{% url 'move_to_trash_group' pk=lead.id %}"
+
+  hx-target="#lead-grid-cell-{{ lead.id }}"
+
+  hx-target-error="#lead-junk-error-{{ lead.id }}"
+
+  hx-swap="delete swap:300ms"
+
+  hx-indicator="this"
+
+  onclick="event.stopPropagation()"
+
+  title="Move to trash">
+
+  <span class="sr-only">Move to trash</span>
+
+  <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0"/></svg>
+
+  <svg class="htmx-indicator absolute h-3.5 w-3.5 animate-spin text-rose-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+
+</button>
+
+{% endif %}
+

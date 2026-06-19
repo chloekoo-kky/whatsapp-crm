@@ -1,0 +1,10 @@
+<div id="wa-config-toast" class="wa-toast pointer-events-auto flex items-start gap-3 rounded-xl border bg-white px-4 py-3.5 shadow-lg shadow-slate-900/10 ring-1 {% if ok|default:True %}border-emerald-200/90 ring-emerald-100/80{% else %}border-amber-200/90 ring-amber-100/80{% endif %}" role="status" data-auto-dismiss="1">
+  <span class="mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full {% if ok|default:True %}bg-emerald-50 text-emerald-600 ring-1 ring-emerald-200/80{% else %}bg-amber-50 text-amber-600 ring-1 ring-amber-200/80{% endif %}" aria-hidden="true">
+    {% if ok|default:True %}
+    <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+    {% else %}
+    <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z"/></svg>
+    {% endif %}
+  </span>
+  <p class="min-w-0 pt-0.5 text-sm font-medium leading-snug {% if ok|default:True %}text-slate-800{% else %}text-amber-950{% endif %}">{{ message|default:"Campaign settings saved." }}</p>
+</div>

@@ -1,0 +1,42 @@
+# Postgres stores roles in the volume only on first boot. If you change POSTGRES_* in
+# `.env` after the volume exists, connections fail (e.g. role does not exist). Fix:
+#   docker compose down
+#   docker volume rm clinic_crm_postgres_data   # name may differ: docker volume ls
+#   docker compose up --build
+services:
+  db:
+    image: postgres:16-alpine
+    env_file:
+      - .env
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-clinic_crm}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-clinic_crm_secret_change_me}
+      POSTGRES_DB: ${POSTGRES_DB:-clinic_crm}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  web:
+    build: .
+    env_file:
+      - .env
+    environment:
+      # Compose-interpolated only; WhatsApp/Meta vars come from env_file (avoid ${VAR:-} overriding with "").
+      DATABASE_URL: postgresql://${POSTGRES_USER:-clinic_crm}:${POSTGRES_PASSWORD:-clinic_crm_secret_change_me}@db:5432/${POSTGRES_DB:-clinic_crm}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./.env:/app/.env:ro
+      - ./leads:/app/leads
+      - ./clinic_crm:/app/clinic_crm
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  postgres_data:

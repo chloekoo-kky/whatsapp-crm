@@ -1,0 +1,106 @@
+<section id="wa-batch-schedule-card" class="grid gap-6 xl:grid-cols-2 xl:items-start">
+  <div class="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm">
+  <div class="flex flex-wrap items-center justify-between gap-3">
+    <div>
+      <h2 class="text-sm font-semibold text-slate-900">Schedule a batch send</h2>
+      <p class="mt-0.5 text-xs text-slate-500">Pick a date, time and template. Assign leads to the batch from the Queue tab. Runs at the chosen time via cron.</p>
+    </div>
+    <span class="inline-flex items-center gap-1.5 rounded-full bg-sky-50 px-3 py-1 text-[11px] font-semibold text-sky-700 ring-1 ring-sky-200/80">
+      <span class="h-1.5 w-1.5 rounded-full bg-sky-500"></span>
+      {{ batch_pending_count }} pending in queue
+    </span>
+  </div>
+
+  {% if batch_message %}
+  <div class="mt-4 rounded-xl border px-4 py-3 text-sm {% if batch_ok %}border-emerald-200/90 bg-emerald-50/70 text-emerald-800{% else %}border-amber-200/90 bg-amber-50/70 text-amber-900{% endif %}" role="status">
+    {{ batch_message }}
+  </div>
+  {% endif %}
+
+  <form class="mt-4 space-y-4"
+        hx-post="{% url 'whatsapp_schedule_batch' %}"
+        hx-target="#wa-batch-schedule-card"
+        hx-swap="outerHTML">
+    {% csrf_token %}
+    {% include "leads/partials/_outbound_template_field.html" %}
+
+    <div class="grid gap-4 sm:grid-cols-2 sm:items-end">
+      <div class="grid gap-1">
+        <label for="batch-scheduled-date" class="text-xs font-semibold text-slate-600">Date</label>
+        <input id="batch-scheduled-date" name="scheduled_date" type="date" required
+               min="{{ batch_now|date:'Y-m-d' }}"
+               class="h-10 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/15" />
+      </div>
+      <div class="grid gap-1">
+        <label for="batch-scheduled-time" class="text-xs font-semibold text-slate-600">Time</label>
+        <input id="batch-scheduled-time" name="scheduled_time" type="time" required
+               class="h-10 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/15" />
+      </div>
+    </div>
+    <button type="submit"
+            class="inline-flex h-10 w-full items-center justify-center rounded-xl bg-emerald-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40 sm:w-auto">
+      Schedule
+    </button>
+  </form>
+
+  <p class="mt-2 text-[11px] text-slate-400">Timezone: {{ campaign_timezone }}. Sends fire on the next cron tick at or after the chosen time.</p>
+  </div>
+
+  <div class="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm">
+    <p class="text-xs font-bold uppercase tracking-wide text-slate-500">Scheduled &amp; recent batches</p>
+    {% if batch_schedules %}
+    <div class="mt-3 space-y-2">
+      {% for s in batch_schedules %}
+      <details class="group overflow-hidden rounded-xl border border-slate-100 bg-white">
+        <summary class="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 hover:bg-slate-50">
+          <div class="min-w-0">
+            <p class="text-sm font-medium text-slate-800">
+              {{ s.scheduled_at|date:"M j, Y · g:i A" }}
+              <span class="ml-1 font-mono text-xs font-normal text-slate-500">{{ s.outbound_template_name }}</span>
+            </p>
+            <p class="mt-0.5 text-xs text-slate-500">
+              {{ s.total_leads }} lead{{ s.total_leads|pluralize }} assigned
+              {% if s.status == 'completed' %}· sent {{ s.sent_count }}{% if s.completed_at %} · {{ s.completed_at|date:"M j, g:i A" }}{% endif %}
+              {% elif s.status == 'failed' %}· failed{% if s.error %} · {{ s.error|truncatechars:60 }}{% endif %}
+              {% elif s.status == 'processing' %}· sending now…
+              {% elif s.status == 'cancelled' %}· cancelled
+              {% else %}· waiting for its scheduled time{% endif %}
+            </p>
+          </div>
+          <div class="flex shrink-0 items-center gap-2">
+            {% if s.status == 'pending' %}<span class="inline-flex rounded-full bg-sky-50 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-sky-700 ring-1 ring-sky-200/70">Scheduled</span>
+            {% elif s.status == 'completed' %}<span class="inline-flex rounded-full bg-emerald-50 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-700 ring-1 ring-emerald-200/70">Completed</span>
+            {% elif s.status == 'processing' %}<span class="inline-flex rounded-full bg-amber-50 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700 ring-1 ring-amber-200/70">Sending</span>
+            {% elif s.status == 'failed' %}<span class="inline-flex rounded-full bg-rose-50 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-rose-700 ring-1 ring-rose-200/70">Failed</span>
+            {% else %}<span class="inline-flex rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500">Cancelled</span>{% endif %}
+            <svg class="h-4 w-4 text-slate-400 transition group-open:rotate-180" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/></svg>
+          </div>
+        </summary>
+        <div class="border-t border-slate-100 px-4 py-3">
+          <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <div class="rounded-xl border border-sky-100 bg-sky-50/60 px-3 py-2.5"><p class="text-[10px] font-bold uppercase tracking-wide text-sky-700">Queue</p><p class="mt-1 text-xl font-semibold text-sky-950">{{ s.c_pending }}</p></div>
+            <div class="rounded-xl border border-amber-100 bg-amber-50/60 px-3 py-2.5"><p class="text-[10px] font-bold uppercase tracking-wide text-amber-700">Processing</p><p class="mt-1 text-xl font-semibold text-amber-950">{{ s.c_processing }}</p></div>
+            <div class="rounded-xl border border-emerald-100 bg-emerald-50/60 px-3 py-2.5"><p class="text-[10px] font-bold uppercase tracking-wide text-emerald-700">Sent</p><p class="mt-1 text-xl font-semibold text-emerald-950">{{ s.c_sent }}</p></div>
+            <div class="rounded-xl border border-rose-100 bg-rose-50/60 px-3 py-2.5"><p class="text-[10px] font-bold uppercase tracking-wide text-rose-700">Failed</p><p class="mt-1 text-xl font-semibold text-rose-950">{{ s.c_failed }}</p></div>
+          </div>
+          {% if s.status == 'pending' %}
+          <div class="mt-3 flex justify-end">
+            <button type="button"
+                    hx-post="{% url 'whatsapp_cancel_batch' s.pk %}"
+                    hx-target="#wa-batch-schedule-card"
+                    hx-swap="outerHTML"
+                    hx-confirm="Cancel this scheduled batch? Assigned leads stay in the queue, unassigned."
+                    class="inline-flex h-8 items-center rounded-lg border border-slate-200 px-3 text-xs font-semibold text-slate-600 transition hover:border-rose-300 hover:bg-rose-50 hover:text-rose-700">
+              Cancel batch
+            </button>
+          </div>
+          {% endif %}
+        </div>
+      </details>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="mt-3 rounded-xl border border-dashed border-slate-200 px-4 py-6 text-center text-sm text-slate-400">No batches scheduled yet.</p>
+    {% endif %}
+  </div>
+</section>

@@ -1,0 +1,83 @@
+# =============================================================================
+# Environment (secrets — SERPER_API_KEY, GEMINI_API_KEY, DATABASE_URL, etc.)
+# =============================================================================
+.env
+.env.*
+!.env.example
+# Any other "*.env" files at repo root or in subdirs (e.g. staging.env).
+*.env
+
+# =============================================================================
+# Python
+# =============================================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg
+*.egg-info/
+.eggs/
+dist/
+build/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# Testing / coverage / type checking
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# =============================================================================
+# Django
+# =============================================================================
+*.log
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+staticfiles/
+media/
+*.pot
+
+# =============================================================================
+# Docker (local data / bind mounts — not application source)
+# =============================================================================
+.docker-data/
+docker-data/
+
+# =============================================================================
+# IDE / editors
+# =============================================================================
+.vscode/
+.idea/
+.cursor/
+*.swp
+*.swo
+*~
+
+# =============================================================================
+# OS
+# =============================================================================
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# =============================================================================
+# Misc
+# =============================================================================
+*.bak
+.cursorignore
