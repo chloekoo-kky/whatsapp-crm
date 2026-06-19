@@ -61,6 +61,11 @@ class Migration(migrations.Migration):
             },
         ),
         migrations.RenameModel(old_name="Clinic", new_name="Lead"),
+        migrations.RenameIndex(
+            model_name="lead",
+            new_name="leads_category_idx",
+            old_name="leads_cl_ty_idx",
+        ),
         migrations.RenameField(
             model_name="lead",
             old_name="clinic_type",
@@ -75,11 +80,6 @@ class Migration(migrations.Migration):
         migrations.RemoveConstraint(
             model_name="lead",
             name="unique_clinic_name_address",
-        ),
-        migrations.RenameIndex(
-            model_name="lead",
-            new_name="leads_category_idx",
-            old_name="leads_cl_ty_idx",
         ),
         migrations.AddField(
             model_name="lead",

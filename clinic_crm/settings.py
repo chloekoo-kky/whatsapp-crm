@@ -29,7 +29,27 @@ _allowed = env(
         "localhost,127.0.0.1,testserver,https://advance-ronald-complexity-omissions.trycloudflare.com",
     ),
 )
-ALLOWED_HOSTS = [h.strip() for h in str(_allowed).split(",") if h.strip()]
+ALLOWED_HOSTS = [
+    h.strip().removeprefix("https://").removeprefix("http://").split("/")[0]
+    for h in str(_allowed).split(",")
+    if h.strip()
+]
+
+_csrf_origins = env(
+    "CSRF_TRUSTED_ORIGINS",
+    default=os.getenv("CSRF_TRUSTED_ORIGINS", ""),
+)
+CSRF_TRUSTED_ORIGINS = []
+for _raw in str(_csrf_origins).split(","):
+    _o = _raw.strip()
+    if not _o:
+        continue
+    if _o.startswith("http://") or _o.startswith("https://"):
+        CSRF_TRUSTED_ORIGINS.append(_o)
+    else:
+        _host = _o.removeprefix("https://").removeprefix("http://").split("/")[0]
+        if _host:
+            CSRF_TRUSTED_ORIGINS.append(f"https://{_host}")
 
 SERPER_API_KEY = env("SERPER_API_KEY", default="")
 # Reserved for future AI features (not used by the app today).
