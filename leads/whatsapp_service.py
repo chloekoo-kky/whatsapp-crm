@@ -192,12 +192,33 @@ def _approved_templates_from_config(config: WhatsAppConfig) -> list[dict[str, An
     return out
 
 
+def _approved_templates_from_synced_config(
+    config: WhatsAppConfig | None = None,
+) -> list[dict[str, Any]]:
+    cfg = config or WhatsAppConfig.load()
+    return [
+        t
+        for t in _approved_templates_from_config(cfg)
+        if (t.get("status") or "APPROVED").upper() == "APPROVED"
+    ]
+
+
 def known_meta_template_names() -> frozenset[str]:
-    config = WhatsAppConfig.load()
-    synced = {str(t["name"]).strip() for t in _approved_templates_from_config(config)}
-    if synced:
-        return frozenset(synced | set(APPROVED_META_TEMPLATES))
-    return APPROVED_META_TEMPLATES
+    """Template names allowed for outbound send — synced YCloud catalog only."""
+    return frozenset(
+        str(t["name"]).strip()
+        for t in _approved_templates_from_synced_config()
+        if str(t.get("name") or "").strip()
+    )
+
+
+def _default_template_from_catalog(catalog: list[dict[str, Any]]) -> str:
+    names = {str(t.get("name") or "").strip() for t in catalog}
+    if DEFAULT_META_TEMPLATE_NAME in names:
+        return DEFAULT_META_TEMPLATE_NAME
+    if catalog:
+        return str(catalog[0]["name"]).strip()
+    return DEFAULT_META_TEMPLATE_NAME
 
 
 def _meta_template_body_from_components(components: Any) -> str:
@@ -223,14 +244,10 @@ def _normalize_meta_template_language(language: str) -> str:
 
 
 def meta_template_choices_for_ui() -> tuple[tuple[str, str], ...]:
-    """Dropdown choices: synced Meta catalog when present, else built-in defaults."""
-    config = WhatsAppConfig.load()
-    templates = [
-        t for t in _approved_templates_from_config(config)
-        if (t.get("status") or "APPROVED").upper() == "APPROVED"
-    ]
+    """Dropdown choices from the synced YCloud template catalog."""
+    templates = _approved_templates_from_synced_config()
     if not templates:
-        return APPROVED_META_TEMPLATE_CHOICES
+        return (("", "— Sync templates from YCloud (Update) —"),)
 
     choices: list[tuple[str, str]] = []
     for item in sorted(templates, key=lambda t: str(t.get("name") or "").lower()):
@@ -271,22 +288,23 @@ def fetch_meta_message_templates_from_api() -> list[dict[str, Any]]:
 
 
 def sync_meta_message_templates_to_config() -> tuple[int, str | None]:
-    """Refresh ``WhatsAppConfig.meta_message_templates`` from Meta. Returns (count, error)."""
+    """Refresh ``WhatsAppConfig.meta_message_templates`` from YCloud. Returns (count, error)."""
     try:
         catalog = fetch_meta_message_templates_from_api()
     except Exception as exc:
-        logger.warning("Meta template sync failed: %s", exc)
+        logger.warning("YCloud template sync failed: %s", exc)
         return 0, str(exc)
 
     if not catalog:
-        return 0, "No approved message templates returned by Meta."
+        return 0, "No approved message templates returned by YCloud for this account."
 
     config = WhatsAppConfig.load()
     config.meta_message_templates = catalog
     config.meta_templates_synced_at = timezone.now()
-    active = normalize_outbound_template_name(config.outbound_template_name)
-    if active not in {t["name"] for t in catalog}:
-        config.outbound_template_name = DEFAULT_META_TEMPLATE_NAME
+    catalog_names = {str(t["name"]).strip() for t in catalog}
+    active = (config.outbound_template_name or "").strip()
+    if active not in catalog_names:
+        config.outbound_template_name = _default_template_from_catalog(catalog)
     config.save(
         update_fields=[
             "meta_message_templates",
@@ -297,12 +315,55 @@ def sync_meta_message_templates_to_config() -> tuple[int, str | None]:
     return len(catalog), None
 
 
+def ensure_ycloud_templates_synced() -> tuple[bool, str]:
+    """Load approved templates from YCloud when the local catalog is empty."""
+    if _approved_templates_from_synced_config():
+        return True, ""
+    count, error = sync_meta_message_templates_to_config()
+    if error:
+        return False, f"Template sync failed: {error}"
+    if count <= 0:
+        return (
+            False,
+            "No approved templates found on YCloud. Create one in YCloud/Meta, then click Update.",
+        )
+    return True, ""
+
+
 def normalize_outbound_template_name(name: str) -> str:
-    """Return a known Meta template name, falling back to the default."""
+    """Return a synced YCloud template name, or the catalog default when unset."""
     cleaned = (name or "").strip()
-    if cleaned in known_meta_template_names():
-        return cleaned
-    return DEFAULT_META_TEMPLATE_NAME
+    known = known_meta_template_names()
+    if known:
+        if cleaned in known:
+            return cleaned
+        return _default_template_from_catalog(_approved_templates_from_synced_config())
+    return cleaned or DEFAULT_META_TEMPLATE_NAME
+
+
+def validate_outbound_template_name(template_name: str | None) -> tuple[bool, str]:
+    """Ensure the template exists in the synced YCloud catalog before send."""
+    synced_ok, sync_error = ensure_ycloud_templates_synced()
+    if not synced_ok:
+        return False, sync_error
+
+    known = known_meta_template_names()
+    if not known:
+        return False, "No approved templates found on YCloud."
+
+    if template_name and str(template_name).strip():
+        selected = str(template_name).strip()
+    else:
+        config = WhatsAppConfig.load()
+        selected = normalize_outbound_template_name(config.outbound_template_name)
+
+    if selected not in known:
+        names = ", ".join(sorted(known)[:8])
+        return (
+            False,
+            f"Template '{selected}' is not approved on YCloud. Sync templates and choose one of: {names}",
+        )
+    return True, ""
 
 
 def get_active_config_template_name() -> str:
@@ -652,6 +713,13 @@ def send_text_to_lead(
     if not to_number:
         mark_failed(lead, "No valid phone number on lead.")
         return False, "No valid phone number on lead."
+
+    valid, template_error = validate_outbound_template_name(template_name)
+    if not valid:
+        detail = append_meta_dispatch_origin(template_error)
+        record_whatsapp_activity_warning(detail, lead=lead)
+        mark_failed(lead, detail)
+        return False, detail
 
     payload = build_meta_template_payload(lead, template_name=template_name)
     logger.info("YCloud sendDirectly template to %s from %s", to_number, from_number)

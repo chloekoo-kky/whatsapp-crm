@@ -967,6 +967,58 @@ class WhatsAppMetaTemplateSyncTests(TestCase):
         self.assertEqual(len(config.meta_message_templates), 2)
         self.assertIsNotNone(config.meta_templates_synced_at)
 
+    def test_known_meta_template_names_requires_synced_catalog(self):
+        from leads.models import WhatsAppConfig
+        from leads.whatsapp_service import known_meta_template_names
+
+        config = WhatsAppConfig.load()
+        config.meta_message_templates = []
+        config.save(update_fields=["meta_message_templates"])
+        self.assertEqual(known_meta_template_names(), frozenset())
+
+    def test_validate_outbound_template_name_accepts_synced_name(self):
+        from leads.models import WhatsAppConfig
+        from leads.whatsapp_service import validate_outbound_template_name
+
+        config = WhatsAppConfig.load()
+        config.meta_message_templates = [
+            {"name": "hello_clinic", "status": "APPROVED", "language": "en", "body": "Hi"},
+        ]
+        config.save(update_fields=["meta_message_templates"])
+
+        ok, err = validate_outbound_template_name("hello_clinic")
+        self.assertTrue(ok)
+        self.assertEqual(err, "")
+
+    def test_validate_outbound_template_name_rejects_unknown_name(self):
+        from leads.models import WhatsAppConfig
+        from leads.whatsapp_service import validate_outbound_template_name
+
+        config = WhatsAppConfig.load()
+        config.meta_message_templates = [
+            {"name": "hello_clinic", "status": "APPROVED", "language": "en", "body": "Hi"},
+        ]
+        config.save(update_fields=["meta_message_templates"])
+
+        ok, err = validate_outbound_template_name("just_to_say_hi")
+        self.assertFalse(ok)
+        self.assertIn("not approved on YCloud", err)
+
+    @patch("leads.whatsapp_service.fetch_meta_message_templates_from_api")
+    def test_normalize_outbound_template_name_uses_catalog_default(self, mock_fetch):
+        from leads.models import WhatsAppConfig
+        from leads.whatsapp_service import normalize_outbound_template_name, sync_meta_message_templates_to_config
+
+        mock_fetch.return_value = [
+            {"name": "hello_clinic", "status": "APPROVED", "language": "en", "body": "Hi"},
+        ]
+        sync_meta_message_templates_to_config()
+        config = WhatsAppConfig.load()
+        config.outbound_template_name = "just_to_say_hi"
+        config.save(update_fields=["outbound_template_name"])
+
+        self.assertEqual(normalize_outbound_template_name("just_to_say_hi"), "hello_clinic")
+
     @patch("leads.views.sync_meta_message_templates_to_config")
     def test_refresh_meta_templates_view_returns_toast_and_oob_field(self, mock_sync):
         mock_sync.return_value = (3, None)
@@ -975,7 +1027,7 @@ class WhatsAppMetaTemplateSyncTests(TestCase):
         response = client.post(reverse("whatsapp_refresh_meta_templates"))
         self.assertEqual(response.status_code, 200)
         body = response.content.decode()
-        self.assertIn("Synced 3 approved template(s)", body)
+        self.assertIn("Synced 3 approved template(s) from YCloud", body)
         self.assertIn('id="outbound-template-field"', body)
         self.assertIn("hx-swap-oob", body)
         mock_sync.assert_called_once()

@@ -1233,7 +1233,7 @@ def whatsapp_refresh_meta_templates(request):
 
     toast_html = render_to_string(
         "leads/partials/_whatsapp_config_toast.html",
-        {"message": f"Synced {count} approved template(s) from Meta."},
+        {"message": f"Synced {count} approved template(s) from YCloud."},
         request=request,
     )
     field_oob = render_to_string(

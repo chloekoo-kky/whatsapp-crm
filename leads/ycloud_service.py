@@ -186,77 +186,100 @@ def send_message_directly(payload: dict[str, Any]) -> tuple[bool, str, dict[str,
         return True, "", {}
 
 
+def _parse_template_row(row: dict[str, Any]) -> dict[str, Any] | None:
+    status = (row.get("status") or "").upper()
+    if status and status != "APPROVED":
+        return None
+    name = str(row.get("name") or "").strip()
+    if not name:
+        return None
+    language = str(row.get("language") or "en").strip()
+    if language.lower() in ("en_us", "en"):
+        language = "en"
+    body = ""
+    components = row.get("components")
+    if isinstance(components, list):
+        for comp in components:
+            if isinstance(comp, dict) and (comp.get("type") or "").upper() == "BODY":
+                body = str(comp.get("text") or "").strip()[:500]
+                break
+    return {
+        "name": name,
+        "status": status or "APPROVED",
+        "language": language,
+        "body": body,
+        "wabaId": str(row.get("wabaId") or "").strip(),
+    }
+
+
+def _fetch_approved_templates_page(
+    client: httpx.Client, *, waba_id: str = ""
+) -> list[dict[str, Any]]:
+    params: dict[str, Any] = {"limit": 100}
+    if waba_id:
+        params["filter.wabaId"] = waba_id
+
+    catalog: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    offset = 0
+
+    while True:
+        page_params = {**params, "offset": offset}
+        response = client.get(
+            YCLOUD_TEMPLATES_URL,
+            params=page_params,
+            headers=ycloud_headers(),
+        )
+        if response.status_code != 200:
+            raise ValueError(extract_ycloud_error(response))
+
+        payload = response.json()
+        items = payload.get("items") if isinstance(payload, dict) else None
+        if not isinstance(items, list):
+            items = payload.get("data") if isinstance(payload, dict) else []
+        if not isinstance(items, list):
+            break
+
+        for row in items:
+            if not isinstance(row, dict):
+                continue
+            parsed = _parse_template_row(row)
+            if not parsed:
+                continue
+            key = (parsed["name"], parsed["language"])
+            if key in seen:
+                continue
+            seen.add(key)
+            catalog.append(parsed)
+
+        page = payload.get("page") if isinstance(payload, dict) else {}
+        length = page.get("length") if isinstance(page, dict) else len(items)
+        limit = page.get("limit") if isinstance(page, dict) else params["limit"]
+        if not length or length < limit:
+            break
+        offset += int(length)
+
+    catalog.sort(key=lambda t: (t["name"].lower(), t["language"]))
+    return catalog
+
+
 def fetch_approved_templates() -> list[dict[str, Any]]:
     """List APPROVED WhatsApp templates from YCloud."""
     api_key = ycloud_api_key()
     if not api_key:
         raise ValueError("YCLOUD_API_KEY is required.")
 
-    params: dict[str, Any] = {"limit": 100}
     waba_id = ycloud_waba_id()
-    if waba_id:
-        params["filter.wabaId"] = waba_id
-
-    catalog: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    offset = 0
-
     with httpx.Client(timeout=45.0) as client:
-        while True:
-            page_params = {**params, "offset": offset}
-            response = client.get(
-                YCLOUD_TEMPLATES_URL,
-                params=page_params,
-                headers=ycloud_headers(),
+        if waba_id:
+            catalog = _fetch_approved_templates_page(client, waba_id=waba_id)
+            if catalog:
+                return catalog
+            logger.warning(
+                "No YCloud templates for WABA %s; retrying without WABA filter.",
+                waba_id,
             )
-            if response.status_code != 200:
-                raise ValueError(extract_ycloud_error(response))
-
-            payload = response.json()
-            items = payload.get("items") if isinstance(payload, dict) else None
-            if not isinstance(items, list):
-                items = payload.get("data") if isinstance(payload, dict) else []
-            if not isinstance(items, list):
-                break
-
-            for row in items:
-                if not isinstance(row, dict):
-                    continue
-                status = (row.get("status") or "").upper()
-                if status and status != "APPROVED":
-                    continue
-                name = str(row.get("name") or "").strip()
-                if not name or name in seen:
-                    continue
-                seen.add(name)
-                language = str(row.get("language") or "en").strip()
-                if language.lower() in ("en_us", "en"):
-                    language = "en"
-                body = ""
-                components = row.get("components")
-                if isinstance(components, list):
-                    for comp in components:
-                        if isinstance(comp, dict) and (comp.get("type") or "").upper() == "BODY":
-                            body = str(comp.get("text") or "").strip()[:500]
-                            break
-                catalog.append(
-                    {
-                        "name": name,
-                        "status": status or "APPROVED",
-                        "language": language,
-                        "body": body,
-                    }
-                )
-
-            page = payload.get("page") if isinstance(payload, dict) else {}
-            length = page.get("length") if isinstance(page, dict) else len(items)
-            limit = page.get("limit") if isinstance(page, dict) else params["limit"]
-            if not length or length < limit:
-                break
-            offset += int(length)
-
-    catalog.sort(key=lambda t: t["name"].lower())
-    return catalog
+        return _fetch_approved_templates_page(client)
 
 
 def fetch_gateway_status() -> dict[str, Any]:
