@@ -1,10 +1,9 @@
-"""Meta WhatsApp Cloud API helpers and outbound first-touchpoint dispatch."""
+"""WhatsApp outbound dispatch via YCloud BSP (https://api.ycloud.com/v2)."""
 
 from __future__ import annotations
 
 import inspect
 import logging
-import os
 import re
 from datetime import datetime, time, timedelta
 from typing import Any, Optional
@@ -30,12 +29,24 @@ from leads.pipeline import (
     TRASH_GROUP_NAME,
     UNCATEGORIZED_GROUP_NAME,
 )
+from leads.ycloud_service import (
+    build_template_payload,
+    build_text_payload,
+    e164_recipient,
+    extract_ycloud_error,
+    fetch_approved_templates,
+    fetch_gateway_status as ycloud_fetch_gateway_status,
+    message_id_from_response,
+    resolve_ycloud_credentials,
+    send_message_directly,
+    whatsapp_from_number,
+    ycloud_api_key,
+    ycloud_waba_id,
+)
 
 logger = logging.getLogger(__name__)
 
 OFFICIAL_API_MARKER = "[Official API]"
-# Meta Business Manager approved outbound template (static — no body variables).
-# Language must be ``en`` (English registration); ``en_US`` triggers Meta error 132001.
 DEFAULT_META_TEMPLATE_NAME = "just_to_say_hi"
 APPROVED_META_TEMPLATES = frozenset(
     {
@@ -58,7 +69,7 @@ META_OUTBOUND_TEMPLATE_LANGUAGE = "en"
 GATEWAY_GUARD_LOG_PREFIX = "WhatsApp Gateway"
 GATEWAY_NOT_READY_PREFIX = "Gateway not ready"
 CRITICAL_DISPATCH_BLOCKED_MSG = (
-    "[CRITICAL WARNING] Dispatched blocked! WhatsApp Cloud API credentials are "
+    "[CRITICAL WARNING] Dispatched blocked! YCloud WhatsApp credentials are "
     "missing or invalid. Outbound cancelled."
 )
 QUALITY_LEADS_GROUP_NAME = "Quality Leads"
@@ -98,146 +109,58 @@ def now_campaign_local() -> datetime:
     return timezone.now().astimezone(campaign_timezone())
 
 
-def _normalize_credential(value: str | None) -> str:
-    """Trim outer whitespace only — do not slice or alter token body."""
-    if not value:
-        return ""
-    return str(value).strip().replace("\r", "").replace("\n", "")
-
-
-def _parse_env_file(path) -> dict[str, str]:
-    """Parse KEY=VALUE lines from a .env file (no caching, no django-environ)."""
-    from pathlib import Path
-
-    env_path = Path(path)
-    if not env_path.is_file():
-        return {}
-    values: dict[str, str] = {}
-    for line in env_path.read_text(encoding="utf-8").splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#") or "=" not in stripped:
-            continue
-        key, _, raw_val = stripped.partition("=")
-        key = key.strip()
-        val = raw_val.strip()
-        if len(val) >= 2 and val[0] == val[-1] and val[0] in ("'", '"'):
-            val = val[1:-1]
-        values[key] = val
-    return values
-
-
 def meta_access_token() -> str:
-    """Official Meta Graph API bearer token — ``WHATSAPP_ACCESS_TOKEN`` only."""
-    token = _sanitize_meta_access_token(os.getenv("WHATSAPP_ACCESS_TOKEN", ""))
-    if not token:
-        token = _sanitize_meta_access_token(
-            getattr(settings, "WHATSAPP_ACCESS_TOKEN", None) or ""
-        )
-    if token:
-        return _normalize_credential(token)
-    file_vars = _parse_env_file(getattr(settings, "BASE_DIR", "") / ".env")
-    return _sanitize_meta_access_token(
-        _normalize_credential(file_vars.get("WHATSAPP_ACCESS_TOKEN"))
-    )
+    """YCloud API key (legacy name kept for existing call sites)."""
+    return ycloud_api_key()
 
 
 def meta_phone_number_id() -> str:
-    phone_id = os.getenv("WHATSAPP_PHONE_NUMBER_ID", "").strip()
-    if not phone_id:
-        phone_id = (getattr(settings, "WHATSAPP_PHONE_NUMBER_ID", None) or "").strip()
-    if phone_id:
-        return _normalize_credential(phone_id)
-    file_vars = _parse_env_file(getattr(settings, "BASE_DIR", "") / ".env")
-    return _normalize_credential(file_vars.get("WHATSAPP_PHONE_NUMBER_ID"))
+    """Business sender E.164 (legacy name kept for dashboard display)."""
+    return whatsapp_from_number()
 
 
 def resolve_meta_dispatch_credentials() -> tuple[str, str]:
-    """Live Meta Cloud API credentials at POST time (no Evolution legacy keys)."""
-    return meta_access_token(), meta_phone_number_id()
+    """Live YCloud credentials at POST time: (api_key, from_number)."""
+    return resolve_ycloud_credentials()
 
 
 def whatsapp_access_token() -> str:
-    return meta_access_token()
+    return ycloud_api_key()
 
 
 def whatsapp_phone_number_id() -> str:
-    return meta_phone_number_id()
+    return whatsapp_from_number()
 
 
 def whatsapp_graph_api_version() -> str:
-    raw = os.environ.get("WHATSAPP_GRAPH_API_VERSION") or "v20.0"
-    return raw.strip() or "v20.0"
+    return "v2"
 
 
-def meta_messages_url(*, phone_id: str) -> str:
-    version = whatsapp_graph_api_version()
-    return f"https://graph.facebook.com/{version}/{phone_id}/messages"
+def meta_messages_url(*, phone_id: str = "") -> str:
+    from leads.ycloud_service import YCLOUD_SEND_DIRECT_URL
+
+    return YCLOUD_SEND_DIRECT_URL
 
 
 def meta_graph_url(path: str) -> str:
-    version = whatsapp_graph_api_version()
-    return f"https://graph.facebook.com/{version}/{path.lstrip('/')}"
+    from leads.ycloud_service import YCLOUD_API_BASE
+
+    return f"{YCLOUD_API_BASE}/{path.lstrip('/')}"
 
 
 def meta_waba_id() -> str:
-    """Optional ``WHATSAPP_BUSINESS_ACCOUNT_ID``; otherwise resolved via phone number ID."""
-    waba = _normalize_credential(os.getenv("WHATSAPP_BUSINESS_ACCOUNT_ID", ""))
-    if not waba:
-        waba = _normalize_credential(
-            getattr(settings, "WHATSAPP_BUSINESS_ACCOUNT_ID", None) or ""
-        )
-    if waba:
-        return waba
-    file_vars = _parse_env_file(getattr(settings, "BASE_DIR", "") / ".env")
-    return _normalize_credential(file_vars.get("WHATSAPP_BUSINESS_ACCOUNT_ID"))
-
-
-def _sanitize_meta_access_token(raw_token: str) -> str:
-    """Strip whitespace and correct known corrupted token segment before Graph API calls."""
-    token = (raw_token or "").strip()
-    if "EAAOkG95CGZAYBRv3Z" in token:
-        token = token.replace("EAAOkG95CGZAYBRv3Z", "EAAOkG95CGZAYBR3Z")
-    return token
-
-
-def _runtime_meta_bearer_header() -> str:
-    """Build Authorization value directly from process env immediately before HTTP dispatch."""
-    raw_token = _sanitize_meta_access_token(os.getenv("WHATSAPP_ACCESS_TOKEN", ""))
-    return f"Bearer {raw_token}"
-
-
-def _apply_runtime_auth_header_override(headers: dict[str, str]) -> None:
-    """Force sanitized Bearer token onto headers dict right before Meta HTTP request."""
-    headers["Authorization"] = _runtime_meta_bearer_header()
+    return ycloud_waba_id()
 
 
 def meta_dispatch_headers() -> dict[str, str]:
-    """Bearer header for Graph API — strictly ``WHATSAPP_ACCESS_TOKEN`` (never Evolution keys)."""
-    return {
-        "Authorization": _runtime_meta_bearer_header(),
-        "Content-Type": "application/json",
-    }
+    from leads.ycloud_service import ycloud_headers
+
+    return ycloud_headers()
 
 
 def print_meta_http_tracking_debug(headers: dict[str, str]) -> None:
-    """Emit runtime credential diagnostics to stdout (Docker/gunicorn console)."""
-    raw_env_token = os.getenv("WHATSAPP_ACCESS_TOKEN", "")
-    sanitized_token = _sanitize_meta_access_token(raw_env_token)
-    settings_token = getattr(settings, "WHATSAPP_ACCESS_TOKEN", "NOT DEFINED")
-    legacy_key = os.getenv("WHATSAPP_API_GLOBAL_API_KEY")
-    active_auth_header = headers.get("Authorization", "MISSING")
-
-    print("\n" + "=" * 60)
-    print("[TRACKING DETECTED] A Meta Cloud API call is firing right now!")
-    print(f"[ENV EVALUATION] os.getenv('WHATSAPP_ACCESS_TOKEN'): {str(raw_env_token)[:15]}...")
-    print(
-        f"[SANITIZED TOKEN] chars 15-20 after override: "
-        f"{repr(sanitized_token[15:21]) if len(sanitized_token) > 15 else 'n/a'}"
-    )
-    print(f"[SETTINGS EVALUATION] settings.WHATSAPP_ACCESS_TOKEN: {str(settings_token)[:15]}...")
-    print(f"[LEGACY CHECK] os.getenv('WHATSAPP_API_GLOBAL_API_KEY'): {str(legacy_key)[:15]}...")
-    print(f"[ACTUAL HEADER SENT TO META] -> {active_auth_header[:25]}...")
-    print("=" * 60 + "\n")
+    """No-op — retained for call-site compatibility."""
+    _ = headers
 
 
 def meta_dispatch_origin_label() -> str:
@@ -333,88 +256,18 @@ def meta_template_language_for_name(template_name: str | None) -> str:
 
 
 def _resolve_waba_id_for_templates(*, token: str, phone_id: str) -> str:
-    waba = meta_waba_id()
+    waba = ycloud_waba_id()
     if waba:
         return waba
-    url = meta_graph_url(phone_id)
-    headers = {"Authorization": f"Bearer {_sanitize_meta_access_token(token)}"}
-    try:
-        with httpx.Client(timeout=30.0) as client:
-            response = client.get(url, params={"fields": "whatsapp_business_account"}, headers=headers)
-    except httpx.RequestError as exc:
-        raise ValueError(f"Could not resolve WhatsApp Business Account: {exc}") from exc
-    if response.status_code != 200:
-        raise ValueError(extract_meta_error(response) or f"HTTP {response.status_code}")
-    data = response.json()
-    waba_node = data.get("whatsapp_business_account")
-    if isinstance(waba_node, dict):
-        waba_id = str(waba_node.get("id") or "").strip()
-        if waba_id:
-            return waba_id
-    waba_id = str(data.get("id") or "").strip()
-    if waba_id and waba_id != phone_id:
-        return waba_id
-    raise ValueError("WhatsApp Business Account ID not found for this phone number.")
+    raise ValueError("YCLOUD_WABA_ID (or WHATSAPP_BUSINESS_ACCOUNT_ID) is required for template sync.")
 
 
 def fetch_meta_message_templates_from_api() -> list[dict[str, Any]]:
-    """List APPROVED message templates from Meta Graph API."""
-    token, phone_id = resolve_meta_dispatch_credentials()
-    if not token or not phone_id:
-        raise ValueError("WHATSAPP_ACCESS_TOKEN and WHATSAPP_PHONE_NUMBER_ID are required.")
-
-    waba_id = _resolve_waba_id_for_templates(token=token, phone_id=phone_id)
-    headers = meta_dispatch_headers()
-    url = meta_graph_url(f"{waba_id}/message_templates")
-    params: dict[str, Any] = {
-        "limit": 100,
-        "fields": "name,status,language,components",
-    }
-
-    catalog: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    next_url: str | None = url
-    next_params: dict[str, Any] | None = params
-
-    with httpx.Client(timeout=45.0) as client:
-        while next_url:
-            response = client.get(
-                next_url,
-                params=next_params,
-                headers=headers,
-            )
-            if response.status_code != 200:
-                raise ValueError(extract_meta_error(response) or f"HTTP {response.status_code}")
-            payload = response.json()
-            rows = payload.get("data") if isinstance(payload, dict) else None
-            if isinstance(rows, list):
-                for row in rows:
-                    if not isinstance(row, dict):
-                        continue
-                    status = (row.get("status") or "").upper()
-                    if status and status != "APPROVED":
-                        continue
-                    name = str(row.get("name") or "").strip()
-                    if not name or name in seen:
-                        continue
-                    seen.add(name)
-                    catalog.append(
-                        {
-                            "name": name,
-                            "status": status or "APPROVED",
-                            "language": _normalize_meta_template_language(
-                                str(row.get("language") or "")
-                            ),
-                            "body": _meta_template_body_from_components(row.get("components")),
-                        }
-                    )
-            paging = payload.get("paging") if isinstance(payload, dict) else {}
-            next_link = paging.get("next") if isinstance(paging, dict) else None
-            next_url = str(next_link).strip() if next_link else None
-            next_params = None
-
-    catalog.sort(key=lambda t: t["name"].lower())
-    return catalog
+    """List APPROVED message templates from YCloud."""
+    token, from_number = resolve_meta_dispatch_credentials()
+    if not token or not from_number:
+        raise ValueError("YCLOUD_API_KEY and WHATSAPP_FROM_NUMBER are required.")
+    return fetch_approved_templates()
 
 
 def sync_meta_message_templates_to_config() -> tuple[int, str | None]:
@@ -616,25 +469,20 @@ def template_clinic_name(lead: Lead) -> str:
 
 
 def build_meta_template_payload(lead: Lead, *, template_name: str | None = None) -> dict[str, Any]:
-    """
-    Meta template payload (static body, no components). Uses ``template_name`` when
-    provided (per-batch override), otherwise the active configured template.
-    """
-    number = _digits_for_whatsapp(primary_phone(lead))
+    """YCloud template payload for sendDirectly."""
+    to_number = e164_recipient(primary_phone(lead))
+    from_number = whatsapp_from_number()
     if template_name:
         selected_template = normalize_outbound_template_name(template_name)
     else:
         selected_template = get_active_config_template_name()
     language_code = meta_template_language_for_name(selected_template)
-    return {
-        "messaging_product": "whatsapp",
-        "to": number,
-        "type": "template",
-        "template": {
-            "name": selected_template,
-            "language": {"code": language_code},
-        },
-    }
+    return build_template_payload(
+        from_number=from_number,
+        to_number=to_number,
+        template_name=selected_template,
+        language_code=language_code,
+    )
 
 
 def is_dispatch_blocked_detail(detail: str) -> bool:
@@ -646,25 +494,7 @@ def is_dispatch_blocked_detail(detail: str) -> bool:
 
 
 def fetch_gateway_status() -> dict[str, Any]:
-    """Cloud API readiness: configured when live env token + phone number ID exist."""
-    token, phone_id = resolve_meta_dispatch_credentials()
-    if token and phone_id:
-        return {
-            "connected": True,
-            "state": "open",
-            "error": None,
-        }
-
-    missing: list[str] = []
-    if not token:
-        missing.append("WHATSAPP_ACCESS_TOKEN")
-    if not phone_id:
-        missing.append("WHATSAPP_PHONE_NUMBER_ID")
-    return {
-        "connected": False,
-        "state": "unconfigured",
-        "error": f"Missing: {', '.join(missing)}" if missing else None,
-    }
+    return ycloud_fetch_gateway_status()
 
 
 def connection_state_label(state_info: dict[str, Any]) -> str:
@@ -688,19 +518,7 @@ def gateway_send_ready() -> tuple[bool, str]:
 
 
 def extract_meta_error(response: httpx.Response) -> str:
-    try:
-        data = response.json()
-        err = data.get("error", {})
-        if isinstance(err, dict):
-            msg = (err.get("message") or err.get("error_user_msg") or "").strip()
-            code = err.get("code")
-            subcode = err.get("error_subcode")
-            parts = [part for part in (msg, f"code={code}" if code else "", f"subcode={subcode}" if subcode else "") if part]
-            if parts:
-                return " — ".join(parts)
-    except ValueError:
-        pass
-    return (response.text or "").strip()[:2000] or f"HTTP {response.status_code}"
+    return extract_ycloud_error(response)
 
 
 def record_whatsapp_activity_warning(message: str, *, lead: Optional[Lead] = None) -> None:
@@ -817,10 +635,10 @@ def mark_failed(lead: Lead, error_message: str) -> None:
 def send_text_to_lead(
     lead: Lead, *, priority: bool = False, template_name: str | None = None
 ) -> tuple[bool, str]:
-    """Dispatch a Meta template (per-batch ``template_name`` or the config default)."""
-    token, phone_id = resolve_meta_dispatch_credentials()
-    if not token or not phone_id:
-        detail = "WhatsApp Cloud API is not configured."
+    """Dispatch a WhatsApp template via YCloud sendDirectly."""
+    token, from_number = resolve_meta_dispatch_credentials()
+    if not token or not from_number:
+        detail = "YCloud WhatsApp API is not configured."
         record_whatsapp_activity_warning(detail, lead=lead)
         mark_failed(lead, detail)
         return False, detail
@@ -830,75 +648,52 @@ def send_text_to_lead(
         record_whatsapp_activity_warning(guard_msg, lead=lead)
         return False, guard_msg
 
-    phone_raw = primary_phone(lead)
-    number = _digits_for_whatsapp(phone_raw)
-    if not number:
+    to_number = e164_recipient(primary_phone(lead))
+    if not to_number:
         mark_failed(lead, "No valid phone number on lead.")
         return False, "No valid phone number on lead."
 
     payload = build_meta_template_payload(lead, template_name=template_name)
-    url = meta_messages_url(phone_id=phone_id)
-    headers = meta_dispatch_headers()
-    _apply_runtime_auth_header_override(headers)
-    logger.info("Meta Graph API POST %s (phone_number_id=%s)", url, phone_id)
-    print_meta_http_tracking_debug(headers)
+    logger.info("YCloud sendDirectly template to %s from %s", to_number, from_number)
 
-    try:
-        with httpx.Client(timeout=60.0) as client:
-            response = client.post(url, json=payload, headers=headers)
-    except httpx.RequestError as exc:
-        detail = append_meta_dispatch_origin(str(exc))
-        record_whatsapp_activity_warning(f"Meta API network error: {detail}", lead=lead)
+    ok, detail, data = send_message_directly(payload)
+    if not ok:
+        detail = append_meta_dispatch_origin(detail)
+        record_whatsapp_activity_warning(f"YCloud API error: {detail}", lead=lead)
         mark_failed(lead, detail)
         return False, detail
 
-    if response.status_code == 200:
-        meta_message_id = ""
-        try:
-            payload = response.json()
-            messages = payload.get("messages") if isinstance(payload, dict) else None
-            if isinstance(messages, list) and messages:
-                meta_message_id = str(messages[0].get("id") or "").strip()
-        except ValueError:
-            pass
-        mark_sent(
-            lead,
-            phone_id,
-            priority=priority,
-            meta_message_id=meta_message_id,
-        )
-        return True, ""
-
-    detail = append_meta_dispatch_origin(extract_meta_error(response))
-    record_whatsapp_activity_warning(f"Meta API error: {detail}", lead=lead)
-    mark_failed(lead, detail)
-    return False, detail
+    meta_message_id = message_id_from_response(data)
+    mark_sent(
+        lead,
+        from_number,
+        priority=priority,
+        meta_message_id=meta_message_id,
+    )
+    return True, ""
 
 
 def build_meta_free_text_payload(lead: Lead, text: str) -> dict[str, Any]:
-    """Meta Cloud API payload for a session free-form text reply (24h window)."""
-    number = _digits_for_whatsapp(primary_phone(lead))
-    return {
-        "messaging_product": "whatsapp",
-        "recipient_type": "individual",
-        "to": number,
-        "type": "text",
-        "text": {"body": (text or "").strip()},
-    }
+    """YCloud free-form text payload (24h session window)."""
+    return build_text_payload(
+        from_number=whatsapp_from_number(),
+        to_number=e164_recipient(primary_phone(lead)),
+        body=text,
+    )
 
 
 def send_free_text_to_lead(lead: Lead, text: str) -> tuple[bool, str, Optional["ChatMessage"]]:
     """
-    Send a free-form WhatsApp text within the Meta 24h customer service window.
+    Send free-form WhatsApp text via YCloud within the 24h customer service window.
     Returns (ok, error_detail, ChatMessage|None).
     """
     body = (text or "").strip()
     if not body:
         return False, "Message cannot be empty.", None
 
-    token, phone_id = resolve_meta_dispatch_credentials()
-    if not token or not phone_id:
-        detail = "WhatsApp Cloud API is not configured."
+    token, from_number = resolve_meta_dispatch_credentials()
+    if not token or not from_number:
+        detail = "YCloud WhatsApp API is not configured."
         record_whatsapp_activity_warning(detail, lead=lead)
         return False, detail, None
 
@@ -907,37 +702,18 @@ def send_free_text_to_lead(lead: Lead, text: str) -> tuple[bool, str, Optional["
         record_whatsapp_activity_warning(guard_msg, lead=lead)
         return False, guard_msg, None
 
-    number = _digits_for_whatsapp(primary_phone(lead))
-    if not number:
+    to_number = e164_recipient(primary_phone(lead))
+    if not to_number:
         return False, "No valid phone number on lead.", None
 
     payload = build_meta_free_text_payload(lead, body)
-    url = meta_messages_url(phone_id=phone_id)
-    headers = meta_dispatch_headers()
-    _apply_runtime_auth_header_override(headers)
-
-    try:
-        with httpx.Client(timeout=60.0) as client:
-            response = client.post(url, json=payload, headers=headers)
-    except httpx.RequestError as exc:
-        detail = append_meta_dispatch_origin(str(exc))
-        record_whatsapp_activity_warning(f"Meta API network error: {detail}", lead=lead)
+    ok, detail, data = send_message_directly(payload)
+    if not ok:
+        detail = append_meta_dispatch_origin(detail)
+        record_whatsapp_activity_warning(f"YCloud API error: {detail}", lead=lead)
         return False, detail, None
 
-    if response.status_code != 200:
-        detail = append_meta_dispatch_origin(extract_meta_error(response))
-        record_whatsapp_activity_warning(f"Meta API error: {detail}", lead=lead)
-        return False, detail, None
-
-    meta_message_id = ""
-    try:
-        data = response.json()
-        messages = data.get("messages") if isinstance(data, dict) else None
-        if isinstance(messages, list) and messages:
-            meta_message_id = str(messages[0].get("id") or "").strip()
-    except ValueError:
-        pass
-
+    meta_message_id = message_id_from_response(data)
     now = timezone.now()
     LeadConversationLog.objects.create(
         lead=lead,

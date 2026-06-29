@@ -30,9 +30,9 @@ class Command(BaseCommand):
     def handle(self, *args, **options) -> None:
         token, phone_id = resolve_meta_dispatch_credentials()
         if not token:
-            raise CommandError("WHATSAPP_ACCESS_TOKEN is not configured.")
+            raise CommandError("YCLOUD_API_KEY is not configured.")
         if not phone_id:
-            raise CommandError("WHATSAPP_PHONE_NUMBER_ID is not configured.")
+            raise CommandError("WHATSAPP_FROM_NUMBER is not configured.")
 
         ad_hoc = options.get("leads")
         if ad_hoc is not None:

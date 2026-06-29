@@ -1,4 +1,4 @@
-"""Meta WhatsApp Cloud API webhook parsing and LeadConversationLog synchronization."""
+"""YCloud + legacy Meta WhatsApp webhook parsing and chat sync."""
 
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ from django.conf import settings
 from django.db import transaction
 from django.http import HttpRequest, HttpResponse
 from django.utils import timezone as dj_timezone
+from django.utils.dateparse import parse_datetime
 
 from leads.chat_messages import (
     inbound_chat_message_exists,
@@ -28,6 +29,7 @@ from leads.pipeline import (
     TRASH_GROUP_NAME,
     find_lead_by_phone,
 )
+from leads.ycloud_service import whatsapp_from_number, ycloud_webhook_secret
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +56,6 @@ def _is_trusted_webhook_source(ip: str) -> bool:
 
 
 def _webhook_remote_addr(request: HttpRequest) -> str:
-    """TCP peer as seen by Django (ignore X-Forwarded-For for auth fallbacks)."""
     return (request.META.get("REMOTE_ADDR") or "").strip()
 
 
@@ -66,24 +67,57 @@ def _meta_webhook_verify_token() -> str:
     return (getattr(settings, "WHATSAPP_WEBHOOK_VERIFY_TOKEN", None) or "").strip()
 
 
+def verify_ycloud_webhook_signature(request: HttpRequest, raw_body: bytes) -> bool:
+    """Validate ``YCloud-Signature: t={ts},s={hex}`` using ``YCLOUD_WEBHOOK_SECRET``."""
+    secret = ycloud_webhook_secret()
+    if not secret:
+        remote = _webhook_remote_addr(request)
+        if _is_trusted_webhook_source(remote):
+            return True
+        logger.warning(
+            "YCLOUD_WEBHOOK_SECRET unset; rejected unsigned webhook from %s.",
+            remote,
+        )
+        return False
+
+    header = (request.headers.get("YCloud-Signature") or "").strip()
+    if not header:
+        return False
+
+    timestamp = ""
+    signature = ""
+    for part in header.split(","):
+        part = part.strip()
+        if part.startswith("t="):
+            timestamp = part[2:].strip()
+        elif part.startswith("s="):
+            signature = part[2:].strip()
+    if not timestamp or not signature:
+        return False
+
+    try:
+        body_text = raw_body.decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+
+    signed_payload = f"{timestamp}.{body_text}"
+    expected = hmac.new(
+        secret.encode("utf-8"),
+        signed_payload.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    return hmac.compare_digest(signature, expected)
+
+
 def verify_meta_webhook_signature(request: HttpRequest, raw_body: bytes) -> bool:
-    """Validate ``X-Hub-Signature-256`` using ``WHATSAPP_APP_SECRET``."""
+    """Validate legacy Meta ``X-Hub-Signature-256`` (optional fallback)."""
     app_secret = _meta_app_secret()
     if not app_secret:
         remote = _webhook_remote_addr(request)
         if _is_trusted_webhook_source(remote):
             return True
         if getattr(settings, "DEBUG", False):
-            logger.warning(
-                "WHATSAPP_APP_SECRET unset; accepting unsigned webhook from %s (DEBUG).",
-                remote,
-            )
             return True
-        logger.warning(
-            "Rejected WhatsApp webhook from %s: set WHATSAPP_APP_SECRET in .env "
-            "so Meta X-Hub-Signature-256 can be verified.",
-            remote,
-        )
         return False
 
     header = (request.headers.get("X-Hub-Signature-256") or "").strip()
@@ -98,12 +132,14 @@ def verify_meta_webhook_signature(request: HttpRequest, raw_body: bytes) -> bool
 
 
 def webhook_request_authenticated(request: HttpRequest, raw_body: bytes) -> bool:
-    """Meta Cloud API webhook auth — HMAC signature or trusted local/Docker network."""
+    """YCloud signature first; fall back to legacy Meta verification."""
+    if verify_ycloud_webhook_signature(request, raw_body):
+        return True
     return verify_meta_webhook_signature(request, raw_body)
 
 
 def handle_meta_webhook_verify(request: HttpRequest) -> HttpResponse:
-    """Meta subscription verification (GET hub.challenge handshake)."""
+    """Legacy Meta GET handshake; also accepts plain GET for tunnel health checks."""
     mode = (request.GET.get("hub.mode") or "").strip()
     token = (request.GET.get("hub.verify_token") or "").strip()
     challenge = (request.GET.get("hub.challenge") or "").strip()
@@ -111,7 +147,19 @@ def handle_meta_webhook_verify(request: HttpRequest) -> HttpResponse:
 
     if mode == "subscribe" and expected and token == expected and challenge:
         return HttpResponse(challenge, content_type="text/plain")
+    if request.method == "GET" and not mode:
+        return HttpResponse("ok", content_type="text/plain")
     return HttpResponse("Forbidden", status=403)
+
+
+def _iso_timestamp(raw_ts: Any) -> datetime:
+    if isinstance(raw_ts, str) and raw_ts.strip():
+        parsed = parse_datetime(raw_ts.strip())
+        if parsed is not None:
+            if dj_timezone.is_naive(parsed):
+                parsed = dj_timezone.make_aware(parsed, dt_timezone.utc)
+            return dj_timezone.localtime(parsed)
+    return dj_timezone.now()
 
 
 def _meta_timestamp(raw_ts: Any) -> datetime:
@@ -126,7 +174,7 @@ def _meta_timestamp(raw_ts: Any) -> datetime:
     return dj_timezone.now()
 
 
-def _extract_meta_text(message: dict[str, Any]) -> str:
+def _extract_text(message: dict[str, Any]) -> str:
     msg_type = (message.get("type") or "").strip().lower()
     if msg_type == "text":
         text = message.get("text")
@@ -151,9 +199,8 @@ def _extract_meta_text(message: dict[str, Any]) -> str:
     return ""
 
 
-def _extract_meta_text_or_placeholder(message: dict[str, Any]) -> str:
-    """Text body for chat sync; non-text app/API sends become a short placeholder."""
-    body = _extract_meta_text(message)
+def _extract_text_or_placeholder(message: dict[str, Any]) -> str:
+    body = _extract_text(message)
     if body:
         return body
     msg_type = (message.get("type") or "").strip().lower()
@@ -173,6 +220,85 @@ def _extract_meta_text_or_placeholder(message: dict[str, Any]) -> str:
     return ""
 
 
+def _message_id(message: dict[str, Any]) -> str:
+    return str(message.get("wamid") or message.get("id") or "").strip()
+
+
+def _phones_match(a: str, b: str) -> bool:
+    if not a or not b:
+        return False
+    return normalize_manual_phone(a) == normalize_manual_phone(b)
+
+
+def _parse_ycloud_inbound(inbound: dict[str, Any]) -> list[ParsedWebhookMessage]:
+    raw_from = (inbound.get("from") or "").strip()
+    remote_phone = normalize_manual_phone(raw_from)
+    if not remote_phone:
+        return []
+    text_body = _extract_text_or_placeholder(inbound)
+    if not text_body:
+        return []
+    return [
+        ParsedWebhookMessage(
+            remote_phone=remote_phone,
+            text_body=text_body,
+            from_me=False,
+            message_id=_message_id(inbound),
+            timestamp=_iso_timestamp(inbound.get("sendTime") or inbound.get("createTime")),
+        )
+    ]
+
+
+def _parse_ycloud_outbound_update(message: dict[str, Any]) -> list[ParsedWebhookMessage]:
+    """Mobile-app / API outbound echoes via ``whatsapp.message.updated``."""
+    status = (message.get("status") or "").strip().lower()
+    if status and status not in {"sent"}:
+        return []
+
+    business = whatsapp_from_number()
+    msg_from = (message.get("from") or "").strip()
+    msg_to = (message.get("to") or "").strip()
+    if not business or not _phones_match(msg_from, business):
+        return []
+
+    remote_phone = normalize_manual_phone(msg_to)
+    if not remote_phone:
+        return []
+    text_body = _extract_text_or_placeholder(message)
+    if not text_body:
+        return []
+
+    return [
+        ParsedWebhookMessage(
+            remote_phone=remote_phone,
+            text_body=text_body,
+            from_me=True,
+            message_id=_message_id(message),
+            timestamp=_iso_timestamp(
+                message.get("sendTime") or message.get("createTime") or message.get("updateTime")
+            ),
+        )
+    ]
+
+
+def parse_ycloud_webhook(payload: dict[str, Any]) -> list[ParsedWebhookMessage]:
+    """Normalize YCloud webhook events into chat rows."""
+    event_type = (payload.get("type") or "").strip()
+    if event_type == "whatsapp.inbound_message.received":
+        inbound = payload.get("whatsappInboundMessage")
+        if isinstance(inbound, dict):
+            return _parse_ycloud_inbound(inbound)
+        return []
+
+    if event_type == "whatsapp.message.updated":
+        message = payload.get("whatsappMessage")
+        if isinstance(message, dict):
+            return _parse_ycloud_outbound_update(message)
+        return []
+
+    return []
+
+
 def _parse_message_list(
     messages: list[Any],
     *,
@@ -184,12 +310,12 @@ def _parse_message_list(
         if not isinstance(message, dict):
             continue
         raw_phone = (message.get(phone_field) or "").strip()
-        if not raw_phone or not raw_phone[0].isdigit():
+        if not raw_phone:
             continue
         remote_phone = normalize_manual_phone(raw_phone)
         if not remote_phone:
             continue
-        text_body = _extract_meta_text_or_placeholder(message)
+        text_body = _extract_text_or_placeholder(message)
         if not text_body:
             continue
         message_id = str(message.get("id") or "").strip()
@@ -207,7 +333,7 @@ def _parse_message_list(
 
 
 def parse_meta_cloud_webhook(payload: dict[str, Any]) -> list[ParsedWebhookMessage]:
-    """Normalize inbound client messages and Coex app-sent echoes from a Meta webhook body."""
+    """Legacy Meta Cloud API envelope (optional fallback)."""
     if (payload.get("object") or "").strip() != "whatsapp_business_account":
         return []
 
@@ -239,11 +365,16 @@ def parse_meta_cloud_webhook(payload: dict[str, Any]) -> list[ParsedWebhookMessa
                 echoes = value.get("message_echoes")
                 if isinstance(echoes, list):
                     parsed.extend(
-                        _parse_message_list(
-                            echoes, phone_field="to", from_me=True
-                        )
+                        _parse_message_list(echoes, phone_field="to", from_me=True)
                     )
     return parsed
+
+
+def parse_whatsapp_webhook(payload: dict[str, Any]) -> list[ParsedWebhookMessage]:
+    """Dispatch to YCloud or legacy Meta parser based on payload shape."""
+    if (payload.get("type") or "").startswith("whatsapp."):
+        return parse_ycloud_webhook(payload)
+    return parse_meta_cloud_webhook(payload)
 
 
 def _format_log_remarks(sender: str, text_body: str, message_id: str) -> str:
@@ -261,10 +392,6 @@ def _log_already_synced(lead: Lead, message_id: str) -> bool:
 
 @transaction.atomic
 def sync_webhook_message(msg: ParsedWebhookMessage) -> bool:
-    """
-    Persist one webhook message to ``LeadConversationLog`` when a lead matches.
-    Returns True when a new log row was created.
-    """
     lead = find_lead_by_phone(msg.remote_phone)
     if lead is None:
         return False
@@ -306,7 +433,6 @@ def sync_webhook_message(msg: ParsedWebhookMessage) -> bool:
 
 
 def decode_webhook_body(request: HttpRequest) -> tuple[dict[str, Any], Optional[str]]:
-    """Parse JSON request body; return (payload, error_message)."""
     raw = request.body
     if not raw:
         return {}, None
@@ -320,7 +446,7 @@ def decode_webhook_body(request: HttpRequest) -> tuple[dict[str, Any], Optional[
 
 
 def process_whatsapp_webhook(request: HttpRequest) -> tuple[dict[str, Any], int]:
-    """Handle one Meta Cloud API webhook POST; return JSON body and HTTP status."""
+    """Handle one YCloud (or legacy Meta) webhook POST."""
     raw_body = request.body or b""
     if not webhook_request_authenticated(request, raw_body):
         return {"status": "error", "detail": "Unauthorized."}, 403
@@ -329,7 +455,7 @@ def process_whatsapp_webhook(request: HttpRequest) -> tuple[dict[str, Any], int]
     if decode_error:
         return {"status": "error", "detail": decode_error}, 400
 
-    messages = parse_meta_cloud_webhook(payload)
+    messages = parse_whatsapp_webhook(payload)
     if not messages:
         return {"status": "success", "synced": 0}, 200
 

@@ -2,7 +2,9 @@ from django.urls import path
 
 from leads.views import (
     LeadDashboardView,
+    ReportsView,
     WhatsAppDashboardView,
+    batch_report_export_xlsx,
     clear_live_activity_logs,
     workspace_fragment_dashboard,
     workspace_fragment_whatsapp,
@@ -54,6 +56,8 @@ urlpatterns = [
     path("whatsapp/webhook/", whatsapp_webhook_receiver, name="whatsapp_webhook_receiver"),
     path("", LeadDashboardView.as_view(), name="dashboard"),
     path("whatsapp/", WhatsAppDashboardView.as_view(), name="whatsapp_dashboard"),
+    path("reports/", ReportsView.as_view(), name="reports"),
+    path("reports/export/xlsx/", batch_report_export_xlsx, name="batch_report_export_xlsx"),
     path(
         "whatsapp/clear-logs/",
         clear_live_activity_logs,

@@ -8,7 +8,7 @@
         <span class="text-3xl leading-none" aria-hidden="true">🌐</span>
         <div>
           <h2 class="text-lg font-semibold tracking-tight text-slate-900">WhatsApp Cloud API Gateway</h2>
-          <p class="mt-1 text-sm font-medium text-emerald-800">Mode: Official Production Line (CONNECTED via Meta Graph API)</p>
+          <p class="mt-1 text-sm font-medium text-emerald-800">Mode: Official Production Line (CONNECTED via YCloud)</p>
           <p class="mt-2 text-xs text-slate-500">Template: <span class="font-mono font-semibold text-emerald-800">{{ template_name|default:"just_to_say_hi" }}</span> <span class="text-slate-400">·</span> <span class="font-mono text-slate-600">{{ template_language|default:"en" }}</span> · Phone Number ID: <span class="font-mono text-slate-700">{{ phone_number_id }}</span></p>
         </div>
       </div>
@@ -17,14 +17,14 @@
           <span class="h-2 w-2 animate-pulse rounded-full bg-white"></span>
           CONNECTED
         </span>
-        <span class="text-[10px] font-medium uppercase tracking-wider text-emerald-700/80">Meta Graph API · {{ campaign_timezone }}</span>
+        <span class="text-[10px] font-medium uppercase tracking-wider text-emerald-700/80">YCloud · {{ campaign_timezone }}</span>
       </div>
     </div>
   </div>
   {% else %}
   <div class="rounded-2xl border border-amber-200/90 bg-amber-50/80 px-5 py-4 text-sm text-amber-950">
     <p class="font-semibold">WhatsApp Cloud API not configured</p>
-    <p class="mt-1 text-xs text-amber-900/90">Set <span class="font-mono">WHATSAPP_ACCESS_TOKEN</span> and <span class="font-mono">WHATSAPP_PHONE_NUMBER_ID</span> in your environment.</p>
+    <p class="mt-1 text-xs text-amber-900/90">Set <span class="font-mono">YCLOUD_API_KEY</span> and <span class="font-mono">WHATSAPP_FROM_NUMBER</span> in your environment.</p>
     {% if connection.error %}
     <p class="mt-2 text-xs text-amber-800">{{ connection.error }}</p>
     {% endif %}

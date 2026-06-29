@@ -63,13 +63,26 @@ def _env_str(name: str, *, default: str = "") -> str:
     return (env(name, default=default) or "").strip()
 
 
+YCLOUD_API_KEY = (os.environ.get("YCLOUD_API_KEY") or _env_str("YCLOUD_API_KEY")).strip()
+YCLOUD_WEBHOOK_SECRET = (os.environ.get("YCLOUD_WEBHOOK_SECRET") or _env_str("YCLOUD_WEBHOOK_SECRET")).strip()
+YCLOUD_WABA_ID = (os.environ.get("YCLOUD_WABA_ID") or _env_str("YCLOUD_WABA_ID")).strip()
+# E.164 business sender (e.g. +60126336529). Required for YCloud outbound ``from``.
+WHATSAPP_FROM_NUMBER = (
+    os.environ.get("WHATSAPP_FROM_NUMBER") or _env_str("WHATSAPP_FROM_NUMBER")
+).strip() or (
+    os.environ.get("WHATSAPP_PHONE_NUMBER_ID") or _env_str("WHATSAPP_PHONE_NUMBER_ID")
+).strip()
+WHATSAPP_BUSINESS_ACCOUNT_ID = (
+    os.environ.get("WHATSAPP_BUSINESS_ACCOUNT_ID") or _env_str("WHATSAPP_BUSINESS_ACCOUNT_ID")
+).strip()
+WHATSAPP_TEMPLATE_NAME = "just_to_say_hi"
+WHATSAPP_TEMPLATE_LANGUAGE = "en"
+# Legacy Meta direct API (optional fallback for old webhooks only).
 WHATSAPP_ACCESS_TOKEN = (os.environ.get("WHATSAPP_ACCESS_TOKEN") or _env_str("WHATSAPP_ACCESS_TOKEN")).strip()
 WHATSAPP_PHONE_NUMBER_ID = (
     os.environ.get("WHATSAPP_PHONE_NUMBER_ID") or _env_str("WHATSAPP_PHONE_NUMBER_ID")
 ).strip()
 WHATSAPP_GRAPH_API_VERSION = _env_str("WHATSAPP_GRAPH_API_VERSION", default="v20.0")
-WHATSAPP_TEMPLATE_NAME = "just_to_say_hi"
-WHATSAPP_TEMPLATE_LANGUAGE = "en"
 WHATSAPP_APP_SECRET = (os.environ.get("WHATSAPP_APP_SECRET") or _env_str("WHATSAPP_APP_SECRET")).strip()
 WHATSAPP_WEBHOOK_VERIFY_TOKEN = (
     os.environ.get("WHATSAPP_WEBHOOK_VERIFY_TOKEN")

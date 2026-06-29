@@ -585,7 +585,7 @@ def _activity_display_line(
         body = message
         if GATEWAY_GUARD_LOG_PREFIX in body:
             body = body.split(GATEWAY_GUARD_LOG_PREFIX, 1)[-1].lstrip(" —-")
-        if body.startswith("Meta API error:"):
+        if body.startswith("YCloud API error:") or body.startswith("Meta API error:"):
             body = body
         elif body.startswith("[CRITICAL WARNING]"):
             body = body.replace(
@@ -732,6 +732,141 @@ def _whatsapp_activity_entries(limit: int = 10, *, request=None) -> list[dict]:
 
     entries.sort(key=lambda item: item["sort_ts"], reverse=True)
     return entries[:limit]
+
+
+def _batch_report_choices() -> list[dict]:
+    """Dropdown options for the batch-assigned leads report."""
+    tz = campaign_timezone()
+    choices = []
+    qs = (
+        WhatsAppBatchSchedule.objects.annotate(
+            assigned_leads=Count("leads"),
+        )
+        .order_by("-scheduled_at", "-id")
+    )
+    for batch in qs:
+        local = batch.scheduled_at.astimezone(tz)
+        choices.append(
+            {
+                "id": batch.pk,
+                "label": (
+                    f"{local:%b %d, %Y · %I:%M %p} · {batch.outbound_template_name} "
+                    f"· {batch.assigned_leads} lead(s) · {batch.get_status_display()}"
+                ),
+            }
+        )
+    return choices
+
+
+def _resolve_batch_report_id(request) -> int | None:
+    raw = (request.GET.get("batch_id") or "").strip()
+    if raw.isdigit():
+        batch_id = int(raw)
+        if WhatsAppBatchSchedule.objects.filter(pk=batch_id).exists():
+            return batch_id
+    batch = (
+        WhatsAppBatchSchedule.objects.annotate(assigned_leads=Count("leads"))
+        .filter(assigned_leads__gt=0)
+        .order_by("-scheduled_at", "-id")
+        .first()
+    )
+    if batch:
+        return batch.pk
+    latest = WhatsAppBatchSchedule.objects.order_by("-scheduled_at", "-id").first()
+    return latest.pk if latest else None
+
+
+def _batch_report_leads_qs(batch_id: int):
+    return (
+        Lead.objects.filter(whatsapp_batches__pk=batch_id)
+        .order_by("name", "pk")
+        .distinct()
+    )
+
+
+def _batch_report_context(request) -> dict:
+    batch_id = _resolve_batch_report_id(request)
+    batch = None
+    report_leads: list[Lead] = []
+    if batch_id is not None:
+        batch = WhatsAppBatchSchedule.objects.filter(pk=batch_id).first()
+        if batch:
+            report_leads = list(_batch_report_leads_qs(batch_id))
+            for lead in report_leads:
+                phones = lead_phone_list(lead)
+                lead.report_phone_display = " · ".join(phones) if phones else ""
+    return {
+        "nav_active": "reports",
+        "batch_choices": _batch_report_choices(),
+        "selected_batch": batch,
+        "selected_batch_id": batch.pk if batch else None,
+        "report_leads": report_leads,
+        "report_lead_count": len(report_leads),
+        "batch_report_export_url": reverse("batch_report_export_xlsx"),
+        "campaign_timezone": str(campaign_timezone()),
+    }
+
+
+@method_decorator(ensure_csrf_cookie, name="dispatch")
+class ReportsView(TemplateView):
+    """Batch report — all leads assigned to a chosen WhatsApp batch."""
+
+    template_name = "leads/reports.html"
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context.update(_batch_report_context(self.request))
+        return context
+
+
+@require_GET
+def batch_report_export_xlsx(request):
+    """Download name + phone for leads assigned to a WhatsApp batch."""
+    raw = (request.GET.get("batch_id") or "").strip()
+    if not raw.isdigit():
+        return HttpResponse(
+            "batch_id is required.",
+            status=400,
+            content_type="text/plain; charset=utf-8",
+        )
+    batch = get_object_or_404(WhatsAppBatchSchedule, pk=int(raw))
+    try:
+        from openpyxl import Workbook
+    except ImportError:
+        return HttpResponse(
+            "openpyxl is not installed. Run: pip install openpyxl",
+            status=503,
+            content_type="text/plain; charset=utf-8",
+        )
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Batch report"
+    local = batch.scheduled_at.astimezone(campaign_timezone())
+    ws.append(["Batch", f"{local:%Y-%m-%d %H:%M} · {batch.outbound_template_name}"])
+    ws.append(["Batch status", batch.get_status_display()])
+    ws.append([])
+    ws.append(["Name", "Contact number", "Status"])
+    for lead in _batch_report_leads_qs(batch.pk).iterator(chunk_size=400):
+        phones = lead_phone_list(lead)
+        ws.append(
+            [
+                lead.name,
+                " ; ".join(phones) if phones else "",
+                lead.get_whatsapp_status_display(),
+            ]
+        )
+
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    fname = f"batch_{batch.pk}_assigned_leads_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
+    resp = HttpResponse(
+        buf.getvalue(),
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    resp["Content-Disposition"] = f'attachment; filename="{fname}"'
+    return resp
 
 
 @method_decorator(ensure_csrf_cookie, name="dispatch")
@@ -1181,7 +1316,7 @@ def whatsapp_force_send(request, pk: int):
 
     if not meta_access_token():
         lead.whatsapp_status = Lead.WhatsappStatus.FAILED
-        lead.whatsapp_last_error = "WHATSAPP_ACCESS_TOKEN is not configured."
+        lead.whatsapp_last_error = "YCLOUD_API_KEY and WHATSAPP_FROM_NUMBER are not configured."
         lead.save(update_fields=["whatsapp_status", "whatsapp_last_error"])
         return _force_send_grid_response(request, lead, ok=False)
 

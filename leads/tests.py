@@ -466,6 +466,85 @@ class WhatsAppWebhookTests(TestCase):
         )
 
 
+class YCloudWebhookTests(TestCase):
+    def _ycloud_inbound_payload(self, **overrides):
+        inbound = {
+            "id": "inb_123",
+            "wamid": "wamid.YCLOUD_INBOUND",
+            "from": "+60123456789",
+            "to": "+60126336529",
+            "type": "text",
+            "text": {"body": "Hello from YCloud"},
+            "sendTime": "2026-06-14T10:00:00.000Z",
+        }
+        inbound.update(overrides)
+        return {
+            "id": "evt_inbound_1",
+            "type": "whatsapp.inbound_message.received",
+            "apiVersion": "v2",
+            "createTime": "2026-06-14T10:00:01.000Z",
+            "whatsappInboundMessage": inbound,
+        }
+
+    @override_settings(WHATSAPP_FROM_NUMBER="+60126336529")
+    def test_parse_ycloud_inbound_message(self):
+        from leads.whatsapp_webhook import parse_ycloud_webhook
+
+        parsed = parse_ycloud_webhook(self._ycloud_inbound_payload())
+        self.assertEqual(len(parsed), 1)
+        self.assertEqual(parsed[0].remote_phone, "+60123456789")
+        self.assertEqual(parsed[0].text_body, "Hello from YCloud")
+        self.assertFalse(parsed[0].from_me)
+
+    @override_settings(WHATSAPP_FROM_NUMBER="+60126336529")
+    def test_parse_ycloud_mobile_echo(self):
+        from leads.whatsapp_webhook import parse_ycloud_webhook
+
+        payload = {
+            "id": "evt_out_1",
+            "type": "whatsapp.message.updated",
+            "apiVersion": "v2",
+            "createTime": "2026-06-14T10:01:00.000Z",
+            "whatsappMessage": {
+                "id": "msg_1",
+                "wamid": "wamid.YCLOUD_ECHO",
+                "from": "+60126336529",
+                "to": "+60123456789",
+                "type": "text",
+                "status": "sent",
+                "text": {"body": "Reply from mobile app"},
+                "sendTime": "2026-06-14T10:01:00.000Z",
+            },
+        }
+        parsed = parse_ycloud_webhook(payload)
+        self.assertEqual(len(parsed), 1)
+        self.assertTrue(parsed[0].from_me)
+        self.assertEqual(parsed[0].text_body, "Reply from mobile app")
+
+    @override_settings(WHATSAPP_FROM_NUMBER="+60126336529")
+    def test_ycloud_webhook_post_syncs_inbound(self):
+        groups = ensure_pipeline_system_groups()
+        lead = Lead.objects.create(
+            name="YCloud Clinic",
+            address="1 Main St",
+            phone_number="+60123456789",
+            phone_numbers=["+60123456789"],
+            group=groups["uncategorized"],
+            whatsapp_status=Lead.WhatsappStatus.SENT,
+        )
+        client = Client()
+        response = client.post(
+            "/whatsapp/webhook/",
+            data=json.dumps(self._ycloud_inbound_payload()),
+            content_type="application/json",
+            REMOTE_ADDR="127.0.0.1",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["synced"], 1)
+        chat = ChatMessage.objects.get(lead=lead, is_outbound=False)
+        self.assertEqual(chat.body, "Hello from YCloud")
+
+
 class PhoneDeduplicationTests(TestCase):
     def test_phone_exists_matches_primary_and_json_numbers(self):
         Lead.objects.create(
@@ -845,3 +924,93 @@ class WhatsAppMetaTemplateSyncTests(TestCase):
         response = client.post(reverse("whatsapp_refresh_meta_templates"))
         self.assertEqual(response.status_code, 200)
         self.assertIn("Template sync failed: Token expired", response.content.decode())
+
+
+class BatchReportTests(TestCase):
+    def setUp(self):
+        from django.utils import timezone
+
+        from leads.models import WhatsAppBatchSchedule
+
+        self.batch = WhatsAppBatchSchedule.objects.create(
+            scheduled_at=timezone.now(),
+            outbound_template_name="just_to_say_hi",
+            status=WhatsAppBatchSchedule.Status.COMPLETED,
+            sent_count=2,
+        )
+        self.sent_a = Lead.objects.create(
+            name="Alpha Clinic",
+            address="1 Main St",
+            group=get_or_create_uncategorized_group(),
+            phone_number="+60111111111",
+            whatsapp_status=Lead.WhatsappStatus.SENT,
+        )
+        self.sent_b = Lead.objects.create(
+            name="Beta Clinic",
+            address="2 Main St",
+            group=get_or_create_uncategorized_group(),
+            phone_numbers=["+60222222222", "+60333333333"],
+            whatsapp_status=Lead.WhatsappStatus.SENT,
+        )
+        self.pending = Lead.objects.create(
+            name="Gamma Clinic",
+            address="3 Main St",
+            group=get_or_create_uncategorized_group(),
+            phone_number="+60444444444",
+            whatsapp_status=Lead.WhatsappStatus.PENDING,
+        )
+        self.sent_a.whatsapp_batches.add(self.batch)
+        self.sent_b.whatsapp_batches.add(self.batch)
+        self.pending.whatsapp_batches.add(self.batch)
+
+    def test_reports_page_lists_assigned_leads_for_batch(self):
+        client = Client()
+        response = client.get(
+            reverse("reports"),
+            {"batch_id": self.batch.pk},
+        )
+        self.assertEqual(response.status_code, 200)
+        html = response.content.decode()
+        self.assertIn("Alpha Clinic", html)
+        self.assertIn("Beta Clinic", html)
+        self.assertIn("Gamma Clinic", html)
+        self.assertIn("+60111111111", html)
+        self.assertIn("+60222222222", html)
+        self.assertIn("+60444444444", html)
+        self.assertIn("First Message Sent", html)
+        self.assertIn("Pending Queue", html)
+
+    def test_batch_report_export_xlsx(self):
+        client = Client()
+        response = client.get(
+            reverse("batch_report_export_xlsx"),
+            {"batch_id": self.batch.pk},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            response["Content-Type"],
+        )
+        from io import BytesIO
+
+        from openpyxl import load_workbook
+
+        wb = load_workbook(BytesIO(response.content))
+        ws = wb.active
+        rows = list(ws.iter_rows(values_only=True))
+        self.assertEqual(rows[3], ("Name", "Contact number", "Status"))
+        self.assertEqual(rows[4][0], "Alpha Clinic")
+        self.assertEqual(rows[4][1], "+60111111111")
+        self.assertEqual(rows[4][2], "First Message Sent")
+        self.assertEqual(rows[5][0], "Beta Clinic")
+        self.assertIn("+60222222222", rows[5][1])
+        self.assertIn("+60333333333", rows[5][1])
+        self.assertEqual(rows[5][2], "First Message Sent")
+        self.assertEqual(rows[6][0], "Gamma Clinic")
+        self.assertEqual(rows[6][1], "+60444444444")
+        self.assertEqual(rows[6][2], "Pending Queue")
+
+    def test_batch_report_export_requires_batch_id(self):
+        client = Client()
+        response = client.get(reverse("batch_report_export_xlsx"))
+        self.assertEqual(response.status_code, 400)
