@@ -17,6 +17,9 @@ YCLOUD_API_BASE = "https://api.ycloud.com/v2"
 YCLOUD_SEND_DIRECT_URL = f"{YCLOUD_API_BASE}/whatsapp/messages/sendDirectly"
 YCLOUD_SEND_QUEUE_URL = f"{YCLOUD_API_BASE}/whatsapp/messages"
 YCLOUD_TEMPLATES_URL = f"{YCLOUD_API_BASE}/whatsapp/templates"
+YCLOUD_PHONE_NUMBERS_URL = f"{YCLOUD_API_BASE}/whatsapp/phoneNumbers"
+
+_resolved_waba_cache: str = ""
 
 
 def _normalize_credential(value: str | None) -> str:
@@ -65,7 +68,95 @@ def ycloud_webhook_secret() -> str:
 
 
 def ycloud_waba_id() -> str:
+    resolved = resolve_sending_waba_id()
+    if resolved:
+        return resolved
     return _env_value("YCLOUD_WABA_ID") or _env_value("WHATSAPP_BUSINESS_ACCOUNT_ID")
+
+
+def _phones_match_ycloud(a: str, b: str) -> bool:
+    left = normalize_manual_phone(a) or (a or "").strip()
+    right = normalize_manual_phone(b) or (b or "").strip()
+    return bool(left and right and left == right)
+
+
+def resolve_sending_waba_id(*, refresh: bool = False) -> str:
+    """
+    Resolve the WABA that owns ``WHATSAPP_FROM_NUMBER`` via YCloud phoneNumbers API.
+    Falls back to ``YCLOUD_WABA_ID`` when the number cannot be matched.
+    """
+    global _resolved_waba_cache
+    if _resolved_waba_cache and not refresh:
+        return _resolved_waba_cache
+
+    from_number = whatsapp_from_number()
+    env_waba = _env_value("YCLOUD_WABA_ID") or _env_value("WHATSAPP_BUSINESS_ACCOUNT_ID")
+    if not from_number:
+        _resolved_waba_cache = env_waba
+        return env_waba
+
+    api_key = ycloud_api_key()
+    if not api_key:
+        _resolved_waba_cache = env_waba
+        return env_waba
+
+    page = 1
+    limit = 100
+    matched_waba = ""
+    try:
+        with httpx.Client(timeout=45.0) as client:
+            while page <= 100:
+                response = client.get(
+                    YCLOUD_PHONE_NUMBERS_URL,
+                    params={"page": page, "limit": limit},
+                    headers=ycloud_headers(),
+                )
+                if response.status_code != 200:
+                    logger.warning(
+                        "YCloud phoneNumbers lookup failed: %s",
+                        extract_ycloud_error(response),
+                    )
+                    break
+
+                payload = response.json()
+                items = payload.get("items") if isinstance(payload, dict) else []
+                if not isinstance(items, list) or not items:
+                    break
+
+                for row in items:
+                    if not isinstance(row, dict):
+                        continue
+                    candidate = (row.get("phoneNumber") or row.get("displayPhoneNumber") or "").strip()
+                    if not _phones_match_ycloud(from_number, candidate):
+                        continue
+                    matched_waba = str(row.get("wabaId") or "").strip()
+                    if matched_waba:
+                        break
+                if matched_waba:
+                    break
+
+                page_info = payload.get("page") if isinstance(payload, dict) else {}
+                length = page_info.get("length") if isinstance(page_info, dict) else len(items)
+                page_limit = page_info.get("limit") if isinstance(page_info, dict) else limit
+                if not length or length < page_limit:
+                    break
+                page += 1
+    except httpx.RequestError as exc:
+        logger.warning("YCloud phoneNumbers lookup error: %s", exc)
+
+    if matched_waba:
+        if env_waba and env_waba != matched_waba:
+            logger.warning(
+                "YCLOUD_WABA_ID=%s does not match %s (resolved WABA %s). Using resolved WABA.",
+                env_waba,
+                from_number,
+                matched_waba,
+            )
+        _resolved_waba_cache = matched_waba
+        return matched_waba
+
+    _resolved_waba_cache = env_waba
+    return env_waba
 
 
 def whatsapp_from_number() -> str:
@@ -264,22 +355,33 @@ def _fetch_approved_templates_page(
 
 
 def fetch_approved_templates() -> list[dict[str, Any]]:
-    """List APPROVED WhatsApp templates from YCloud."""
+    """List APPROVED WhatsApp templates for the sending WABA (+6429 Coex line)."""
     api_key = ycloud_api_key()
     if not api_key:
         raise ValueError("YCLOUD_API_KEY is required.")
 
-    waba_id = ycloud_waba_id()
+    waba_id = resolve_sending_waba_id(refresh=True)
+    if not waba_id:
+        raise ValueError(
+            "Could not resolve WABA for WHATSAPP_FROM_NUMBER. Connect the number in YCloud "
+            "or set YCLOUD_WABA_ID to the WABA shown on the YCloud channel."
+        )
+
     with httpx.Client(timeout=45.0) as client:
-        if waba_id:
-            catalog = _fetch_approved_templates_page(client, waba_id=waba_id)
-            if catalog:
-                return catalog
-            logger.warning(
-                "No YCloud templates for WABA %s; retrying without WABA filter.",
-                waba_id,
-            )
-        return _fetch_approved_templates_page(client)
+        catalog = _fetch_approved_templates_page(client, waba_id=waba_id)
+
+    if not catalog:
+        raise ValueError(
+            f"No approved templates on YCloud for WABA {waba_id}. "
+            "Create and approve a template on this WABA, then click Update in the dashboard."
+        )
+
+    filtered = [
+        row
+        for row in catalog
+        if not row.get("wabaId") or str(row.get("wabaId")).strip() == waba_id
+    ]
+    return filtered or catalog
 
 
 def fetch_gateway_status() -> dict[str, Any]:

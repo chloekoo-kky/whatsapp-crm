@@ -1010,7 +1010,7 @@ class WhatsAppMetaTemplateSyncTests(TestCase):
         from leads.whatsapp_service import normalize_outbound_template_name, sync_meta_message_templates_to_config
 
         mock_fetch.return_value = [
-            {"name": "hello_clinic", "status": "APPROVED", "language": "en", "body": "Hi"},
+            {"name": "hello_clinic", "status": "APPROVED", "language": "en", "body": "Hi", "wabaId": "123"},
         ]
         sync_meta_message_templates_to_config()
         config = WhatsAppConfig.load()
@@ -1040,6 +1040,28 @@ class WhatsAppMetaTemplateSyncTests(TestCase):
         response = client.post(reverse("whatsapp_refresh_meta_templates"))
         self.assertEqual(response.status_code, 200)
         self.assertIn("Template sync failed: Token expired", response.content.decode())
+
+
+class YCloudWabaResolveTests(TestCase):
+    @patch("leads.ycloud_service.httpx.Client")
+    def test_resolve_sending_waba_id_from_phone_numbers_api(self, mock_client_cls):
+        from leads.ycloud_service import resolve_sending_waba_id
+
+        mock_response = mock_client_cls.return_value.__enter__.return_value.get
+        mock_response.return_value.status_code = 200
+        mock_response.return_value.json.return_value = {
+            "items": [
+                {
+                    "phoneNumber": "+60126336429",
+                    "wabaId": "1478974178167699",
+                }
+            ],
+            "page": {"length": 1, "limit": 100},
+        }
+
+        with self.settings(WHATSAPP_FROM_NUMBER="+60126336429", YCLOUD_WABA_ID="1470974178167699"):
+            waba = resolve_sending_waba_id(refresh=True)
+        self.assertEqual(waba, "1478974178167699")
 
 
 class BatchReportTests(TestCase):
