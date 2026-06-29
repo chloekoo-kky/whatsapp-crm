@@ -521,6 +521,70 @@ class YCloudWebhookTests(TestCase):
         self.assertTrue(parsed[0].from_me)
         self.assertEqual(parsed[0].text_body, "Reply from mobile app")
 
+    @override_settings(WHATSAPP_FROM_NUMBER="+60126336429")
+    def test_parse_ycloud_smb_message_echoes(self):
+        from leads.whatsapp_webhook import parse_ycloud_webhook
+
+        payload = {
+            "id": "evt_smb_echo_1",
+            "type": "whatsapp.smb.message.echoes",
+            "apiVersion": "v2",
+            "createTime": "2026-06-14T10:02:00.000Z",
+            "whatsappMessage": {
+                "id": "msg_smb_1",
+                "wamid": "wamid.YCLOUD_SMB_ECHO",
+                "from": "+60126336429",
+                "to": "+60123456789",
+                "type": "text",
+                "status": "sent",
+                "text": {"body": "Reply from Coex phone app"},
+                "sendTime": "2026-06-14T10:02:00.000Z",
+            },
+        }
+        parsed = parse_ycloud_webhook(payload)
+        self.assertEqual(len(parsed), 1)
+        self.assertTrue(parsed[0].from_me)
+        self.assertEqual(parsed[0].remote_phone, "+60123456789")
+        self.assertEqual(parsed[0].text_body, "Reply from Coex phone app")
+
+    @override_settings(WHATSAPP_FROM_NUMBER="+60126336429")
+    def test_ycloud_smb_echo_webhook_post_syncs_outbound(self):
+        groups = ensure_pipeline_system_groups()
+        lead = Lead.objects.create(
+            name="Coex Clinic",
+            address="1 Main St",
+            phone_number="+60123456789",
+            phone_numbers=["+60123456789"],
+            group=groups["uncategorized"],
+            whatsapp_status=Lead.WhatsappStatus.SENT,
+        )
+        payload = {
+            "id": "evt_smb_echo_2",
+            "type": "whatsapp.smb.message.echoes",
+            "apiVersion": "v2",
+            "createTime": "2026-06-14T10:02:00.000Z",
+            "whatsappMessage": {
+                "id": "msg_smb_2",
+                "wamid": "wamid.YCLOUD_SMB_ECHO_POST",
+                "from": "+60126336429",
+                "to": "+60123456789",
+                "type": "text",
+                "text": {"body": "Coex phone reply logged"},
+                "sendTime": "2026-06-14T10:02:00.000Z",
+            },
+        }
+        client = Client()
+        response = client.post(
+            "/whatsapp/webhook/",
+            data=json.dumps(payload),
+            content_type="application/json",
+            REMOTE_ADDR="127.0.0.1",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["synced"], 1)
+        chat = ChatMessage.objects.get(lead=lead, is_outbound=True)
+        self.assertEqual(chat.body, "Coex phone reply logged")
+
     @override_settings(WHATSAPP_FROM_NUMBER="+60126336529")
     def test_ycloud_webhook_post_syncs_inbound(self):
         groups = ensure_pipeline_system_groups()

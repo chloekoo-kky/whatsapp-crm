@@ -249,11 +249,14 @@ def _parse_ycloud_inbound(inbound: dict[str, Any]) -> list[ParsedWebhookMessage]
     ]
 
 
-def _parse_ycloud_outbound_update(message: dict[str, Any]) -> list[ParsedWebhookMessage]:
-    """Mobile-app / API outbound echoes via ``whatsapp.message.updated``."""
-    status = (message.get("status") or "").strip().lower()
-    if status and status not in {"sent"}:
-        return []
+def _parse_ycloud_business_outbound(
+    message: dict[str, Any], *, skip_status_filter: bool = False
+) -> list[ParsedWebhookMessage]:
+    """Outbound from the business line (API send or Coex WhatsApp Business App echo)."""
+    if not skip_status_filter:
+        status = (message.get("status") or "").strip().lower()
+        if status and status not in {"sent"}:
+            return []
 
     business = whatsapp_from_number()
     msg_from = (message.get("from") or "").strip()
@@ -293,7 +296,13 @@ def parse_ycloud_webhook(payload: dict[str, Any]) -> list[ParsedWebhookMessage]:
     if event_type == "whatsapp.message.updated":
         message = payload.get("whatsappMessage")
         if isinstance(message, dict):
-            return _parse_ycloud_outbound_update(message)
+            return _parse_ycloud_business_outbound(message)
+        return []
+
+    if event_type == "whatsapp.smb.message.echoes":
+        message = payload.get("whatsappMessage")
+        if isinstance(message, dict):
+            return _parse_ycloud_business_outbound(message, skip_status_filter=True)
         return []
 
     return []
