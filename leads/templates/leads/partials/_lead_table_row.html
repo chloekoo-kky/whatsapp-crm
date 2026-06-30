@@ -5,8 +5,12 @@
   data-is-chain="{% if c.is_chain %}1{% else %}0{% endif %}"
   data-category="{{ c.category }}"
   data-very-important="{% if c.is_very_important %}1{% else %}0{% endif %}"
-  data-search-base="{{ c.name }} {{ c.address }} {{ c.dashboard_phones|join:' ' }} {{ c.website }} {{ c.shop_keyword }} {{ c.search_city|default_if_none:''|default:'' }} {{ c.search_country|default_if_none:''|default:'' }} {{ c.search_query|default_if_none:''|default:'' }}"
-  data-search="{{ c.name }} {{ c.address }} {{ c.dashboard_phones|join:' ' }} {{ c.website }} {{ c.shop_keyword }} {{ c.category }} {{ c.search_city|default_if_none:''|default:'' }} {{ c.search_country|default_if_none:''|default:'' }} {{ c.search_query|default_if_none:''|default:'' }} {% if c.is_chain %}chain{% endif %} {% if c.is_very_important %}important{% endif %}">
+  data-whatsapp-dispatched="{% if c.whatsapp_dispatched %}1{% else %}0{% endif %}"
+  data-sort-name="{{ c.name|default:''|lower }}"
+  data-sort-state="{{ c.search_state|default_if_none:''|default:''|lower }}"
+  data-sort-created="{{ c.created_at|date:'U' }}"
+  data-search-base="{{ c.name }} {{ c.address }} {{ c.dashboard_phones|join:' ' }} {{ c.website }} {{ c.shop_keyword }} {{ c.search_state|default_if_none:''|default:'' }} {{ c.search_city|default_if_none:''|default:'' }} {{ c.search_query|default_if_none:''|default:'' }}"
+  data-search="{{ c.name }} {{ c.address }} {{ c.dashboard_phones|join:' ' }} {{ c.website }} {{ c.shop_keyword }} {{ c.category }} {{ c.search_state|default_if_none:''|default:'' }} {{ c.search_city|default_if_none:''|default:'' }} {{ c.search_query|default_if_none:''|default:'' }} {% if c.is_chain %}chain{% endif %} {% if c.is_very_important %}important{% endif %}">
   <td class="align-top px-2 py-3.5 text-center sm:px-3">
     <div hidden class="whatsapp-draft-store">{{ c.whatsapp_draft }}</div>
     <input type="checkbox" class="clinic-select-cb relative top-0.5 h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" value="{{ c.id }}" title="Select row" aria-label="Select {{ c.name }}" />
@@ -22,16 +26,7 @@
       </a>
     </div>
     <p class="clinic-search-inner clinic-source-line mt-1 text-[11px] leading-snug text-slate-500">
-      {% with city=c.search_city|default_if_none:""|default:"" ctry=c.search_country|default_if_none:""|default:"" kw=c.shop_keyword|default_if_none:""|default:"" q=c.search_query|default_if_none:""|default:"" %}
-      {% if city or ctry or kw or q %}
-        {% if city %}{{ city }}{% endif %}
-        {% if ctry %}{% if city %} <span class="text-slate-400">/</span> {% endif %}{{ ctry }}{% endif %}
-        {% if kw %}{% if city or ctry %} <span class="text-slate-400">/</span> {% endif %}{{ kw }}{% endif %}
-        {% if q %}{% if city or ctry or kw %} <span class="text-slate-400">/</span> {% endif %}{{ q }}{% endif %}
-      {% else %}
-        <span class="text-slate-400">—</span>
-      {% endif %}
-      {% endwith %}
+      {% include "leads/partials/_lead_source_line.html" with c=c %}
     </p>
     <p class="clinic-branches-line mt-1 text-[11px] leading-snug text-slate-600{% if c.dashboard_same_brand_count < 2 and not c.location_count_estimate %} hidden{% endif %}">
       {% if c.dashboard_same_brand_count >= 2 %}
@@ -107,20 +102,7 @@
     </div>
   </td>
   <td class="clinic-actions-cell align-top px-2 py-3.5 text-center sm:px-3">
-    <div class="inline-flex min-h-[2.25rem] flex-wrap items-center justify-center gap-0.5">
-      <button type="button" class="move-to-group-btn inline-flex shrink-0 rounded-lg p-1.5 text-violet-600 transition hover:bg-violet-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/40" data-clinic-id="{{ c.id }}" title="Move to group">
-        <span class="sr-only">Move to group</span>
-        <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z"/></svg>
-      </button>
-      <button type="button" class="lead-conversation-log-btn inline-flex shrink-0 rounded-lg p-1.5 text-sky-600 transition hover:bg-sky-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/40" data-clinic-id="{{ c.id }}" title="Add conversation log">
-        <span class="sr-only">Add conversation log</span>
-        <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M7.5 3.75h9A2.25 2.25 0 0118.75 6v12a2.25 2.25 0 01-2.25 2.25h-9A2.25 2.25 0 015.25 18V6A2.25 2.25 0 017.5 3.75zm2.25 4.5h4.5M9.75 12h4.5M9.75 15.75h3" /></svg>
-      </button>
-      <button type="button" class="clinic-edit-btn inline-flex shrink-0 rounded-lg p-1.5 text-slate-500 transition hover:bg-slate-100 hover:text-indigo-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/40" data-clinic-id="{{ c.id }}" title="Edit lead">
-        <span class="sr-only">Edit lead</span>
-        <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/></svg>
-      </button>
-    </div>
+    {% include "leads/partials/_lead_list_row_actions.html" with c=c %}
   </td>
 </tr>
 {% endwith %}

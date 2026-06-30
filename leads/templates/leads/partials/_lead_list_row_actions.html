@@ -1,0 +1,14 @@
+<div class="inline-flex min-h-[2.25rem] flex-wrap items-center justify-center gap-0.5">
+  <button type="button" class="clinic-edit-btn inline-flex shrink-0 rounded-lg p-1.5 text-slate-500 transition hover:bg-slate-100 hover:text-indigo-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/40" data-clinic-id="{{ c.id }}" title="Edit lead">
+    <span class="sr-only">Edit lead</span>
+    <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/></svg>
+  </button>
+  <button type="button" class="move-to-group-btn inline-flex shrink-0 rounded-lg p-1.5 text-slate-500 transition hover:bg-violet-50 hover:text-violet-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/40" data-clinic-id="{{ c.id }}" title="Move to group" aria-label="Move to group">
+    <span class="sr-only">Move to group</span>
+    <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z"/></svg>
+  </button>
+  <button type="button" class="lead-conversation-log-btn inline-flex shrink-0 rounded-lg p-1.5 text-sky-600 transition hover:bg-sky-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/40" data-clinic-id="{{ c.id }}" title="Add conversation log">
+    <span class="sr-only">Add conversation log</span>
+    <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M7.5 3.75h9A2.25 2.25 0 0118.75 6v12a2.25 2.25 0 01-2.25 2.25h-9A2.25 2.25 0 015.25 18V6A2.25 2.25 0 017.5 3.75zm2.25 4.5h4.5M9.75 12h4.5M9.75 15.75h3" /></svg>
+  </button>
+</div>

@@ -391,6 +391,7 @@
     display: inline-block;
   }
   .lead-card-bottom-actions .htmx-request > span[aria-hidden="true"],
+  .lead-card-bottom-actions .htmx-request .lead-join-queue-icon,
   .lead-card-trash-btn.htmx-request .lead-card-trash-icon,
   .lead-card-trash-btn.htmx-request > span[aria-hidden="true"],
   .lead-card-active-chat-btn.htmx-request .lead-card-active-chat-icon,
@@ -404,8 +405,29 @@
   .lead-card-container.lead-card--floating {
     transition: transform 320ms ease, opacity 320ms ease;
   }
+  .lead-card-container.lead-card--dequeuing {
+    transition: opacity 280ms ease, filter 280ms ease;
+  }
+  .lead-card-container.lead-card--dequeuing .clinic-card {
+    border-color: rgb(203 213 225) !important;
+    background-color: rgb(248 250 252) !important;
+    box-shadow: none !important;
+  }
+  .lead-card-container.lead-card--dequeuing .clinic-card > :not(.lead-card-bottom-actions) {
+    opacity: 0.42;
+    filter: grayscale(0.9);
+    pointer-events: none;
+  }
+  .lead-card-container.lead-card--dequeuing .lead-card-bottom-actions {
+    opacity: 1;
+    filter: none;
+    pointer-events: auto;
+  }
   #lead-queue-slot .lead-queue-enqueued-indicator {
     animation: lead-queue-check-in 280ms ease-out;
+  }
+  .lead-join-queue-btn .lead-join-queue-icon {
+    filter: grayscale(1) saturate(0.15) brightness(0.9);
   }
   @keyframes lead-queue-check-in {
     from { opacity: 0; transform: scale(0.88); }

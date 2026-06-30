@@ -52,6 +52,7 @@ LEAD_HEADERS = [
     "whatsapp_instance_id",
     "whatsapp_last_error",
     "search_city",
+    "search_state",
     "search_query",
     "search_country",
     "group",
@@ -226,6 +227,7 @@ def build_backup_workbook():
                 c.whatsapp_instance_id or "",
                 (c.whatsapp_last_error or "")[:32000],
                 c.search_city or "",
+                c.search_state or "",
                 c.search_query or "",
                 c.search_country or "",
                 c.group.name if c.group_id else "",
@@ -383,6 +385,7 @@ def restore_from_workbook(file_obj) -> dict:
             if status not in valid_statuses:
                 status = Lead.WhatsappStatus.IDLE
             sc = _p_str(row.get("search_city")).strip()
+            ss = _p_str(row.get("search_state")).strip()
             sq = _p_str(row.get("search_query")).strip()
             sco = _p_str(row.get("search_country")).strip()
             defaults = {
@@ -404,6 +407,7 @@ def restore_from_workbook(file_obj) -> dict:
                 "whatsapp_instance_id": _p_str(row.get("whatsapp_instance_id"))[:120],
                 "whatsapp_last_error": _p_str(row.get("whatsapp_last_error")),
                 "search_city": sc or None,
+                "search_state": ss or None,
                 "search_query": sq or None,
                 "search_country": sco or None,
                 "group": resolve_group(_p_str(row.get("group"))),

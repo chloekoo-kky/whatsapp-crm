@@ -26,6 +26,14 @@
 
   };
 
+  window.__undimLeadGridCell = function (leadId) {
+    if (leadId == null) return;
+    var cell = document.getElementById("lead-grid-cell-" + leadId);
+    if (!cell) return;
+    cell.classList.remove("lead-card--dequeuing");
+    cell.setAttribute("data-whatsapp-status", "pending");
+  };
+
 
 
   document.body.addEventListener("htmx:configRequest", function (evt) {
@@ -74,6 +82,34 @@
 
     }
 
+    if (elt.classList.contains("lead-join-queue-btn") && xhr) {
+      var triggerHeader = xhr.getResponseHeader("HX-Trigger");
+      if (triggerHeader) {
+        try {
+          var triggers = JSON.parse(triggerHeader);
+          if (triggers.leadCardUndim != null && window.__undimLeadGridCell) {
+            window.__undimLeadGridCell(triggers.leadCardUndim);
+          }
+        } catch (parseErr) { /* ignore */ }
+      }
+    }
+
+  });
+
+  document.body.addEventListener("htmx:afterSwap", function (evt) {
+    var target = evt.detail && evt.detail.target;
+    if (!target || !target.id || target.id.indexOf("lead-queue-slot-") !== 0) return;
+    if (!target.querySelector(".lead-dequeue-btn, .lead-queue-enqueued-indicator")) return;
+    var leadId = target.id.slice("lead-queue-slot-".length);
+    window.__undimLeadGridCell(leadId);
+  });
+
+  document.body.addEventListener("leadCardUndim", function (evt) {
+    var id = evt.detail;
+    if (id && typeof id === "object") {
+      id = id.leadCardUndim != null ? id.leadCardUndim : id.detail;
+    }
+    window.__undimLeadGridCell(id);
   });
 
 

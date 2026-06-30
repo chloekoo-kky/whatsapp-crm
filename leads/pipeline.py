@@ -211,10 +211,7 @@ def enqueue_leads_for_whatsapp(lead_ids: Iterable[int]) -> int:
             continue
         lead.whatsapp_status = Lead.WhatsappStatus.PENDING
         lead.whatsapp_last_error = ""
-        lead.display_order = sink_lead_display_order(lead)
-        lead.save(
-            update_fields=["whatsapp_status", "whatsapp_last_error", "display_order"]
-        )
+        lead.save(update_fields=["whatsapp_status", "whatsapp_last_error"])
         updated += 1
     return updated
 

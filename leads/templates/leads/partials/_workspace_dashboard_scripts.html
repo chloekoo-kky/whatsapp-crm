@@ -60,6 +60,7 @@
       const REQUIRE_WEBSITE_KEY = "clinic_crm_require_website";
       const CHAT_INDICATOR_POLL_KEY = "clinic_crm_chat_indicator_poll";
       const VIEW_MODE_KEY = "clinic_crm_clinic_view";
+      const LEAD_SORT_KEY = "clinic_crm_lead_sort";
       const shopTypesApiPath = "/leads/api/shop-types/";
       const shopTypeDeleteUrlTemplate = "/leads/api/shop-types/__ID__/";
 
@@ -103,6 +104,7 @@
         var url = btn.getAttribute('data-dequeue-url');
         var leadId = btn.getAttribute('data-lead-id');
         if (!url || !leadId) return;
+        var isQueueView = btn.getAttribute('data-queue-view') === '1';
         btn.classList.add('is-busy');
         btn.disabled = true;
         try {
@@ -120,11 +122,17 @@
             window.alert('Could not remove this lead from the WhatsApp queue.');
             return;
           }
-          if (btn.getAttribute('data-queue-view') === '1') {
+          dispatchHtmxTriggerHeader(res.headers.get('HX-Trigger'));
+          if (isQueueView) {
             var cell = document.getElementById('lead-grid-cell-' + leadId);
             if (cell) {
-              cell.classList.add('lead-card--sinking');
-              window.setTimeout(function () { cell.remove(); }, 300);
+              cell.classList.add('lead-card--dequeuing');
+              cell.setAttribute('data-whatsapp-status', 'idle');
+            }
+            var slot = document.getElementById('lead-queue-slot-' + leadId);
+            if (slot) {
+              slot.innerHTML = html;
+              if (window.htmx) window.htmx.process(slot);
             }
           } else {
             var slot = document.getElementById('lead-queue-slot-' + leadId);
@@ -133,7 +141,6 @@
               if (window.htmx) window.htmx.process(slot);
             }
           }
-          dispatchHtmxTriggerHeader(res.headers.get('HX-Trigger'));
           if (typeof window.refreshSelectAllState === 'function') window.refreshSelectAllState();
           if (typeof window.refreshSelectionVisuals === 'function') window.refreshSelectionVisuals();
           if (typeof window.refreshSetCategoryButtonState === 'function') window.refreshSetCategoryButtonState();
@@ -143,8 +150,10 @@
           console.error(err);
           window.alert('Network error while removing lead from queue.');
         } finally {
-          btn.classList.remove('is-busy');
-          btn.disabled = false;
+          if (document.body.contains(btn)) {
+            btn.classList.remove('is-busy');
+            btn.disabled = false;
+          }
         }
       }
 
@@ -338,10 +347,10 @@
         return escapeHtml(s).replace(/'/g, '&#39;');
       }
 
-      function renderSourceLineText(searchCity, searchCountry, shopKeyword, searchQuery) {
+      function renderSourceLineText(searchState, searchCity, shopKeyword, searchQuery) {
         const parts = [
+          (searchState || '').trim(),
           (searchCity || '').trim(),
-          (searchCountry || '').trim(),
           (shopKeyword || '').trim(),
           (searchQuery || '').trim(),
         ].filter(function (s) { return s.length > 0; });
@@ -410,7 +419,7 @@
         } else if (d.phone_number) {
           phonesSearch = String(d.phone_number);
         }
-        const baseStr = [d.name, d.address, phonesSearch, d.website, d.shop_keyword, d.search_city, d.search_country, d.search_query]
+        const baseStr = [d.name, d.address, phonesSearch, d.website, d.shop_keyword, d.search_state, d.search_city, d.search_query]
           .join(' ')
           .replace(/\s+/g, ' ')
           .trim();
@@ -418,6 +427,9 @@
         document.querySelectorAll('.clinic-row[data-clinic-id="' + id + '"]').forEach(function (row) {
           row.setAttribute('data-search-base', baseStr);
           row.setAttribute('data-is-chain', d.is_chain ? '1' : '0');
+          if (d.search_state != null) {
+            row.setAttribute('data-sort-state', String(d.search_state || '').toLowerCase());
+          }
           const typeCell = row.querySelector('.clinic-type-cell');
           if (typeCell && d.type_html) typeCell.innerHTML = d.type_html;
           if (d.is_very_important !== undefined) {
@@ -436,7 +448,7 @@
           if (nameInner && d.name_cell_html) nameInner.innerHTML = d.name_cell_html;
 
           const sourceLine = row.querySelector('.clinic-source-line');
-          if (sourceLine) sourceLine.innerHTML = renderSourceLineText(d.search_city, d.search_country, d.shop_keyword, d.search_query);
+          if (sourceLine) sourceLine.innerHTML = renderSourceLineText(d.search_state, d.search_city, d.shop_keyword, d.search_query);
 
           const branchesLine = row.querySelector('.clinic-branches-line');
           if (branchesLine) {
@@ -514,9 +526,8 @@
       function getActiveClinicsViewRoot() {
         const listEl = document.getElementById('clinics-view-list');
         const gridEl = document.getElementById('clinics-view-grid');
-        if (listEl && !listEl.classList.contains('hidden')) return listEl;
-        if (gridEl && !gridEl.classList.contains('hidden')) return gridEl;
-        return listEl || gridEl || null;
+        if (document.documentElement.classList.contains('cv-grid')) return gridEl || listEl;
+        return listEl || gridEl;
       }
 
       function getVisibleClinicRows(root) {
@@ -606,7 +617,9 @@
         var si = document.getElementById('table-search');
         if (si && si.value.trim()) return true;
         var vip = document.getElementById('filter-very-important-only');
-        return !!(vip && vip.getAttribute('aria-pressed') === 'true');
+        if (vip && vip.getAttribute('aria-pressed') === 'true') return true;
+        var sent = document.getElementById('filter-sent-message-only');
+        return !!(sent && sent.getAttribute('aria-pressed') === 'true');
       }
 
       function getFolderLeadCount() {
@@ -800,6 +813,9 @@
                 if (cell) {
                   cell.setAttribute('data-whatsapp-dispatched', row.dispatched ? '1' : '0');
                 }
+                document.querySelectorAll('.clinic-row[data-clinic-id="' + leadId + '"]').forEach(function (el) {
+                  el.setAttribute('data-whatsapp-dispatched', row.dispatched ? '1' : '0');
+                });
               });
               leadChatIndicatorSnapshot = snapshot;
             }
@@ -1347,15 +1363,15 @@
       refreshSelectAllState();
       refreshSelectionVisuals();
 
-      const clinicsViewList = document.getElementById('clinics-view-list');
-      const clinicsViewGrid = document.getElementById('clinics-view-grid');
-      const viewModeBtns = document.querySelectorAll('.view-mode-btn');
-
       function setClinicViewMode(mode) {
         const isGrid = mode === 'grid';
-        if (clinicsViewList) clinicsViewList.classList.toggle('hidden', isGrid);
-        if (clinicsViewGrid) clinicsViewGrid.classList.toggle('hidden', !isGrid);
-        viewModeBtns.forEach(function (btn) {
+        const listEl = document.getElementById('clinics-view-list');
+        const gridEl = document.getElementById('clinics-view-grid');
+        document.documentElement.classList.remove('cv-grid', 'cv-list');
+        document.documentElement.classList.add(isGrid ? 'cv-grid' : 'cv-list');
+        if (listEl) listEl.classList.toggle('hidden', isGrid);
+        if (gridEl) gridEl.classList.toggle('hidden', !isGrid);
+        document.querySelectorAll('.view-mode-btn').forEach(function (btn) {
           const active = btn.getAttribute('data-view-mode') === (isGrid ? 'grid' : 'list');
           btn.setAttribute('aria-pressed', active ? 'true' : 'false');
           btn.classList.toggle('bg-white', active);
@@ -1374,20 +1390,145 @@
         if (typeof window.__ensureGridHtmxBound === "function") window.__ensureGridHtmxBound();
       }
 
-      viewModeBtns.forEach(function (btn) {
-        btn.addEventListener('click', function () {
-          setClinicViewMode(btn.getAttribute('data-view-mode') || 'list');
-        });
-      });
-      try {
-        if (localStorage.getItem(VIEW_MODE_KEY) === 'grid') setClinicViewMode('grid');
-        else setClinicViewMode('list');
-      } catch (e) {
-        setClinicViewMode('list');
+      function readLeadSortMode() {
+        try {
+          var v = localStorage.getItem(LEAD_SORT_KEY);
+          if (v && /^(default|name-asc|name-desc|state-asc|state-desc|created-asc|created-desc)$/.test(v)) return v;
+        } catch (e) { /* ignore */ }
+        return 'default';
       }
 
-      bindSelectableSurface(clinicsViewList);
-      bindSelectableSurface(clinicsViewGrid);
+      let leadSortMode = readLeadSortMode();
+
+      function syncLeadSortSelect() {
+        var sel = document.getElementById('lead-sort-select');
+        if (sel && sel.value !== leadSortMode) sel.value = leadSortMode;
+      }
+
+      function compareLeadRowsForSort(a, b) {
+        var desc = leadSortMode.endsWith('-desc');
+        var field = leadSortMode.split('-')[0];
+        var av;
+        var bv;
+        if (field === 'created') {
+          av = parseFloat(a.getAttribute('data-sort-created') || '0') || 0;
+          bv = parseFloat(b.getAttribute('data-sort-created') || '0') || 0;
+        } else if (field === 'state') {
+          av = (a.getAttribute('data-sort-state') || '').toLowerCase();
+          bv = (b.getAttribute('data-sort-state') || '').toLowerCase();
+        } else {
+          av = (a.getAttribute('data-sort-name') || '').toLowerCase();
+          bv = (b.getAttribute('data-sort-name') || '').toLowerCase();
+        }
+        var cmp = 0;
+        if (field === 'created') cmp = av - bv;
+        else if (av < bv) cmp = -1;
+        else if (av > bv) cmp = 1;
+        if (cmp === 0) {
+          var aid = parseInt(a.getAttribute('data-clinic-id') || '0', 10) || 0;
+          var bid = parseInt(b.getAttribute('data-clinic-id') || '0', 10) || 0;
+          cmp = aid - bid;
+        }
+        return desc ? -cmp : cmp;
+      }
+
+      function applyLeadSort() {
+        syncLeadSortSelect();
+        if (leadSortMode === 'default') return;
+        var tbody = document.getElementById('clinics-table-body');
+        if (tbody) {
+          var rows = Array.from(tbody.querySelectorAll('tr.clinic-row'));
+          rows.sort(compareLeadRowsForSort);
+          rows.forEach(function (row) { tbody.appendChild(row); });
+        }
+        var gridInner = document.getElementById('clinics-grid-inner');
+        if (gridInner) {
+          var cells = Array.from(gridInner.querySelectorAll('.lead-card-container'));
+          cells.sort(function (a, b) {
+            var ar = a.querySelector('.clinic-row');
+            var br = b.querySelector('.clinic-row');
+            if (!ar || !br) return 0;
+            return compareLeadRowsForSort(ar, br);
+          });
+          cells.forEach(function (cell) { gridInner.appendChild(cell); });
+        }
+        refreshGridCardsDraggable();
+      }
+
+      function setLeadSortMode(mode) {
+        leadSortMode = mode || 'default';
+        try {
+          localStorage.setItem(LEAD_SORT_KEY, leadSortMode);
+        } catch (e) { /* ignore */ }
+        syncLeadSortSelect();
+        applyLeadSort();
+        refreshSelectAllState();
+        refreshSelectionVisuals();
+      }
+
+      function initClinicViewModeFromStorage() {
+        try {
+          if (localStorage.getItem(VIEW_MODE_KEY) === 'grid') setClinicViewMode('grid');
+          else setClinicViewMode('list');
+        } catch (e) {
+          setClinicViewMode('list');
+        }
+      }
+
+      function toggleLeadFilterButton(btn, activeClass) {
+        if (!btn) return;
+        const on = btn.getAttribute('aria-pressed') !== 'true';
+        btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+        if (activeClass === 'amber') {
+          btn.classList.toggle('border-amber-500', on);
+          btn.classList.toggle('bg-amber-50', on);
+          btn.classList.toggle('text-amber-950', on);
+          btn.classList.toggle('shadow-inner', on);
+          btn.classList.toggle('ring-1', on);
+          btn.classList.toggle('ring-amber-400/50', on);
+        } else if (activeClass === 'emerald') {
+          btn.classList.toggle('border-emerald-500', on);
+          btn.classList.toggle('bg-emerald-50', on);
+          btn.classList.toggle('text-emerald-950', on);
+          btn.classList.toggle('shadow-inner', on);
+          btn.classList.toggle('ring-1', on);
+          btn.classList.toggle('ring-emerald-400/50', on);
+        }
+        applyTableFilter();
+        refreshSelectAllState();
+        refreshSelectionVisuals();
+      }
+
+      if (!window.__leadsToolbarDelegated) {
+        window.__leadsToolbarDelegated = true;
+        document.body.addEventListener('click', function (e) {
+          var viewBtn = e.target.closest('.view-mode-btn');
+          if (viewBtn && viewBtn.closest('#leads-controls-bar')) {
+            setClinicViewMode(viewBtn.getAttribute('data-view-mode') || 'list');
+            return;
+          }
+          var vipBtn = e.target.closest('#filter-very-important-only');
+          if (vipBtn) {
+            toggleLeadFilterButton(vipBtn, 'amber');
+            return;
+          }
+          var sentBtn = e.target.closest('#filter-sent-message-only');
+          if (sentBtn) {
+            toggleLeadFilterButton(sentBtn, 'emerald');
+          }
+        });
+        document.body.addEventListener('change', function (e) {
+          if (e.target && e.target.id === 'lead-sort-select') {
+            setLeadSortMode(e.target.value || 'default');
+          }
+        });
+      }
+
+      initClinicViewModeFromStorage();
+      applyLeadSort();
+
+      bindSelectableSurface(document.getElementById('clinics-view-list'));
+      bindSelectableSurface(document.getElementById('clinics-view-grid'));
 
       function refreshTableSearchClearVisibility() {
         var si = document.getElementById('table-search');
@@ -1542,12 +1683,16 @@
         const q = searchInput ? searchInput.value.trim().toLowerCase() : '';
         const vipBtn = document.getElementById('filter-very-important-only');
         const vipOnly = vipBtn && vipBtn.getAttribute('aria-pressed') === 'true';
+        const sentBtn = document.getElementById('filter-sent-message-only');
+        const sentOnly = sentBtn && sentBtn.getAttribute('aria-pressed') === 'true';
         document.querySelectorAll('.clinic-row').forEach(function (row) {
           const hay = (row.getAttribute('data-search') || '').toLowerCase();
           const isVip = row.getAttribute('data-very-important') === '1';
+          const hasSent = row.getAttribute('data-whatsapp-dispatched') === '1';
           let hide = false;
           if (q && !hay.includes(q)) hide = true;
           if (vipOnly && !isVip) hide = true;
+          if (sentOnly && !hasSent) hide = true;
           row.classList.toggle('hidden', hide);
           var cell = row.closest('.lead-card-container');
           if (cell) cell.classList.toggle('hidden', hide);
@@ -1562,10 +1707,13 @@
 
       function canReorderGridCards() {
         if (!document.documentElement.classList.contains('cv-grid')) return false;
+        if (leadSortMode !== 'default') return false;
         var si = document.getElementById('table-search');
         if (si && si.value.trim()) return false;
         var vip = document.getElementById('filter-very-important-only');
         if (vip && vip.getAttribute('aria-pressed') === 'true') return false;
+        var sent = document.getElementById('filter-sent-message-only');
+        if (sent && sent.getAttribute('aria-pressed') === 'true') return false;
         return true;
       }
 
@@ -1600,23 +1748,6 @@
       });
       refreshTableSearchClearVisibility();
       renderLeadFilterTags();
-
-      const filterVipBtn = document.getElementById('filter-very-important-only');
-      if (filterVipBtn) {
-        filterVipBtn.addEventListener('click', function () {
-          const on = filterVipBtn.getAttribute('aria-pressed') !== 'true';
-          filterVipBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
-          filterVipBtn.classList.toggle('border-amber-500', on);
-          filterVipBtn.classList.toggle('bg-amber-50', on);
-          filterVipBtn.classList.toggle('text-amber-950', on);
-          filterVipBtn.classList.toggle('shadow-inner', on);
-          filterVipBtn.classList.toggle('ring-1', on);
-          filterVipBtn.classList.toggle('ring-amber-400/50', on);
-          applyTableFilter();
-          refreshSelectAllState();
-          refreshSelectionVisuals();
-        });
-      }
 
       function normalizeLeadGroupTabId(groupId) {
         if (groupId === 'uncategorized' || groupId === 'all' || groupId === '' || groupId == null) return 'uncategorized';
@@ -1689,6 +1820,8 @@
       }
 
       function syncLeadsAfterGroupFragmentSwap() {
+        initClinicViewModeFromStorage();
+        applyLeadSort();
         refreshSelectAllState();
         refreshSelectionVisuals();
         refreshSetCategoryButtonState();
@@ -2232,8 +2365,8 @@
           fillManualPhoneList(document.getElementById('clinic-edit-phones-list'), nums);
           document.getElementById('clinic-edit-address').value = data.address || '';
           document.getElementById('clinic-edit-website').value = data.website || '';
+          document.getElementById('clinic-edit-search-state').value = data.search_state || '';
           document.getElementById('clinic-edit-search-city').value = data.search_city || '';
-          document.getElementById('clinic-edit-search-country').value = data.search_country || '';
           document.getElementById('clinic-edit-search-query').value = data.search_query || '';
           var cat = (data.category || data.clinic_type || 'unknown').toLowerCase();
           document.getElementById('clinic-edit-type').value = cat;
@@ -2546,8 +2679,8 @@
           phone_numbers: collectManualPhonePayload(document.getElementById('clinic-edit-phones-list')),
           address: document.getElementById('clinic-edit-address').value.trim(),
           website: document.getElementById('clinic-edit-website').value.trim(),
+          search_state: document.getElementById('clinic-edit-search-state').value.trim(),
           search_city: document.getElementById('clinic-edit-search-city').value.trim(),
-          search_country: document.getElementById('clinic-edit-search-country').value.trim(),
           search_query: document.getElementById('clinic-edit-search-query').value.trim(),
           category: document.getElementById('clinic-edit-type').value,
           is_chain: document.getElementById('clinic-edit-chain').checked,
@@ -2980,6 +3113,9 @@
       });
 
       window.__dashboardOnWorkspaceShown = function () {
+        initClinicViewModeFromStorage();
+        syncLeadSortSelect();
+        applyLeadSort();
         if (typeof window.__ensureGridHtmxBound === 'function') window.__ensureGridHtmxBound();
         if (typeof window.__syncLeadChatIndicatorPolling === 'function') {
           window.__syncLeadChatIndicatorPolling();
@@ -3041,9 +3177,7 @@
           if (data.enrich_errors && data.enrich_errors.length) {
             huntStatus.textContent += ' Enrich warnings: ' + data.enrich_errors.length + ' issue(s).';
           }
-          if (data.search_record_id != null) {
-            activeSearchRecordId = parseInt(String(data.search_record_id), 10) || data.search_record_id;
-          }
+          activeSearchRecordId = null;
           replaceDashboardUrlForCurrentTab('replace');
           await switchLeadGroupTab(currentLeadGroupTabId, { force: true, skipHistory: true });
         } catch (err) {

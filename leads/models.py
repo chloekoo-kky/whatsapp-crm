@@ -47,6 +47,12 @@ class SearchQueryRecord(models.Model):
         default="",
         help_text="City / area used for the hunt.",
     )
+    search_state = models.CharField(
+        max_length=255,
+        blank=True,
+        default="",
+        help_text="State / region used for the hunt.",
+    )
     search_country = models.CharField(
         max_length=255,
         blank=True,
@@ -233,6 +239,12 @@ class Lead(models.Model):
         null=True,
         blank=True,
         help_text="City / area used for the Serper hunt that captured this lead.",
+    )
+    search_state = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        help_text="State / region from the Serper hunt that captured this lead.",
     )
     search_query = models.CharField(
         max_length=255,

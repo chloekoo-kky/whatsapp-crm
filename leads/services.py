@@ -289,9 +289,11 @@ def fetch_leads_from_serper(
 
     search_q = _build_search_q(city, query, shop_keyword=kw, state=state, country=country)
     city_clean = city.strip()[:255]
+    state_clean = (state or "").strip()[:255]
     query_clean = ((query or "").strip() or kw)[:255]
     country_clean = (country or "").strip()[:255]
     search_city_db = city_clean or None
+    search_state_db = state_clean or None
     search_query_db = query_clean or None
     search_country_db = country_clean or None
     errors: list[str] = []
@@ -405,6 +407,7 @@ def fetch_leads_from_serper(
             "is_processed": False,
             "is_chain": False,
             "search_city": search_city_db,
+            "search_state": search_state_db,
             "search_query": search_query_db,
             "search_country": search_country_db,
         }
@@ -431,9 +434,10 @@ def fetch_leads_from_serper(
             # Existing row: never change group, category, AI/processed flags, or shop_keyword here.
             # Only refresh hunt provenance + fill in contact gaps from the new Serper payload.
             lead.search_city = search_city_db
+            lead.search_state = search_state_db
             lead.search_query = search_query_db
             lead.search_country = search_country_db
-            update_fields.extend(["search_city", "search_query", "search_country"])
+            update_fields.extend(["search_city", "search_state", "search_query", "search_country"])
             if record_pk:
                 lead.search_query_record_id = record_pk
                 update_fields.append("search_query_record_id")

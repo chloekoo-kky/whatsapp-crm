@@ -6,7 +6,7 @@
   },
   "deploy": {
     "startCommand": "python manage.py run_whatsapp_batch",
-    "cronSchedule": "0 1,3,7,9 * * *",
+    "cronSchedule": "0 2 * * 1-5",
     "restartPolicyType": "NEVER"
   }
 }

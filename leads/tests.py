@@ -58,7 +58,7 @@ class PipelineGroupTests(TestCase):
         self.assertEqual(updated, 1)
         self.assertEqual(lead.group_id, uncategorized.pk)
         self.assertEqual(lead.whatsapp_status, Lead.WhatsappStatus.PENDING)
-        self.assertGreater(lead.display_order, 1)
+        self.assertEqual(lead.display_order, 1)
 
     def test_dequeue_reverts_pending_lead_to_idle(self):
         groups = ensure_pipeline_system_groups()
@@ -80,7 +80,7 @@ class PipelineGroupTests(TestCase):
         self.assertEqual(response.status_code, 200)
         lead.refresh_from_db()
         self.assertEqual(lead.whatsapp_status, Lead.WhatsappStatus.IDLE)
-        self.assertIn("⏳", response.content.decode())
+        self.assertIn("lead-join-queue-btn", response.content.decode())
 
     def test_leaving_queue_folder_returns_lead_to_idle(self):
         groups = ensure_pipeline_system_groups()

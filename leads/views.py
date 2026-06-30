@@ -97,7 +97,6 @@ from leads.pipeline import (
     get_or_create_trash_group,
     get_or_create_uncategorized_group,
     get_or_create_whatsapp_chats_group,
-    sink_lead_display_order,
     uncategorized_group_filter,
 )
 from leads.services import (
@@ -1555,10 +1554,7 @@ def enqueue_lead(request, pk: int):
     if lead.whatsapp_status != Lead.WhatsappStatus.PENDING:
         lead.whatsapp_status = Lead.WhatsappStatus.PENDING
         lead.whatsapp_last_error = ""
-        lead.display_order = sink_lead_display_order(lead)
-        lead.save(
-            update_fields=["whatsapp_status", "whatsapp_last_error", "display_order"]
-        )
+        lead.save(update_fields=["whatsapp_status", "whatsapp_last_error"])
         lead.refresh_from_db()
         ctx["lead"] = lead
 
@@ -1570,9 +1566,9 @@ def enqueue_lead(request, pk: int):
     response = HttpResponse(html)
     response["HX-Trigger"] = json.dumps(
         {
-            "leadCardSink": lead.pk,
             "waRowFlash": lead.pk,
             "funnelMetricsRefresh": True,
+            "leadCardUndim": lead.pk,
         }
     )
     return response
@@ -1611,7 +1607,14 @@ def dequeue_lead(request, pk: int):
     ctx["lead"] = lead
 
     if ctx["is_queue_view"]:
-        return _lead_grid_cell_fade_out_response(request, lead.pk)
+        html = render_to_string(
+            "leads/partials/_lead_grid_queue_slot.html",
+            ctx,
+            request=request,
+        )
+        response = HttpResponse(html)
+        response["HX-Trigger"] = json.dumps({"funnelMetricsRefresh": True})
+        return response
 
     html = render_to_string(
         "leads/partials/_lead_grid_queue_slot.html",
@@ -1619,9 +1622,7 @@ def dequeue_lead(request, pk: int):
         request=request,
     )
     response = HttpResponse(html)
-    response["HX-Trigger"] = json.dumps(
-        {"leadCardFloat": lead.pk, "funnelMetricsRefresh": True}
-    )
+    response["HX-Trigger"] = json.dumps({"funnelMetricsRefresh": True})
     return response
 
 
@@ -2054,6 +2055,7 @@ def hunt_trigger(request):
         keyword=shop_keyword[:160],
         maps_search_query=(query or shop_keyword)[:255],
         search_city=city[:255],
+        search_state=state[:255],
         search_country=country[:255],
     )
 
@@ -2208,32 +2210,10 @@ def _phone_slot_inner_grid_html(phones: list[str]) -> str:
 
 
 def _actions_cell_html_list(lead: Lead) -> str:
-    """List table: conversation log + edit actions."""
-    cid = int(lead.pk)
-    log_btn = (
-        '<button type="button" class="lead-conversation-log-btn inline-flex shrink-0 rounded-lg p-1.5 text-sky-600 '
-        'transition hover:bg-sky-50 focus:outline-none focus-visible:ring-2 '
-        f'focus-visible:ring-sky-500/40" data-clinic-id="{cid}" title="Add conversation log">'
-        '<span class="sr-only">Add conversation log</span>'
-        '<svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24" '
-        'aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M7.5 3.75h9A2.25 2.25 0 0118.75 6v12a2.25 2.25 0 01-2.25 2.25h-9A2.25 2.25 0 015.25 18V6A2.25 2.25 0 017.5 3.75zm2.25 4.5h4.5M9.75 12h4.5M9.75 15.75h3" /></svg>'
-        "</button>"
-    )
-    edit_btn = (
-        '<button type="button" class="clinic-edit-btn inline-flex shrink-0 rounded-lg p-1.5 text-slate-500 '
-        'transition hover:bg-slate-100 hover:text-indigo-600 focus:outline-none focus-visible:ring-2 '
-        f'focus-visible:ring-indigo-500/40" data-clinic-id="{cid}" title="Edit lead">'
-        '<span class="sr-only">Edit lead</span>'
-        '<svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24" '
-        'aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 '
-        '3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/></svg>'
-        "</button>"
-    )
-    return (
-        '<div class="inline-flex min-h-[2.25rem] items-center justify-center gap-0.5">'
-        + log_btn
-        + edit_btn
-        + "</div>"
+    """List table: edit, move to group, conversation log."""
+    return render_to_string(
+        "leads/partials/_lead_list_row_actions.html",
+        {"c": lead},
     )
 
 
@@ -2260,6 +2240,7 @@ def _clinic_edit_payload(lead: Lead) -> dict:
         "category": cat,
         "clinic_type": cat,
         "search_city": lead.search_city or "",
+        "search_state": lead.search_state or "",
         "search_country": lead.search_country or "",
         "shop_keyword": lead.shop_keyword or "",
         "search_query": lead.search_query or "",
@@ -2310,9 +2291,11 @@ def clinic_update(request, pk: int):
     lead.website = website[:500] if website else ""
     lead.category = raw_type
     sc = (body.get("search_city") or "").strip()
+    ss = (body.get("search_state") or "").strip()
     sco = (body.get("search_country") or "").strip()
     sq = (body.get("search_query") or "").strip()
     lead.search_city = sc or None
+    lead.search_state = ss or None
     lead.search_country = sco or None
     lead.search_query = sq or None
     lead.is_chain = bool(body.get("is_chain"))

@@ -68,6 +68,8 @@ class LeadOut(ModelSchema):
 
             "search_city",
 
+            "search_state",
+
             "search_country",
 
             "search_query",
@@ -101,6 +103,8 @@ class LeadListOut(Schema):
     phone_number: str = ""
 
     search_city: Optional[str] = None
+
+    search_state: Optional[str] = None
 
     search_country: Optional[str] = None
 
@@ -299,6 +303,8 @@ def hunt_leads(request, body: HuntIn):
                 maps_search_query=((body.query or "").strip() or kw)[:255],
 
                 search_city=(body.city or "").strip()[:255],
+
+                search_state=(body.state or "").strip()[:255],
 
                 search_country=ctry[:255],
 
