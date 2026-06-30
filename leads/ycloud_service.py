@@ -284,9 +284,7 @@ def _parse_template_row(row: dict[str, Any]) -> dict[str, Any] | None:
     name = str(row.get("name") or "").strip()
     if not name:
         return None
-    language = str(row.get("language") or "en").strip()
-    if language.lower() in ("en_us", "en"):
-        language = "en"
+    language = str(row.get("language") or "en").strip().replace("-", "_")
     body = ""
     components = row.get("components")
     if isinstance(components, list):

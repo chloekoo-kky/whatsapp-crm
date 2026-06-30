@@ -235,11 +235,10 @@ def _meta_template_body_from_components(components: Any) -> str:
 
 
 def _normalize_meta_template_language(language: str) -> str:
+    """Normalize Meta language codes for API send (keep en vs en_US distinct)."""
     lang = (language or "").strip().replace("-", "_")
     if not lang:
         return META_OUTBOUND_TEMPLATE_LANGUAGE
-    if lang.lower() in ("en_us", "en"):
-        return "en"
     return lang
 
 

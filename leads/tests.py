@@ -967,6 +967,29 @@ class WhatsAppMetaTemplateSyncTests(TestCase):
         self.assertEqual(len(config.meta_message_templates), 2)
         self.assertIsNotNone(config.meta_templates_synced_at)
 
+    def test_meta_template_language_preserves_en_us(self):
+        from leads.models import WhatsAppConfig
+        from leads.whatsapp_service import build_meta_template_payload, meta_template_language_for_name
+
+        config = WhatsAppConfig.load()
+        config.meta_message_templates = [
+            {
+                "name": "say_hi",
+                "status": "APPROVED",
+                "language": "en_US",
+                "body": "Hi- are you open today?",
+            },
+        ]
+        config.outbound_template_name = "say_hi"
+        config.save(update_fields=["meta_message_templates", "outbound_template_name"])
+
+        self.assertEqual(meta_template_language_for_name("say_hi"), "en_US")
+        payload = build_meta_template_payload(
+            Lead.objects.create(name="Test Clinic", phone_number="+60123456789"),
+            template_name="say_hi",
+        )
+        self.assertEqual(payload["template"]["language"]["code"], "en_US")
+
     def test_known_meta_template_names_requires_synced_catalog(self):
         from leads.models import WhatsAppConfig
         from leads.whatsapp_service import known_meta_template_names

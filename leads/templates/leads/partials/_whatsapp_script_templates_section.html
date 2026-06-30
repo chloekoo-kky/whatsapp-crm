@@ -41,7 +41,7 @@
       <div>
         <dt class="text-[10px] font-bold uppercase tracking-wide text-slate-500">Language</dt>
         <dd class="mt-1 text-sm font-semibold text-slate-900">
-          {% if template_language|default:"en" == "en" %}English (en){% else %}{{ template_language|default:"en" }}{% endif %}
+          {% if template_language|default:"en" == "en" %}English (en){% elif template_language == "en_US" %}English (US){% else %}{{ template_language|default:"en" }}{% endif %}
         </dd>
       </div>
     </dl>
