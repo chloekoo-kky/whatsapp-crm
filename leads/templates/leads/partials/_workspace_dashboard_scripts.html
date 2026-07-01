@@ -411,6 +411,15 @@
         });
       }
 
+      function rebindLeadCardHtmx(leadId) {
+        if (!window.htmx || leadId == null) return;
+        var cell = document.getElementById('lead-grid-cell-' + leadId);
+        if (cell) window.htmx.process(cell);
+        document.querySelectorAll('tr.clinic-row[data-clinic-id="' + leadId + '"]').forEach(function (tr) {
+          window.htmx.process(tr);
+        });
+      }
+
       function applyClinicEditToDom(d) {
         if (!d || !d.ok || d.id == null) return;
         const id = d.id;
@@ -541,6 +550,7 @@
           if (d.whatsapp_draft !== undefined) setRowWhatsappDraft(row, d.whatsapp_draft);
         });
 
+        rebindLeadCardHtmx(id);
         flashClinicRowAfterSave(id);
         applyTableFilter();
         refreshSelectAllState();
