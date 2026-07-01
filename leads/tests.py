@@ -1791,18 +1791,33 @@ class SerperHuntPaginationTests(TestCase):
         from leads.services import fetch_leads_from_serper
 
         page1 = [
-            {"title": f"Biz {i}", "address": f"St {i}", "phoneNumber": f"+6012{i:07d}"}
+            {
+                "title": f"Biz {i}",
+                "address": f"St {i}",
+                "phoneNumber": f"+6012{i:07d}",
+                "latitude": 1.49 + i * 0.001,
+                "longitude": 103.74 + i * 0.001,
+            }
             for i in range(20)
         ]
         page2 = [
-            {"title": f"Biz {i}", "address": f"St {i}", "phoneNumber": f"+6013{i:07d}"}
+            {
+                "title": f"Biz {i}",
+                "address": f"St {i}",
+                "phoneNumber": f"+6013{i:07d}",
+                "latitude": 1.50 + i * 0.001,
+                "longitude": 103.75 + i * 0.001,
+            }
             for i in range(20, 35)
         ]
 
         def _resp(places):
             resp = Mock()
             resp.raise_for_status = Mock()
-            resp.json.return_value = {"places": places}
+            resp.json.return_value = {
+                "places": places,
+                "searchParameters": {"ll": "@1.4927,103.7414,13z"},
+            }
             return resp
 
         mock_post.side_effect = [_resp(page1), _resp(page2)]
@@ -1819,9 +1834,55 @@ class SerperHuntPaginationTests(TestCase):
         self.assertEqual(mock_post.call_count, 2)
         second_payload = mock_post.call_args_list[1][1]["json"]
         self.assertEqual(second_payload["page"], 2)
+        self.assertEqual(second_payload["ll"], "@1.4927,103.7414,13z")
         self.assertEqual(result.places_seen, 35)
         self.assertEqual(result.created, 35)
         self.assertEqual(Lead.objects.count(), 35)
+
+    @override_settings(SERPER_API_KEY="test-key", HUNT_MAX_LIMIT=100)
+    @patch("leads.services.requests.post")
+    def test_page_two_uses_geocoded_ll_when_page_one_has_no_coordinates(self, mock_post):
+        from leads.services import fetch_leads_from_serper
+
+        page1 = [
+            {"title": f"Biz {i}", "address": f"St {i}", "phoneNumber": f"+6012{i:07d}"}
+            for i in range(20)
+        ]
+        page2 = [
+            {"title": f"Biz {i}", "address": f"St {i}", "phoneNumber": f"+6013{i:07d}"}
+            for i in range(20, 25)
+        ]
+
+        def _resp(places, ll=None):
+            resp = Mock()
+            resp.raise_for_status = Mock()
+            body: dict = {"places": places}
+            if ll:
+                body["searchParameters"] = {"ll": ll}
+            resp.json.return_value = body
+            return resp
+
+        mock_post.side_effect = [
+            _resp(page1),
+            _resp([], ll="@1.4927,103.7414,13z"),
+            _resp(page2, ll="@1.4927,103.7414,13z"),
+        ]
+
+        result = fetch_leads_from_serper(
+            "Johor Bahru",
+            "",
+            num=40,
+            shop_keyword="klinik",
+            state="Johor",
+            country="Malaysia",
+        )
+
+        self.assertEqual(mock_post.call_count, 3)
+        second_payload = mock_post.call_args_list[2][1]["json"]
+        self.assertEqual(second_payload["page"], 2)
+        self.assertEqual(second_payload["ll"], "@1.4927,103.7414,13z")
+        self.assertEqual(result.places_seen, 25)
+        self.assertEqual(result.created, 25)
 
     @override_settings(SERPER_API_KEY="test-key", HUNT_MAX_LIMIT=100)
     @patch("leads.services.requests.post")

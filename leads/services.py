@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 
 SERPER_MAPS_URL = "https://google.serper.dev/maps"
 SERPER_MAPS_PAGE_SIZE = 20
+SERPER_MAPS_DEFAULT_ZOOM = "13z"
 
 
 def _hunt_max_results() -> int:
@@ -143,12 +144,90 @@ def _extract_serper_maps_places(data: dict[str, Any]) -> list[Any]:
     return []
 
 
+def _format_serper_ll(lat: float, lng: float, zoom: str = SERPER_MAPS_DEFAULT_ZOOM) -> str:
+    return f"@{lat},{lng},{zoom}"
+
+
+def _parse_ll_coordinates(ll: str) -> tuple[float, float] | None:
+    """Parse ``@lat,lng,13z`` into (lat, lng)."""
+    s = (ll or "").strip()
+    if not s.startswith("@"):
+        return None
+    parts = s[1:].split(",")
+    if len(parts) < 2:
+        return None
+    try:
+        return float(parts[0]), float(parts[1])
+    except (TypeError, ValueError):
+        return None
+
+
+def _extract_ll_from_serper_response(data: dict[str, Any], places: list[Any]) -> str | None:
+    """Read Serper ``ll`` from response metadata or average place coordinates."""
+    if isinstance(data, dict):
+        top = data.get("ll")
+        if isinstance(top, str) and top.strip().startswith("@"):
+            return top.strip()
+        sp = data.get("searchParameters")
+        if isinstance(sp, dict):
+            sp_ll = sp.get("ll")
+            if isinstance(sp_ll, str) and sp_ll.strip().startswith("@"):
+                return sp_ll.strip()
+
+    lats: list[float] = []
+    lngs: list[float] = []
+    for raw in places:
+        if not isinstance(raw, dict):
+            continue
+        lat = raw.get("latitude")
+        lng = raw.get("longitude")
+        if lat is None or lng is None:
+            gps = raw.get("gpsCoordinates") or raw.get("gps_coordinates")
+            if isinstance(gps, dict):
+                lat = gps.get("latitude", lat)
+                lng = gps.get("longitude", lng)
+        try:
+            if lat is not None and lng is not None:
+                lats.append(float(lat))
+                lngs.append(float(lng))
+        except (TypeError, ValueError):
+            continue
+    if lats and lngs:
+        return _format_serper_ll(sum(lats) / len(lats), sum(lngs) / len(lngs))
+    return None
+
+
+def _geocode_maps_ll(
+    *,
+    city: str,
+    state: str,
+    country: str,
+    api_key: str,
+) -> str | None:
+    """One lightweight Serper Maps lookup to resolve ``ll`` for the hunt area."""
+    parts = [p.strip() for p in (city, state, country) if (p or "").strip()]
+    if not parts:
+        return None
+    location_q = ", ".join(parts)
+    payload = _serper_maps_payload(location_q, 1, country=country, page=1)
+    headers = {"X-API-KEY": api_key, "Content-Type": "application/json"}
+    try:
+        resp = requests.post(SERPER_MAPS_URL, json=payload, headers=headers, timeout=60)
+        resp.raise_for_status()
+        data = resp.json()
+    except (requests.RequestException, ValueError):
+        return None
+    places = _extract_serper_maps_places(data if isinstance(data, dict) else {})
+    return _extract_ll_from_serper_response(data if isinstance(data, dict) else {}, places)
+
+
 def _serper_maps_payload(
     search_q: str,
     num: int,
     *,
     country: str = "",
     page: int = 1,
+    ll: str | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "q": search_q,
@@ -156,6 +235,8 @@ def _serper_maps_payload(
         "page": max(1, page),
         "hl": "en",
     }
+    if ll:
+        payload["ll"] = ll
     gl = _country_hint_to_gl(country)
     if gl:
         payload["gl"] = gl
@@ -169,22 +250,26 @@ def _request_serper_maps_places(
     country: str,
     page: int,
     api_key: str,
-) -> tuple[list[Any], list[str]]:
-    """One Serper Maps page; returns (places, errors)."""
-    payload = _serper_maps_payload(search_q, num, country=country, page=page)
+    ll: str | None = None,
+) -> tuple[list[Any], list[str], dict[str, Any]]:
+    """One Serper Maps page; returns (places, errors, raw_response)."""
+    payload = _serper_maps_payload(search_q, num, country=country, page=page, ll=ll)
     headers = {"X-API-KEY": api_key, "Content-Type": "application/json"}
     logger.info(
-        "Serper Maps request q=%r page=%s num=%s gl=%s",
+        "Serper Maps request q=%r page=%s num=%s gl=%s ll=%s",
         search_q,
         payload.get("page"),
         payload.get("num"),
         payload.get("gl"),
+        payload.get("ll"),
     )
     errors: list[str] = []
+    data: dict[str, Any] = {}
     try:
         resp = requests.post(SERPER_MAPS_URL, json=payload, headers=headers, timeout=60)
         resp.raise_for_status()
-        data = resp.json()
+        parsed = resp.json()
+        data = parsed if isinstance(parsed, dict) else {}
     except requests.HTTPError as exc:
         detail = ""
         if exc.response is not None:
@@ -193,19 +278,17 @@ def _request_serper_maps_places(
             except Exception:
                 detail = str(exc.response)
         errors.append(f"Serper HTTP error (page {page}): {exc} {detail}".strip())
-        return [], errors
+        return [], errors, data
     except requests.RequestException as exc:
         errors.append(f"Serper request failed (page {page}): {exc}")
-        return [], errors
+        return [], errors, data
     except ValueError as exc:
         errors.append(f"Invalid JSON from Serper (page {page}): {exc}")
-        return [], errors
+        return [], errors, data
 
-    places = _extract_serper_maps_places(data if isinstance(data, dict) else {})
+    places = _extract_serper_maps_places(data)
     if not places and page == 1:
-        if isinstance(data, dict) and data.get("places") is not None and not isinstance(
-            data.get("places"), list
-        ):
+        if data.get("places") is not None and not isinstance(data.get("places"), list):
             errors.append("Serper 'places' field was not a list — check API response shape.")
         else:
             hints = (
@@ -219,9 +302,9 @@ def _request_serper_maps_places(
             "Serper Maps empty places for q=%r page=%s keys=%s",
             search_q,
             page,
-            list(data.keys()) if isinstance(data, dict) else type(data),
+            list(data.keys()),
         )
-    return places, errors
+    return places, errors, data
 
 
 def _collect_serper_maps_places(
@@ -230,26 +313,41 @@ def _collect_serper_maps_places(
     target: int,
     country: str,
     api_key: str,
+    city: str = "",
+    state: str = "",
 ) -> tuple[list[Any], list[str]]:
     """Paginate Serper Maps until ``target`` unique listings or no more pages."""
     max_pages = max(1, (target + SERPER_MAPS_PAGE_SIZE - 1) // SERPER_MAPS_PAGE_SIZE)
     all_places: list[Any] = []
     seen_keys: set[str] = set()
     errors: list[str] = []
+    ll: str | None = None
 
     for page in range(1, max_pages + 1):
         if len(all_places) >= target:
             break
-        page_places, page_errors = _request_serper_maps_places(
+        if page > 1 and not ll:
+            ll = _geocode_maps_ll(city=city, state=state, country=country, api_key=api_key)
+        if page > 1 and not ll:
+            errors.append(
+                "Serper requires map coordinates (ll) for page 2+. "
+                "Could not resolve GPS for this city — try a clearer city/state/country."
+            )
+            break
+
+        page_places, page_errors, page_data = _request_serper_maps_places(
             search_q,
             num=SERPER_MAPS_PAGE_SIZE,
             country=country,
             page=page,
             api_key=api_key,
+            ll=ll,
         )
         errors.extend(page_errors)
         if page == 1 and page_errors and not page_places:
             return [], errors
+        if page == 1 and not ll:
+            ll = _extract_ll_from_serper_response(page_data, page_places)
         if not page_places:
             break
 
@@ -461,6 +559,8 @@ def fetch_leads_from_serper(
         target=target,
         country=country_clean,
         api_key=api_key,
+        city=city_clean,
+        state=state_clean,
     )
     if not places:
         return FetchLeadsResult(
