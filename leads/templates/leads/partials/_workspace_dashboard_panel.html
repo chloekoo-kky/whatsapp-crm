@@ -317,17 +317,9 @@
             <p class="text-[10px] leading-snug text-slate-400">Default +60. Up to 8 numbers; first is primary. Spaces/dashes stripped on save.</p>
           </div>
           <div class="space-y-1.5">
-            <label for="clinic-edit-type" class="text-xs font-semibold text-slate-700">Category</label>
+            {% include "leads/partials/_category_label_with_settings.html" with select_id="clinic-edit-type" %}
             <select id="clinic-edit-type" name="category" class="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15">
-              <option value="unknown">Unknown</option>
-              <option value="invalid">Invalid / irrelevant</option>
-              <option value="gp">GP</option>
-              <option value="aesthetic">Aesthetic</option>
-              <option value="dental">Dental</option>
-              <option value="fitness">Fitness / gym / yoga</option>
-              <option value="cafe">Café / restaurant / F&amp;B</option>
-              <option value="retail">Retail / shop</option>
-              <option value="service">Services / other business</option>
+              {% include "leads/partials/_category_option_list.html" %}
             </select>
           </div>
         </div>
@@ -401,17 +393,9 @@
             <p class="text-[10px] leading-snug text-slate-400">Default +60. Up to 8 numbers. Spaces/dashes stripped on save.</p>
           </div>
           <div class="space-y-1.5">
-            <label for="lead-create-type" class="text-xs font-semibold text-slate-700">Category</label>
+            {% include "leads/partials/_category_label_with_settings.html" with select_id="lead-create-type" %}
             <select id="lead-create-type" name="category" class="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15">
-              <option value="unknown">Unknown</option>
-              <option value="invalid">Invalid / irrelevant</option>
-              <option value="gp">GP</option>
-              <option value="aesthetic">Aesthetic</option>
-              <option value="dental">Dental</option>
-              <option value="fitness">Fitness / gym / yoga</option>
-              <option value="cafe">Café / restaurant / F&amp;B</option>
-              <option value="retail">Retail / shop</option>
-              <option value="service">Services / other business</option>
+              {% include "leads/partials/_category_option_list.html" %}
             </select>
           </div>
         </div>
@@ -498,17 +482,9 @@
         <p id="bulk-manual-error" class="hidden rounded-lg bg-red-50 px-3 py-2 text-xs font-medium text-red-800 ring-1 ring-red-200/80" role="alert"></p>
         <p id="bulk-manual-count" class="text-xs text-slate-600"></p>
         <div class="space-y-1.5">
-          <label for="bulk-manual-category" class="text-xs font-semibold text-slate-700">Category</label>
+          {% include "leads/partials/_category_label_with_settings.html" with select_id="bulk-manual-category" %}
           <select id="bulk-manual-category" class="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15">
-            <option value="unknown">Unknown</option>
-            <option value="invalid">Invalid / irrelevant</option>
-            <option value="gp">GP</option>
-            <option value="aesthetic">Aesthetic</option>
-            <option value="dental">Dental</option>
-            <option value="fitness">Fitness / gym / yoga</option>
-            <option value="cafe">Café / restaurant / F&amp;B</option>
-            <option value="retail">Retail / shop</option>
-            <option value="service">Services / other business</option>
+            {% include "leads/partials/_category_option_list.html" %}
           </select>
         </div>
       </div>
@@ -520,6 +496,41 @@
         </button>
       </div>
     </form>
+  </dialog>
+
+  <dialog id="category-rules-dialog" class="z-[110] w-[calc(100%-1.5rem)] max-w-2xl overflow-hidden rounded-2xl border border-slate-200/90 bg-white p-0 shadow-2xl ring-1 ring-slate-900/5 backdrop:bg-slate-900/45">
+    <div class="flex max-h-[min(92vh,640px)] flex-col">
+      <div class="flex items-start justify-between gap-3 border-b border-slate-100 bg-slate-50/80 px-5 py-4">
+        <div>
+          <h2 class="text-base font-semibold tracking-tight text-slate-900">Category rules</h2>
+          <p class="mt-0.5 text-xs text-slate-500">Add, edit, or delete name-matching rules used when importing leads.</p>
+        </div>
+        <button type="button" id="category-rules-close-x" class="rounded-lg p-1.5 text-slate-400 transition hover:bg-white hover:text-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/40" aria-label="Close">
+          <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <div id="category-rules-manage-body" class="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+        <p class="text-sm text-slate-400">Loading…</p>
+      </div>
+      <div class="flex items-center justify-between gap-2 border-t border-slate-100 bg-slate-50/80 px-5 py-3">
+        <a href="{% url 'category_rules' %}" class="text-xs font-semibold text-indigo-600 hover:text-indigo-500">Open full page</a>
+        <button type="button" id="category-rules-close" class="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50">Done</button>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog id="force-send-duplicate-dialog" class="z-[110] w-[calc(100%-1.5rem)] max-w-md overflow-hidden rounded-2xl border border-slate-200/90 bg-white p-0 shadow-2xl ring-1 ring-slate-900/5 backdrop:bg-slate-900/45"
+    data-url-template="{% url 'whatsapp_force_send' pk=0 %}">
+    <div class="flex flex-col">
+      <div class="border-b border-slate-100 bg-slate-50/80 px-5 py-4">
+        <h2 class="text-base font-semibold tracking-tight text-slate-900">Send template again?</h2>
+        <p id="force-send-duplicate-message" class="mt-1 text-sm text-slate-600">This template was already sent to this lead.</p>
+      </div>
+      <div class="flex flex-wrap items-center justify-end gap-2 px-5 py-4">
+        <button type="button" id="force-send-duplicate-cancel" class="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50">Cancel</button>
+        <button type="button" id="force-send-duplicate-confirm" class="rounded-xl bg-amber-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-amber-500">Send now anyway</button>
+      </div>
+    </div>
   </dialog>
 
   <div id="lead-group-move-menu" class="fixed z-[200] hidden w-[min(calc(100vw-1.5rem),17.5rem)] rounded-xl border border-slate-200/95 bg-white py-1 shadow-xl shadow-slate-900/15 ring-1 ring-slate-900/5" role="menu" aria-hidden="true" aria-label="Move leads to folder">

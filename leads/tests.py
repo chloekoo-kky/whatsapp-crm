@@ -1469,15 +1469,12 @@ class ClinicUpdatePhoneTests(TestCase):
         self.assertIn("lead-force-send-btn", response.content.decode())
 
     @patch("leads.views.send_text_to_lead")
-    def test_force_send_skips_duplicate_template(self, mock_send):
+    def test_force_send_duplicate_prompts_resend(self, mock_send):
         from leads.models import WhatsAppConfig
 
         config = WhatsAppConfig.load()
         config.force_send_template_name = "say_hi"
-        config.meta_message_templates = [
-            {"name": "say_hi", "status": "APPROVED", "language": "en_US", "body": "Hi"},
-        ]
-        config.save(update_fields=["force_send_template_name", "meta_message_templates"])
+        config.save(update_fields=["force_send_template_name"])
         ChatMessage.objects.create(
             lead=self.lead,
             body="Hi~ are you open today?",
@@ -1493,8 +1490,35 @@ class ClinicUpdatePhoneTests(TestCase):
         self.assertEqual(response.status_code, 200)
         mock_send.assert_not_called()
         trigger = json.loads(response["HX-Trigger"])
+        self.assertIn("forceSendDuplicatePrompt", trigger)
+        self.assertEqual(trigger["forceSendDuplicatePrompt"]["leadId"], self.lead.pk)
         self.assertNotIn("leadCardSink", trigger)
-        self.assertNotIn("leadCardDispatched", trigger)
+
+    @patch("leads.views.send_text_to_lead")
+    def test_force_send_confirm_duplicate_resends(self, mock_send):
+        from leads.models import WhatsAppConfig
+
+        mock_send.return_value = (True, "accepted")
+        config = WhatsAppConfig.load()
+        config.force_send_template_name = "say_hi"
+        config.save(update_fields=["force_send_template_name"])
+        ChatMessage.objects.create(
+            lead=self.lead,
+            body="Hi~ are you open today?",
+            is_outbound=True,
+            template_name="say_hi",
+        )
+        client = Client()
+        with self.settings(WHATSAPP_FROM_NUMBER="+60126336429", YCLOUD_API_KEY="test"):
+            response = client.post(
+                reverse("whatsapp_force_send", kwargs={"pk": self.lead.pk}),
+                data={
+                    "group_id": str(self.group.pk),
+                    "confirm_duplicate": "1",
+                },
+            )
+        self.assertEqual(response.status_code, 200)
+        mock_send.assert_called_once()
 
     def test_force_send_success_triggers_dispatched_and_sink(self):
         from django.test import RequestFactory
@@ -1563,6 +1587,63 @@ class DailyReportTests(TestCase):
             created_at=start,
         )
 
+    def test_reports_excludes_leads_without_outbound_that_day(self):
+        from django.utils import timezone
+
+        from leads.views import _daily_report_leads
+
+        start = timezone.make_aware(
+            __import__("datetime").datetime.combine(self.today, __import__("datetime").time.min),
+            self.tz,
+        )
+        log_only = Lead.objects.create(
+            name="Log Only Clinic",
+            address="9 Main St",
+            group=get_or_create_uncategorized_group(),
+            phone_number="+60999999999",
+        )
+        LeadConversationLog.objects.create(
+            lead=log_only,
+            conversation_date=self.today,
+            remarks="Phone number updated.",
+        )
+        leads = _daily_report_leads(self.today)
+        names = {lead.name for lead in leads}
+        self.assertIn("Alpha Clinic", names)
+        self.assertNotIn("Log Only Clinic", names)
+
+    def test_reports_shows_active_when_inbound_and_failed(self):
+        from django.utils import timezone
+
+        from leads.views import _daily_report_leads
+
+        start = timezone.make_aware(
+            __import__("datetime").datetime.combine(self.today, __import__("datetime").time.min),
+            self.tz,
+        )
+        failed_active = Lead.objects.create(
+            name="Failed But Active",
+            address="8 Main St",
+            group=get_or_create_uncategorized_group(),
+            phone_number="+60888888888",
+            whatsapp_status=Lead.WhatsappStatus.FAILED,
+        )
+        ChatMessage.objects.create(
+            lead=failed_active,
+            body="Hi",
+            is_outbound=True,
+            template_name="say_hi",
+            created_at=start,
+        )
+        ChatMessage.objects.create(
+            lead=failed_active,
+            body="Thanks",
+            is_outbound=False,
+            created_at=start,
+        )
+        leads = {lead.name: lead for lead in _daily_report_leads(self.today)}
+        self.assertEqual(leads["Failed But Active"].report_status_display, "Active")
+
     def test_reports_page_shows_daily_dashboard(self):
         client = Client()
         response = client.get(
@@ -1573,7 +1654,7 @@ class DailyReportTests(TestCase):
         html = response.content.decode()
         self.assertIn("Daily reports", html)
         self.assertIn("Alpha Clinic", html)
-        self.assertIn("Beta Clinic", html)
+        self.assertNotIn("Beta Clinic", html)
         self.assertIn("First sends", html)
 
     def test_daily_report_export_xlsx(self):
@@ -1601,7 +1682,7 @@ class DailyReportTests(TestCase):
         )
         names = {row[0] for row in rows[header_idx + 1 :]}
         self.assertIn("Alpha Clinic", names)
-        self.assertIn("Beta Clinic", names)
+        self.assertNotIn("Beta Clinic", names)
 
 
 class CategoryRuleManagementTests(TestCase):
@@ -1615,6 +1696,34 @@ class CategoryRuleManagementTests(TestCase):
         response = client.get(reverse("category_rules"))
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"dental", response.content)
+
+    def test_category_rules_fragment_returns_manage_html(self):
+        CategoryRule.objects.create(
+            match_phrase="spa",
+            category=Lead.Category.AESTHETIC,
+            priority=10,
+        )
+        client = Client()
+        response = client.get(reverse("category_rules_fragment"))
+        self.assertEqual(response.status_code, 200)
+        html = response.content.decode()
+        self.assertIn("spa", html)
+        self.assertIn("data-category-rule-form", html)
+
+    def test_category_rule_save_via_fragment_header(self):
+        client = Client()
+        response = client.post(
+            reverse("category_rule_save"),
+            data={
+                "match_phrase": "ortho",
+                "category": Lead.Category.DENTAL,
+                "priority": "5",
+            },
+            HTTP_X_CATEGORY_RULES_FRAGMENT="1",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"ortho", response.content)
+        self.assertTrue(CategoryRule.objects.filter(match_phrase="ortho").exists())
 
     def test_category_rule_save_and_delete(self):
         client = Client()

@@ -420,6 +420,8 @@ class LeadDashboardView(ListView):
         context["export_xlsx_url"] = reverse("clinics_export_xlsx")
         context["export_full_backup_url"] = reverse("export_full_backup")
         context["import_full_backup_url"] = reverse("import_full_backup")
+        context["category_choices"] = Lead.Category.choices
+        context["category_rules_fragment_url"] = reverse("category_rules_fragment")
         context["bulk_manual_url"] = reverse("leads_bulk_manual")
         context["bulk_whatsapp_queue_url"] = reverse("leads_bulk_whatsapp_queue")
         context["bulk_dequeue_url"] = reverse("leads_bulk_dequeue")
@@ -803,6 +805,14 @@ def _daily_report_summary(report_date: date) -> dict:
     }
 
 
+def _daily_report_lead_status_display(lead: Lead) -> str:
+    """Report row status — client replies override a stale Failed dispatch state."""
+    inbound = getattr(lead, "report_inbound_count", 0) or 0
+    if inbound >= 1:
+        return "Active"
+    return lead.get_whatsapp_status_display()
+
+
 def _daily_report_leads(report_date: date) -> list[Lead]:
     start, end = _daily_report_day_bounds(report_date)
     lead_ids: set[int] = set()
@@ -816,11 +826,6 @@ def _daily_report_leads(report_date: date) -> list[Lead]:
         ChatMessage.objects.filter(
             created_at__gte=start,
             created_at__lt=end,
-        ).values_list("lead_id", flat=True)
-    )
-    lead_ids.update(
-        LeadConversationLog.objects.filter(
-            conversation_date=report_date,
         ).values_list("lead_id", flat=True)
     )
     if not lead_ids:
@@ -854,8 +859,12 @@ def _daily_report_leads(report_date: date) -> list[Lead]:
             whatsapp_sent_at__lt=end,
         ).values_list("pk", flat=True)
     )
+    # Only leads with at least one outbound message that day (real WhatsApp activity).
+    active_lead_ids = [pk for pk in lead_ids if outbound_counts.get(pk, 0) > 0]
+    if not active_lead_ids:
+        return []
     leads = list(
-        Lead.objects.filter(pk__in=lead_ids).order_by("name", "pk")
+        Lead.objects.filter(pk__in=active_lead_ids).order_by("name", "pk")
     )
     for lead in leads:
         phones = lead_phone_list(lead)
@@ -863,6 +872,7 @@ def _daily_report_leads(report_date: date) -> list[Lead]:
         lead.report_outbound_count = outbound_counts.get(lead.pk, 0)
         lead.report_inbound_count = inbound_counts.get(lead.pk, 0)
         lead.report_first_send_today = lead.pk in first_send_ids
+        lead.report_status_display = _daily_report_lead_status_display(lead)
     return leads
 
 
@@ -934,7 +944,7 @@ def daily_report_export_xlsx(request):
                 "Yes" if lead.report_first_send_today else "",
                 lead.report_outbound_count,
                 lead.report_inbound_count,
-                lead.get_whatsapp_status_display(),
+                lead.report_status_display,
             ]
         )
 
@@ -950,6 +960,59 @@ def daily_report_export_xlsx(request):
     return resp
 
 
+@csrf_protect
+@require_POST
+def report_lead_reset_whatsapp(request, pk: int):
+    """TEMP: wipe WhatsApp chat + dispatch state for a lead (remove after testing)."""
+    lead = get_object_or_404(Lead, pk=pk)
+    report_date = (request.POST.get("report_date") or "").strip()
+    ChatMessage.objects.filter(lead=lead).delete()
+    LeadConversationLog.objects.filter(lead=lead).delete()
+    lead.whatsapp_status = Lead.WhatsappStatus.IDLE
+    lead.whatsapp_sent_at = None
+    lead.whatsapp_last_error = ""
+    lead.whatsapp_instance_id = ""
+    lead.save(
+        update_fields=[
+            "whatsapp_status",
+            "whatsapp_sent_at",
+            "whatsapp_last_error",
+            "whatsapp_instance_id",
+        ]
+    )
+    clear_pending_batch_memberships(lead.pk)
+    url = reverse("reports")
+    if report_date:
+        url = f"{url}?date={report_date}"
+    return redirect(url)
+
+
+def _category_rules_manage_context() -> dict:
+    return {
+        "category_rules": CategoryRule.objects.order_by("priority", "id"),
+        "category_choices": Lead.Category.choices,
+    }
+
+
+def _wants_category_rules_fragment(request) -> bool:
+    return request.headers.get("X-Category-Rules-Fragment") == "1"
+
+
+def _category_rules_fragment_response(request) -> HttpResponse:
+    html = render_to_string(
+        "leads/partials/_category_rules_manage.html",
+        _category_rules_manage_context(),
+        request=request,
+    )
+    return HttpResponse(html)
+
+
+@require_GET
+def category_rules_fragment(request):
+    """HTML fragment for the in-dashboard category rules dialog."""
+    return _category_rules_fragment_response(request)
+
+
 @method_decorator(ensure_csrf_cookie, name="dispatch")
 class CategoryRulesView(TemplateView):
     """In-app CRUD for name-matching category rules (replaces Django admin for rules)."""
@@ -959,8 +1022,7 @@ class CategoryRulesView(TemplateView):
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context["nav_active"] = "categories"
-        context["category_rules"] = CategoryRule.objects.order_by("priority", "id")
-        context["category_choices"] = Lead.Category.choices
+        context.update(_category_rules_manage_context())
         return context
 
 
@@ -994,6 +1056,8 @@ def category_rule_save(request):
             category=category,
             priority=priority,
         )
+    if _wants_category_rules_fragment(request):
+        return _category_rules_fragment_response(request)
     return redirect("category_rules")
 
 
@@ -1003,6 +1067,8 @@ def category_rule_delete(request, pk: int):
     """Delete a category matching rule."""
     rule = get_object_or_404(CategoryRule, pk=pk)
     rule.delete()
+    if _wants_category_rules_fragment(request):
+        return _category_rules_fragment_response(request)
     return redirect("category_rules")
 
 
@@ -1525,10 +1591,38 @@ def whatsapp_force_send(request, pk: int):
     template_name = get_force_send_template_name()
     from leads.chat_messages import lead_already_received_template
 
-    if lead_already_received_template(lead, template_name):
+    confirm_duplicate = (request.POST.get("confirm_duplicate") or "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    if lead_already_received_template(lead, template_name) and not confirm_duplicate:
         detail = f"Template '{template_name}' was already sent to this lead."
         record_whatsapp_activity_warning(detail, lead=lead)
-        return _force_send_grid_response(request, lead, ok=False)
+        ctx = _lead_grid_action_context(request, lead)
+        enriched, _ = _dashboard_prepare_clinics(_leads_tab_base_qs().filter(pk=lead.pk))
+        if enriched:
+            ctx["lead"] = enriched[0]
+        html = render_to_string(
+            "leads/partials/_lead_grid_bottom_actions.html",
+            ctx,
+            request=request,
+        )
+        response = HttpResponse(html)
+        gid = (request.POST.get("group_id") or request.GET.get("group_id") or "").strip()
+        response["HX-Trigger"] = json.dumps(
+            {
+                "waRowFlash": lead.pk,
+                "forceSendDuplicatePrompt": {
+                    "leadId": lead.pk,
+                    "templateName": template_name,
+                    "groupId": gid,
+                },
+            }
+        )
+        response["HX-Retarget"] = f"#lead-bottom-actions-{lead.pk}"
+        response["HX-Reswap"] = "outerHTML"
+        return response
 
     was_unsent = lead.whatsapp_sent_at is None
     lead.whatsapp_status = Lead.WhatsappStatus.PROCESSING

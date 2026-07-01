@@ -7,7 +7,9 @@ from leads.views import (
     WhatsAppDashboardView,
     category_rule_delete,
     category_rule_save,
+    category_rules_fragment,
     daily_report_export_xlsx,
+    report_lead_reset_whatsapp,
     clear_live_activity_logs,
     workspace_fragment_dashboard,
     workspace_fragment_whatsapp,
@@ -63,7 +65,13 @@ urlpatterns = [
     path("whatsapp/", WhatsAppDashboardView.as_view(), name="whatsapp_dashboard"),
     path("reports/", ReportsView.as_view(), name="reports"),
     path("reports/export/xlsx/", daily_report_export_xlsx, name="daily_report_export_xlsx"),
+    path(
+        "reports/reset/<int:pk>/",
+        report_lead_reset_whatsapp,
+        name="report_lead_reset_whatsapp",
+    ),
     path("categories/", CategoryRulesView.as_view(), name="category_rules"),
+    path("categories/fragment/", category_rules_fragment, name="category_rules_fragment"),
     path("categories/save/", category_rule_save, name="category_rule_save"),
     path("categories/<int:pk>/delete/", category_rule_delete, name="category_rule_delete"),
     path(

@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="csrf-token" content="{{ csrf_token }}" />
   <title>Reports — Lead CRM</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
@@ -98,6 +99,7 @@
                   <th scope="col" class="px-5 py-3">Outbound</th>
                   <th scope="col" class="px-5 py-3">Inbound</th>
                   <th scope="col" class="px-5 py-3">Status</th>
+                  <th scope="col" class="px-5 py-3">Actions</th>
                 </tr>
               </thead>
               <tbody class="divide-y divide-slate-100">
@@ -120,7 +122,19 @@
                   </td>
                   <td class="px-5 py-3 text-slate-700">{{ lead.report_outbound_count }}</td>
                   <td class="px-5 py-3 text-slate-700">{{ lead.report_inbound_count }}</td>
-                  <td class="px-5 py-3 text-slate-700">{{ lead.get_whatsapp_status_display }}</td>
+                  <td class="px-5 py-3 text-slate-700">{{ lead.report_status_display }}</td>
+                  <td class="px-5 py-3">
+                    <form method="post" action="{% url 'report_lead_reset_whatsapp' pk=lead.pk %}" class="inline"
+                          onsubmit="return confirm('Reset all WhatsApp messages and dispatch state for {{ lead.name|escapejs }}? This cannot be undone.');">
+                      {% csrf_token %}
+                      <input type="hidden" name="report_date" value="{{ report_date_iso }}" />
+                      <button type="submit"
+                              class="rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1 text-[11px] font-semibold text-rose-700 transition hover:bg-rose-100"
+                              title="TEMP: clear test WhatsApp data for this lead">
+                        Reset test data
+                      </button>
+                    </form>
+                  </td>
                 </tr>
                 {% endfor %}
               </tbody>

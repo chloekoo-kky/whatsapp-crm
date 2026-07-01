@@ -99,7 +99,9 @@
       if (forceTriggerHeader) {
         try {
           var forceTriggers = JSON.parse(forceTriggerHeader);
-          if (forceTriggers.leadCardSink != null && window.__sinkLeadCard) {
+          if (forceTriggers.forceSendDuplicatePrompt != null && window.__showForceSendDuplicateDialog) {
+            window.__showForceSendDuplicateDialog(forceTriggers.forceSendDuplicatePrompt);
+          } else if (forceTriggers.leadCardSink != null && window.__sinkLeadCard) {
             window.__sinkLeadCard(forceTriggers.leadCardSink);
           } else if (forceTriggers.leadCardDispatched != null && window.__applyLeadDispatchedChrome) {
             window.__applyLeadDispatchedChrome(forceTriggers.leadCardDispatched);
@@ -242,6 +244,71 @@
   document.body.addEventListener("leadCardSink", function (evt) {
     var id = window.__htmxTriggerValue(evt.detail, "leadCardSink");
     window.__sinkLeadCard(id);
+  });
+
+  window.__forceSendDuplicatePayload = null;
+
+  window.__showForceSendDuplicateDialog = function (payload) {
+    var dialog = document.getElementById("force-send-duplicate-dialog");
+    if (!dialog || !payload) return;
+    window.__forceSendDuplicatePayload = payload;
+    var msg = document.getElementById("force-send-duplicate-message");
+    var tpl = payload.templateName || "this template";
+    if (msg) {
+      msg.textContent = "Template \"" + tpl + "\" was already sent to this lead. Send it again?";
+    }
+    dialog.showModal();
+  };
+
+  window.__submitForceSendDuplicateConfirm = function () {
+    var payload = window.__forceSendDuplicatePayload;
+    var dialog = document.getElementById("force-send-duplicate-dialog");
+    if (!payload || !window.htmx) return;
+    var leadId = payload.leadId != null ? payload.leadId : payload.lead_id;
+    if (leadId == null) return;
+    var urlTemplate = dialog ? dialog.getAttribute("data-url-template") : "";
+    if (!urlTemplate) return;
+    var url = urlTemplate.replace(/\/0\/?$/, "/" + leadId + "/");
+    var confirmBtn = document.getElementById("force-send-duplicate-confirm");
+    if (confirmBtn) confirmBtn.disabled = true;
+    window.htmx.ajax("POST", url, {
+      target: "#lead-bottom-actions-" + leadId,
+      swap: "outerHTML",
+      values: {
+        group_id: payload.groupId || payload.group_id || "",
+        confirm_duplicate: "1",
+      },
+      headers: { "X-CSRFToken": __htmxCsrfToken() },
+    }).finally(function () {
+      if (confirmBtn) confirmBtn.disabled = false;
+      if (dialog) dialog.close();
+      window.__forceSendDuplicatePayload = null;
+    });
+  };
+
+  document.body.addEventListener("forceSendDuplicatePrompt", function (evt) {
+    var payload = window.__htmxTriggerValue(evt.detail, "forceSendDuplicatePrompt");
+    if (payload && typeof payload === "object") {
+      window.__showForceSendDuplicateDialog(payload);
+    } else {
+      window.__showForceSendDuplicateDialog({ leadId: payload, templateName: "" });
+    }
+  });
+
+  document.getElementById("force-send-duplicate-cancel")?.addEventListener("click", function () {
+    document.getElementById("force-send-duplicate-dialog")?.close();
+    window.__forceSendDuplicatePayload = null;
+  });
+
+  document.getElementById("force-send-duplicate-confirm")?.addEventListener("click", function () {
+    window.__submitForceSendDuplicateConfirm();
+  });
+
+  document.getElementById("force-send-duplicate-dialog")?.addEventListener("click", function (e) {
+    if (e.target === e.currentTarget) {
+      e.currentTarget.close();
+      window.__forceSendDuplicatePayload = null;
+    }
   });
 
   window.__chatInboxPollTimer = null;
