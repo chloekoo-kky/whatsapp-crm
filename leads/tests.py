@@ -1230,6 +1230,33 @@ class ClinicUpdatePhoneTests(TestCase):
         self.assertIsNone(self.lead.whatsapp_sent_at)
         self.assertFalse(ChatMessage.objects.filter(lead=self.lead).exists())
 
+    def test_primary_phone_uses_phone_numbers_over_stale_phone_number(self):
+        from leads.whatsapp_service import build_meta_template_payload, primary_phone
+
+        self.lead.phone_number = "+60111111111"
+        self.lead.phone_numbers = ["+60222222222"]
+        self.assertEqual(primary_phone(self.lead), "+60222222222")
+
+        payload = build_meta_template_payload(self.lead, template_name="say_hi")
+        self.assertEqual(payload["to"], "+60222222222")
+
+    def test_force_send_button_shown_when_status_sent(self):
+        from django.test import RequestFactory
+
+        from leads.views import _force_send_grid_response
+
+        self.lead.whatsapp_status = Lead.WhatsappStatus.SENT
+        request = RequestFactory().post(
+            "/",
+            data={"group_id": str(self.group.pk)},
+        )
+        response = _force_send_grid_response(
+            request,
+            self.lead,
+            ok=True,
+        )
+        self.assertIn("lead-force-send-btn", response.content.decode())
+
 
 class BatchReportTests(TestCase):
     def setUp(self):

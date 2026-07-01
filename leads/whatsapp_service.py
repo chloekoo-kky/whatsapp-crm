@@ -16,7 +16,7 @@ from django.db.models import Q
 from django.utils import timezone
 
 from leads.chat_messages import record_outbound_chat_message, upsert_outbound_chat_message
-from leads.display import whatsapp_me_url
+from leads.display import lead_phone_list, whatsapp_me_url
 from leads.models import (
     Lead,
     LeadConversationLog,
@@ -414,15 +414,9 @@ def _digits_for_whatsapp(phone: str) -> str:
 
 
 def primary_phone(lead: Lead) -> str:
-    primary = (lead.phone_number or "").strip()
-    if primary:
-        return primary
-    numbers = lead.phone_numbers if isinstance(lead.phone_numbers, list) else []
-    for raw in numbers:
-        candidate = str(raw or "").strip()
-        if candidate:
-            return candidate
-    return ""
+    """Primary dispatch target — always from ``phone_numbers`` list when set."""
+    phones = lead_phone_list(lead)
+    return phones[0] if phones else ""
 
 
 def reset_lead_whatsapp_after_phone_change(
@@ -751,6 +745,7 @@ def send_text_to_lead(
     lead: Lead, *, priority: bool = False, template_name: str | None = None
 ) -> tuple[bool, str]:
     """Dispatch a WhatsApp template via YCloud sendDirectly."""
+    lead.refresh_from_db(fields=["phone_number", "phone_numbers"])
     token, from_number = resolve_meta_dispatch_credentials()
     if not token or not from_number:
         detail = "YCloud WhatsApp API is not configured."

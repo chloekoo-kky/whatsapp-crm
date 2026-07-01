@@ -1350,11 +1350,12 @@ def _force_send_grid_response(request, lead: Lead, *, ok: bool) -> HttpResponse:
 def whatsapp_force_send(request, pk: int):
     """HTMX: priority Meta Cloud API template dispatch for a single lead row."""
     lead = get_object_or_404(Lead, pk=pk)
-    if lead.whatsapp_status not in (
-        Lead.WhatsappStatus.IDLE,
-        Lead.WhatsappStatus.PENDING,
-        Lead.WhatsappStatus.FAILED,
-    ):
+    if lead.whatsapp_status == Lead.WhatsappStatus.PROCESSING:
+        return _force_send_grid_response(request, lead, ok=False)
+    if not lead_has_dispatchable_phone(lead):
+        lead.whatsapp_status = Lead.WhatsappStatus.FAILED
+        lead.whatsapp_last_error = "No valid phone number on lead."
+        lead.save(update_fields=["whatsapp_status", "whatsapp_last_error"])
         return _force_send_grid_response(request, lead, ok=False)
 
     if not meta_access_token():
