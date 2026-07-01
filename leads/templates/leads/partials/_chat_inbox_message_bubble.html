@@ -1,3 +1,4 @@
+{% load clinic_display %}
 {% if msg.is_outbound %}
 <div class="flex justify-end">
   <div class="max-w-[85%] rounded-2xl rounded-br-md bg-gradient-to-br from-sky-500 to-sky-600 px-3.5 py-2.5 text-sm leading-relaxed text-white shadow-sm">
@@ -7,7 +8,7 @@
     <p class="text-[10px] font-semibold uppercase tracking-wide text-sky-100/90">You</p>
     {% endif %}
     <p class="mt-1 whitespace-pre-wrap break-words">{{ msg.body }}</p>
-      <p class="mt-1.5 text-right text-[10px] text-sky-100/80">{{ msg.created_at|time:"H:i" }} · YCloud</p>
+      <p class="mt-1.5 text-right text-[10px] text-sky-100/80">{{ msg.created_at|chat_time }} · YCloud</p>
   </div>
 </div>
 {% else %}
@@ -15,7 +16,7 @@
   <div class="max-w-[85%] rounded-2xl rounded-bl-md border border-slate-200/90 bg-white px-3.5 py-2.5 text-sm leading-relaxed text-slate-800 shadow-sm">
     <p class="text-[10px] font-semibold uppercase tracking-wide text-emerald-700">Client reply</p>
     <p class="mt-1 whitespace-pre-wrap break-words">{{ msg.body }}</p>
-    <p class="mt-1.5 text-right text-[10px] text-slate-400">{{ msg.created_at|time:"H:i" }}</p>
+    <p class="mt-1.5 text-right text-[10px] text-slate-400">{{ msg.created_at|chat_time }}</p>
   </div>
 </div>
 {% endif %}

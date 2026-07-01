@@ -15,7 +15,7 @@ from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 
-from leads.chat_messages import record_outbound_chat_message
+from leads.chat_messages import record_outbound_chat_message, upsert_outbound_chat_message
 from leads.display import whatsapp_me_url
 from leads.models import (
     Lead,
@@ -700,11 +700,12 @@ def mark_sent(
     selected_template = normalize_outbound_template_name(
         template_name or get_active_config_template_name()
     )
-    record_outbound_chat_message(
+    upsert_outbound_chat_message(
         lead,
         template_name=selected_template,
-        body=build_message_body(lead) or meta_template_preview_body(selected_template),
+        body=meta_template_preview_body(selected_template),
         meta_message_id=meta_message_id,
+        created_at=now,
     )
 
 

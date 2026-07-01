@@ -21,7 +21,7 @@ from leads.chat_messages import (
     inbound_chat_message_exists,
     outbound_chat_message_exists,
     record_inbound_chat_message,
-    record_outbound_chat_message,
+    upsert_outbound_chat_message,
 )
 from leads.display import normalize_manual_phone
 from leads.models import Lead, LeadConversationLog
@@ -43,6 +43,7 @@ class ParsedWebhookMessage:
     from_me: bool
     message_id: str
     timestamp: datetime
+    template_name: str = ""
 
 
 def _is_trusted_webhook_source(ip: str) -> bool:
@@ -174,6 +175,13 @@ def _meta_timestamp(raw_ts: Any) -> datetime:
     return dj_timezone.now()
 
 
+def _extract_template_name(message: dict[str, Any]) -> str:
+    template = message.get("template")
+    if isinstance(template, dict):
+        return str(template.get("name") or "").strip()
+    return ""
+
+
 def _extract_text(message: dict[str, Any]) -> str:
     msg_type = (message.get("type") or "").strip().lower()
     if msg_type == "text":
@@ -182,6 +190,21 @@ def _extract_text(message: dict[str, Any]) -> str:
             body = text.get("body")
             if isinstance(body, str) and body.strip():
                 return body.strip()
+    if msg_type == "template":
+        text = message.get("text")
+        if isinstance(text, dict):
+            body = text.get("body")
+            if isinstance(body, str) and body.strip():
+                return body.strip()
+        template = message.get("template")
+        if isinstance(template, dict):
+            for comp in template.get("components") or []:
+                if not isinstance(comp, dict):
+                    continue
+                if (comp.get("type") or "").upper() == "BODY":
+                    body = comp.get("text") or comp.get("body")
+                    if isinstance(body, str) and body.strip():
+                        return body.strip()
     if msg_type == "button":
         button = message.get("button")
         if isinstance(button, dict):
@@ -269,6 +292,12 @@ def _parse_ycloud_business_outbound(
         return []
     text_body = _extract_text_or_placeholder(message)
     if not text_body:
+        tpl_name = _extract_template_name(message)
+        if tpl_name:
+            from leads.whatsapp_service import meta_template_preview_body
+
+            text_body = meta_template_preview_body(tpl_name)
+    if not text_body:
         return []
 
     return [
@@ -280,6 +309,7 @@ def _parse_ycloud_business_outbound(
             timestamp=_iso_timestamp(
                 message.get("sendTime") or message.get("createTime") or message.get("updateTime")
             ),
+            template_name=_extract_template_name(message),
         )
     ]
 
@@ -412,13 +442,13 @@ def sync_webhook_message(msg: ParsedWebhookMessage) -> bool:
         return False
 
     if msg.from_me:
-        if not outbound_chat_message_exists(lead, msg.message_id):
-            record_outbound_chat_message(
-                lead,
-                body=msg.text_body,
-                meta_message_id=msg.message_id,
-                template_name="",
-            )
+        upsert_outbound_chat_message(
+            lead,
+            body=msg.text_body,
+            meta_message_id=msg.message_id,
+            template_name=msg.template_name,
+            created_at=msg.timestamp,
+        )
     elif not inbound_chat_message_exists(lead, msg.message_id):
         record_inbound_chat_message(
             lead,

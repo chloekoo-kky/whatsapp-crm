@@ -548,6 +548,79 @@ class YCloudWebhookTests(TestCase):
         self.assertEqual(parsed[0].text_body, "Reply from Coex phone app")
 
     @override_settings(WHATSAPP_FROM_NUMBER="+60126336429")
+    def test_ycloud_template_webhook_upserts_outbound_chat(self):
+        from django.utils import timezone
+
+        from leads.chat_messages import upsert_outbound_chat_message
+        from leads.whatsapp_webhook import parse_ycloud_webhook
+
+        groups = ensure_pipeline_system_groups()
+        lead = Lead.objects.create(
+            name="Template Clinic",
+            address="1 Main St",
+            phone_number="+60123456789",
+            phone_numbers=["+60123456789"],
+            group=groups["uncategorized"],
+            whatsapp_status=Lead.WhatsappStatus.SENT,
+        )
+        WhatsAppConfig = __import__("leads.models", fromlist=["WhatsAppConfig"]).WhatsAppConfig
+        config = WhatsAppConfig.load()
+        config.meta_message_templates = [
+            {
+                "name": "say_hi",
+                "status": "APPROVED",
+                "language": "en_US",
+                "body": "Hi- are you open today?",
+            },
+        ]
+        config.save(update_fields=["meta_message_templates"])
+
+        send_time = timezone.now() - timezone.timedelta(minutes=2)
+        upsert_outbound_chat_message(
+            lead,
+            template_name="say_hi",
+            body="wrong draft copy",
+            meta_message_id="wamid.TEMPLATE123",
+            created_at=send_time,
+        )
+
+        payload = {
+            "id": "evt_tpl_1",
+            "type": "whatsapp.message.updated",
+            "apiVersion": "v2",
+            "createTime": "2026-06-30T11:31:00.000Z",
+            "whatsappMessage": {
+                "id": "msg_tpl_1",
+                "wamid": "wamid.TEMPLATE123",
+                "from": "+60126336429",
+                "to": "+60123456789",
+                "type": "template",
+                "status": "sent",
+                "template": {"name": "say_hi", "language": {"code": "en_US"}},
+                "text": {"body": "Hi- are you open today? May I know your business hours?"},
+                "sendTime": "2026-06-30T11:31:00.000Z",
+            },
+        }
+        parsed = parse_ycloud_webhook(payload)
+        self.assertEqual(len(parsed), 1)
+        self.assertEqual(parsed[0].template_name, "say_hi")
+        self.assertIn("business hours", parsed[0].text_body)
+
+        client = Client()
+        response = client.post(
+            "/whatsapp/webhook/",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+
+        chat = ChatMessage.objects.get(lead=lead, is_outbound=True)
+        self.assertEqual(chat.template_name, "say_hi")
+        self.assertIn("business hours", chat.body)
+        self.assertNotEqual(chat.body, "wrong draft copy")
+        self.assertEqual(chat.meta_message_id, "wamid.TEMPLATE123")
+
+    @override_settings(WHATSAPP_FROM_NUMBER="+60126336429")
     def test_ycloud_smb_echo_webhook_post_syncs_outbound(self):
         groups = ensure_pipeline_system_groups()
         lead = Lead.objects.create(

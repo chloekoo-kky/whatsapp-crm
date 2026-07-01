@@ -34,9 +34,9 @@ def record_outbound_chat_message(
     template_name: str | None = None,
     body: str | None = None,
     meta_message_id: str = "",
+    created_at=None,
 ) -> ChatMessage:
     from leads.whatsapp_service import (
-        build_message_body,
         meta_template_preview_body,
         whatsapp_template_name,
     )
@@ -48,15 +48,64 @@ def record_outbound_chat_message(
     if body is not None:
         snapshot = body.strip()
     else:
-        snapshot = (
-            build_message_body(lead) or meta_template_preview_body(name or whatsapp_template_name())
-        ).strip()
-    return ChatMessage.objects.create(
+        snapshot = meta_template_preview_body(name or whatsapp_template_name()).strip()
+    msg = ChatMessage.objects.create(
         lead=lead,
         body=snapshot,
         is_outbound=True,
         template_name=name,
         meta_message_id=(meta_message_id or "").strip(),
+    )
+    if created_at is not None:
+        ChatMessage.objects.filter(pk=msg.pk).update(created_at=created_at)
+        msg.created_at = created_at
+    return msg
+
+
+def upsert_outbound_chat_message(
+    lead: Lead,
+    *,
+    body: str | None = None,
+    meta_message_id: str = "",
+    template_name: str = "",
+    created_at=None,
+) -> ChatMessage:
+    """Create or refresh an outbound row (API send + YCloud webhook echoes)."""
+    from leads.whatsapp_service import meta_template_preview_body
+
+    mid = (meta_message_id or "").strip()
+    tpl = (template_name or "").strip()
+    snapshot = (body or "").strip()
+    if not snapshot and tpl:
+        snapshot = meta_template_preview_body(tpl).strip()
+
+    if mid:
+        existing = ChatMessage.objects.filter(
+            lead=lead,
+            is_outbound=True,
+            meta_message_id=mid,
+        ).first()
+        if existing is not None:
+            updates: dict[str, object] = {}
+            if snapshot and existing.body.strip() != snapshot:
+                updates["body"] = snapshot
+            if tpl and existing.template_name != tpl:
+                updates["template_name"] = tpl
+            if updates:
+                ChatMessage.objects.filter(pk=existing.pk).update(**updates)
+                for field, value in updates.items():
+                    setattr(existing, field, value)
+            if created_at is not None:
+                ChatMessage.objects.filter(pk=existing.pk).update(created_at=created_at)
+                existing.created_at = created_at
+            return existing
+
+    return record_outbound_chat_message(
+        lead,
+        template_name=tpl or None,
+        body=snapshot or None,
+        meta_message_id=mid,
+        created_at=created_at,
     )
 
 
@@ -106,19 +155,29 @@ def _inbound_body_exists(lead: Lead, body: str, *, created_at) -> bool:
     ).exists()
 
 
+def _repair_outbound_template_rows(lead: Lead) -> None:
+    """Align stored outbound copy with synced Meta template catalog."""
+    from leads.whatsapp_service import meta_template_preview_body
+
+    for msg in ChatMessage.objects.filter(lead=lead, is_outbound=True):
+        name = (msg.template_name or "").strip()
+        if not name:
+            continue
+        expected = meta_template_preview_body(name).strip()
+        if expected and msg.body.strip() != expected:
+            ChatMessage.objects.filter(pk=msg.pk).update(body=expected)
+
+
 @transaction.atomic
 def sync_chat_messages_from_logs(lead: Lead) -> None:
-    """Import missing rows from ``LeadConversationLog`` and refresh stub outbound copy."""
+    """Import missing rows from ``LeadConversationLog`` and refresh outbound copy."""
     from leads.whatsapp_service import (
         OFFICIAL_API_MARKER,
-        build_message_body,
         meta_template_preview_body,
         whatsapp_template_name,
     )
 
-    template_name = whatsapp_template_name()
-    rich_body = build_message_body(lead)
-    preview_stub = meta_template_preview_body(template_name)
+    default_template = whatsapp_template_name()
 
     for log in LeadConversationLog.objects.filter(lead=lead).order_by("created_at", "id"):
         remarks = (log.remarks or "").strip()
@@ -131,17 +190,24 @@ def sync_chat_messages_from_logs(lead: Lead) -> None:
                 .order_by("created_at", "id")
                 .first()
             )
+            tpl = (outbound.template_name if outbound else "") or default_template
+            preview = meta_template_preview_body(tpl)
             if outbound is None:
                 msg = record_outbound_chat_message(
                     lead,
-                    template_name=template_name,
-                    body=rich_body,
+                    template_name=tpl,
+                    body=preview,
+                    created_at=log.created_at,
                 )
                 ChatMessage.objects.filter(pk=msg.pk).update(created_at=log.created_at)
-            elif rich_body and outbound.body in {preview_stub, "Hello"} and outbound.body != rich_body:
-                outbound.body = rich_body
-                outbound.template_name = template_name
-                outbound.save(update_fields=["body", "template_name"])
+            else:
+                updates: dict[str, object] = {}
+                if preview and outbound.body.strip() != preview.strip():
+                    updates["body"] = preview
+                if tpl and not outbound.template_name:
+                    updates["template_name"] = tpl
+                if updates:
+                    ChatMessage.objects.filter(pk=outbound.pk).update(**updates)
             continue
 
         if "[WhatsApp · client]" in remarks:
@@ -164,6 +230,7 @@ def sync_chat_messages_from_logs(lead: Lead) -> None:
 
 def chat_messages_for_lead(lead: Lead) -> list[ChatMessage]:
     sync_chat_messages_from_logs(lead)
+    _repair_outbound_template_rows(lead)
     return list(
         ChatMessage.objects.filter(lead=lead).order_by("created_at", "id")
     )

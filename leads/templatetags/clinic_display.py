@@ -11,6 +11,7 @@ from leads.display import (
     whatsapp_me_path,
     whatsapp_me_url,
 )
+from leads.whatsapp_service import campaign_timezone
 
 register = template.Library()
 
@@ -53,3 +54,15 @@ def whatsapp_active_chat(clinic):
 @register.filter
 def whatsapp_dispatched(clinic):
     return lead_whatsapp_dispatched(clinic)
+
+
+@register.filter
+def chat_time(value):
+    """Render chat timestamps in the campaign timezone (not UTC)."""
+    if value is None:
+        return ""
+    try:
+        local = value.astimezone(campaign_timezone())
+    except (TypeError, ValueError, OSError):
+        return ""
+    return local.strftime("%H:%M")
