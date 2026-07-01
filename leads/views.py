@@ -57,6 +57,7 @@ from leads.models import (
 )
 from leads.chat_messages import chat_messages_for_lead
 from leads.whatsapp_webhook import (
+    DELIVERY_FAILED_MARKER,
     handle_meta_webhook_verify,
     process_whatsapp_webhook,
 )
@@ -529,6 +530,7 @@ def _gateway_status_label(connection: dict) -> str:
 def _whatsapp_activity_log_queryset():
     return LeadConversationLog.objects.filter(
         Q(remarks__icontains=OFFICIAL_API_MARKER)
+        | Q(remarks__icontains=DELIVERY_FAILED_MARKER)
         | Q(remarks__icontains="Touchpoint")
         | Q(remarks__icontains=GATEWAY_GUARD_LOG_PREFIX)
     )
@@ -692,7 +694,10 @@ def _normalize_activity_remark(message: str) -> str:
         return text
     return text.replace(
         "Template successfully delivered to",
+        "Template queued by YCloud for",
+    ).replace(
         "Template accepted by YCloud for",
+        "Template queued by YCloud for",
     )
 
 
@@ -709,7 +714,13 @@ def _whatsapp_activity_entries(limit: int = 10, *, request=None) -> list[dict]:
     for log in logs:
         remarks = _normalize_activity_remark((log.remarks or "").strip())
         is_guard = GATEWAY_GUARD_LOG_PREFIX in remarks
-        kind = "warning" if is_guard else "dispatch"
+        is_failed = DELIVERY_FAILED_MARKER in remarks
+        if is_failed:
+            kind = "failed"
+        elif is_guard:
+            kind = "warning"
+        else:
+            kind = "dispatch"
         timestamp = _activity_timestamp_hms(log.created_at)
         message = remarks[:240]
         entries.append(
@@ -726,7 +737,9 @@ def _whatsapp_activity_entries(limit: int = 10, *, request=None) -> list[dict]:
                     message=message,
                     lead=log.lead,
                 ),
-                "badge_class": "bg-amber-900 text-amber-200"
+                "badge_class": "bg-rose-900 text-rose-200"
+                if is_failed
+                else "bg-amber-900 text-amber-200"
                 if is_guard
                 else "bg-emerald-900 text-emerald-200",
             }

@@ -490,13 +490,14 @@ class YCloudWebhookTests(TestCase):
     def test_parse_ycloud_inbound_message(self):
         from leads.whatsapp_webhook import parse_ycloud_webhook
 
-        parsed = parse_ycloud_webhook(self._ycloud_inbound_payload())
+        parsed, failures = parse_ycloud_webhook(self._ycloud_inbound_payload())
         self.assertEqual(len(parsed), 1)
+        self.assertEqual(len(failures), 0)
         self.assertEqual(parsed[0].remote_phone, "+60123456789")
         self.assertEqual(parsed[0].text_body, "Hello from YCloud")
         self.assertFalse(parsed[0].from_me)
 
-    @override_settings(WHATSAPP_FROM_NUMBER="+60126336529")
+    @override_settings(WHATSAPP_FROM_NUMBER="+60126336429")
     def test_parse_ycloud_mobile_echo(self):
         from leads.whatsapp_webhook import parse_ycloud_webhook
 
@@ -508,7 +509,7 @@ class YCloudWebhookTests(TestCase):
             "whatsappMessage": {
                 "id": "msg_1",
                 "wamid": "wamid.YCLOUD_ECHO",
-                "from": "+60126336529",
+                "from": "+60126336429",
                 "to": "+60123456789",
                 "type": "text",
                 "status": "sent",
@@ -516,8 +517,9 @@ class YCloudWebhookTests(TestCase):
                 "sendTime": "2026-06-14T10:01:00.000Z",
             },
         }
-        parsed = parse_ycloud_webhook(payload)
+        parsed, failures = parse_ycloud_webhook(payload)
         self.assertEqual(len(parsed), 1)
+        self.assertEqual(len(failures), 0)
         self.assertTrue(parsed[0].from_me)
         self.assertEqual(parsed[0].text_body, "Reply from mobile app")
 
@@ -541,8 +543,9 @@ class YCloudWebhookTests(TestCase):
                 "sendTime": "2026-06-14T10:02:00.000Z",
             },
         }
-        parsed = parse_ycloud_webhook(payload)
+        parsed, failures = parse_ycloud_webhook(payload)
         self.assertEqual(len(parsed), 1)
+        self.assertEqual(len(failures), 0)
         self.assertTrue(parsed[0].from_me)
         self.assertEqual(parsed[0].remote_phone, "+60123456789")
         self.assertEqual(parsed[0].text_body, "Reply from Coex phone app")
@@ -601,8 +604,9 @@ class YCloudWebhookTests(TestCase):
                 "sendTime": "2026-06-30T11:31:00.000Z",
             },
         }
-        parsed = parse_ycloud_webhook(payload)
+        parsed, failures = parse_ycloud_webhook(payload)
         self.assertEqual(len(parsed), 1)
+        self.assertEqual(len(failures), 0)
         self.assertEqual(parsed[0].template_name, "say_hi")
         self.assertIn("business hours", parsed[0].text_body)
 
@@ -619,6 +623,56 @@ class YCloudWebhookTests(TestCase):
         self.assertIn("business hours", chat.body)
         self.assertNotEqual(chat.body, "wrong draft copy")
         self.assertEqual(chat.meta_message_id, "wamid.TEMPLATE123")
+
+    @override_settings(WHATSAPP_FROM_NUMBER="+60126336429")
+    def test_parse_ycloud_delivery_failure(self):
+        from leads.whatsapp_webhook import DELIVERY_FAILED_MARKER, parse_ycloud_webhook
+
+        payload = {
+            "id": "evt_fail_1",
+            "type": "whatsapp.message.updated",
+            "whatsappMessage": {
+                "id": "msg_fail_1",
+                "wamid": "wamid.FAILED123",
+                "from": "+60126336429",
+                "to": "+60198765030",
+                "type": "template",
+                "status": "failed",
+                "errorCode": "131026",
+                "errorMessage": "Message undeliverable",
+                "template": {"name": "say_hi", "language": {"code": "en_US"}},
+            },
+        }
+        parsed, failures = parse_ycloud_webhook(payload)
+        self.assertEqual(parsed, [])
+        self.assertEqual(len(failures), 1)
+        self.assertEqual(failures[0].error_message, "Message undeliverable")
+
+        groups = ensure_pipeline_system_groups()
+        lead = Lead.objects.create(
+            name="Fail Clinic",
+            address="1 Main St",
+            phone_number="+60198765030",
+            group=groups["uncategorized"],
+            whatsapp_status=Lead.WhatsappStatus.SENT,
+        )
+        client = Client()
+        response = client.post(
+            "/whatsapp/webhook/",
+            data=json.dumps(payload),
+            content_type="application/json",
+            REMOTE_ADDR="127.0.0.1",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["delivery_failures"], 1)
+        lead.refresh_from_db()
+        self.assertEqual(lead.whatsapp_status, Lead.WhatsappStatus.FAILED)
+        self.assertTrue(
+            LeadConversationLog.objects.filter(
+                lead=lead,
+                remarks__contains=DELIVERY_FAILED_MARKER,
+            ).exists()
+        )
 
     @override_settings(WHATSAPP_FROM_NUMBER="+60126336429")
     def test_ycloud_smb_echo_webhook_post_syncs_outbound(self):

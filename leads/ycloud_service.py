@@ -214,6 +214,63 @@ def message_id_from_response(data: dict[str, Any]) -> str:
     return ""
 
 
+def delivery_status_from_response(data: dict[str, Any]) -> str:
+    """YCloud/Meta message status: accepted, sent, delivered, read, or failed."""
+    if not isinstance(data, dict):
+        return ""
+    return str(data.get("status") or "").strip().lower()
+
+
+def _whatsapp_api_error_detail(data: dict[str, Any]) -> str:
+    if not isinstance(data, dict):
+        return ""
+    wa_err = data.get("whatsappApiError")
+    if isinstance(wa_err, dict):
+        parts = [
+            str(wa_err.get("message") or "").strip(),
+            str(wa_err.get("code") or "").strip(),
+        ]
+        detail = " — ".join(part for part in parts if part)
+        if detail:
+            return detail
+    err = data.get("error")
+    if isinstance(err, dict):
+        parts = [
+            str(err.get("message") or "").strip(),
+            f"code={err.get('code')}" if err.get("code") else "",
+        ]
+        detail = " — ".join(part for part in parts if part)
+        if detail:
+            return detail
+    for key in ("errorMessage", "errorCode"):
+        value = str(data.get(key) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def interpret_ycloud_send_response(
+    data: dict[str, Any],
+) -> tuple[bool, str, str]:
+    """
+    Parse a YCloud sendDirectly JSON body.
+
+    HTTP 200 can still mean Meta rejected the template or delivery failed.
+    Returns (ok, error_detail, delivery_status).
+    """
+    if not isinstance(data, dict):
+        return True, "", "accepted"
+
+    status = delivery_status_from_response(data)
+    detail = _whatsapp_api_error_detail(data)
+    if status == "failed" or detail:
+        if not detail:
+            detail = "WhatsApp rejected the message."
+        return False, detail, status or "failed"
+
+    return True, "", status or "accepted"
+
+
 def build_template_payload(
     *,
     from_number: str,
@@ -272,9 +329,14 @@ def send_message_directly(payload: dict[str, Any]) -> tuple[bool, str, dict[str,
         return False, extract_ycloud_error(response), {}
 
     try:
-        return True, "", response.json()
+        data = response.json()
     except ValueError:
         return True, "", {}
+
+    ok, detail, _status = interpret_ycloud_send_response(data)
+    if not ok:
+        return False, detail or extract_ycloud_error(response), data
+    return True, "", data
 
 
 def _parse_template_row(row: dict[str, Any]) -> dict[str, Any] | None:

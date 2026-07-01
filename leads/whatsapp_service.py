@@ -37,6 +37,7 @@ from leads.ycloud_service import (
     fetch_approved_templates,
     fetch_gateway_status as ycloud_fetch_gateway_status,
     message_id_from_response,
+    delivery_status_from_response,
     resolve_ycloud_credentials,
     send_message_directly,
     whatsapp_from_number,
@@ -264,6 +265,11 @@ def meta_template_language_for_name(template_name: str | None) -> str:
     name = (template_name or "").strip()
     if not name:
         return META_OUTBOUND_TEMPLATE_LANGUAGE
+    config = WhatsAppConfig.load()
+    for item in _approved_templates_from_config(config):
+        if str(item.get("name") or "").strip() == name:
+            return _normalize_meta_template_language(str(item.get("language") or ""))
+    ensure_ycloud_templates_synced()
     config = WhatsAppConfig.load()
     for item in _approved_templates_from_config(config):
         if str(item.get("name") or "").strip() == name:
@@ -641,9 +647,21 @@ def record_whatsapp_activity_warning(message: str, *, lead: Optional[Lead] = Non
     )
 
 
-def build_official_dispatch_remark(lead: Lead, *, meta_message_id: str = "") -> str:
+def build_official_dispatch_remark(
+    lead: Lead,
+    *,
+    meta_message_id: str = "",
+    delivery_status: str = "",
+) -> str:
     phone = _mask_phone_for_activity_log(primary_phone(lead))
-    remark = f"{OFFICIAL_API_MARKER} Template accepted by YCloud for {phone}"
+    status = (delivery_status or "accepted").strip().lower()
+    if status in {"sent", "delivered", "read"}:
+        status_label = "sent via WhatsApp"
+    elif status == "accepted":
+        status_label = "queued by YCloud (awaiting WhatsApp delivery)"
+    else:
+        status_label = "accepted by YCloud"
+    remark = f"{OFFICIAL_API_MARKER} Template {status_label} for {phone}"
     msg_id = (meta_message_id or "").strip()
     if msg_id:
         short_id = msg_id if len(msg_id) <= 20 else f"{msg_id[:17]}…"
@@ -701,6 +719,7 @@ def mark_sent(
     priority: bool = False,
     meta_message_id: str = "",
     template_name: str | None = None,
+    delivery_status: str = "",
 ) -> None:
     now = timezone.now()
     lead.whatsapp_status = Lead.WhatsappStatus.SENT
@@ -715,7 +734,11 @@ def mark_sent(
             "whatsapp_last_error",
         ]
     )
-    remark = build_official_dispatch_remark(lead, meta_message_id=meta_message_id)
+    remark = build_official_dispatch_remark(
+        lead,
+        meta_message_id=meta_message_id,
+        delivery_status=delivery_status,
+    )
     if priority:
         remark = f"Priority Force Trigger — {remark}"
     LeadConversationLog.objects.create(
@@ -781,6 +804,7 @@ def send_text_to_lead(
         return False, detail
 
     meta_message_id = message_id_from_response(data)
+    delivery_status = delivery_status_from_response(data)
     selected_template = str(payload.get("template", {}).get("name") or "").strip()
     mark_sent(
         lead,
@@ -788,7 +812,15 @@ def send_text_to_lead(
         priority=priority,
         meta_message_id=meta_message_id,
         template_name=selected_template or template_name,
+        delivery_status=delivery_status,
     )
+    if delivery_status == "accepted":
+        logger.info(
+            "YCloud queued template for lead #%s (%s); status=accepted — "
+            "delivery updates require YCloud webhooks.",
+            lead.pk,
+            to_number,
+        )
     return True, ""
 
 

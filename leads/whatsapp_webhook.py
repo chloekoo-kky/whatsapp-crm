@@ -34,6 +34,7 @@ from leads.ycloud_service import whatsapp_from_number, ycloud_webhook_secret
 logger = logging.getLogger(__name__)
 
 WEBHOOK_MSG_ID_PREFIX = "wa-id:"
+DELIVERY_FAILED_MARKER = "[WhatsApp delivery failed]"
 
 
 @dataclass(frozen=True)
@@ -44,6 +45,15 @@ class ParsedWebhookMessage:
     message_id: str
     timestamp: datetime
     template_name: str = ""
+
+
+@dataclass(frozen=True)
+class ParsedWebhookDeliveryFailure:
+    remote_phone: str
+    error_message: str
+    message_id: str = ""
+    template_name: str = ""
+    timestamp: datetime | None = None
 
 
 def _is_trusted_webhook_source(ip: str) -> bool:
@@ -314,28 +324,70 @@ def _parse_ycloud_business_outbound(
     ]
 
 
-def parse_ycloud_webhook(payload: dict[str, Any]) -> list[ParsedWebhookMessage]:
-    """Normalize YCloud webhook events into chat rows."""
+def _parse_ycloud_delivery_failure(message: dict[str, Any]) -> ParsedWebhookDeliveryFailure | None:
+    """Meta/YCloud reported the outbound message could not be delivered."""
+    status = (message.get("status") or "").strip().lower()
+    if status != "failed":
+        return None
+
+    business = whatsapp_from_number()
+    msg_from = (message.get("from") or "").strip()
+    if not business or not _phones_match(msg_from, business):
+        return None
+
+    remote_phone = normalize_manual_phone((message.get("to") or "").strip())
+    if not remote_phone:
+        return None
+
+    error_message = (
+        str(message.get("errorMessage") or "").strip()
+        or str(message.get("errorCode") or "").strip()
+        or "WhatsApp delivery failed."
+    )
+    wa_err = message.get("whatsappApiError")
+    if isinstance(wa_err, dict):
+        wa_detail = str(wa_err.get("message") or wa_err.get("code") or "").strip()
+        if wa_detail:
+            error_message = wa_detail
+
+    return ParsedWebhookDeliveryFailure(
+        remote_phone=remote_phone,
+        error_message=error_message[:4000],
+        message_id=_message_id(message),
+        template_name=_extract_template_name(message),
+        timestamp=_iso_timestamp(
+            message.get("updateTime") or message.get("createTime") or message.get("sendTime")
+        ),
+    )
+
+
+def parse_ycloud_webhook(
+    payload: dict[str, Any],
+) -> tuple[list[ParsedWebhookMessage], list[ParsedWebhookDeliveryFailure]]:
+    """Normalize YCloud webhook events into chat rows and delivery failures."""
     event_type = (payload.get("type") or "").strip()
     if event_type == "whatsapp.inbound_message.received":
         inbound = payload.get("whatsappInboundMessage")
         if isinstance(inbound, dict):
-            return _parse_ycloud_inbound(inbound)
-        return []
+            return _parse_ycloud_inbound(inbound), []
+        return [], []
 
     if event_type == "whatsapp.message.updated":
         message = payload.get("whatsappMessage")
         if isinstance(message, dict):
-            return _parse_ycloud_business_outbound(message)
-        return []
+            failure = _parse_ycloud_delivery_failure(message)
+            if failure is not None:
+                return [], [failure]
+            return _parse_ycloud_business_outbound(message), []
+        return [], []
 
     if event_type == "whatsapp.smb.message.echoes":
         message = payload.get("whatsappMessage")
         if isinstance(message, dict):
-            return _parse_ycloud_business_outbound(message, skip_status_filter=True)
-        return []
+            return _parse_ycloud_business_outbound(message, skip_status_filter=True), []
+        return [], []
 
-    return []
+    return [], []
 
 
 def _parse_message_list(
@@ -409,11 +461,13 @@ def parse_meta_cloud_webhook(payload: dict[str, Any]) -> list[ParsedWebhookMessa
     return parsed
 
 
-def parse_whatsapp_webhook(payload: dict[str, Any]) -> list[ParsedWebhookMessage]:
+def parse_whatsapp_webhook(
+    payload: dict[str, Any],
+) -> tuple[list[ParsedWebhookMessage], list[ParsedWebhookDeliveryFailure]]:
     """Dispatch to YCloud or legacy Meta parser based on payload shape."""
     if (payload.get("type") or "").startswith("whatsapp."):
         return parse_ycloud_webhook(payload)
-    return parse_meta_cloud_webhook(payload)
+    return parse_meta_cloud_webhook(payload), []
 
 
 def _format_log_remarks(sender: str, text_body: str, message_id: str) -> str:
@@ -471,6 +525,50 @@ def sync_webhook_message(msg: ParsedWebhookMessage) -> bool:
     return True
 
 
+def _delivery_failure_already_logged(lead: Lead, message_id: str) -> bool:
+    if not message_id:
+        return False
+    marker = f"{DELIVERY_FAILED_MARKER}"
+    return LeadConversationLog.objects.filter(
+        lead=lead,
+        remarks__contains=DELIVERY_FAILED_MARKER,
+    ).filter(remarks__contains=message_id).exists()
+
+
+@transaction.atomic
+def sync_webhook_delivery_failure(failure: ParsedWebhookDeliveryFailure) -> bool:
+    from leads.whatsapp_service import mark_failed
+
+    lead = find_lead_by_phone(failure.remote_phone)
+    if lead is None:
+        return False
+
+    if lead.group and lead.group.name == TRASH_GROUP_NAME:
+        return False
+
+    if failure.message_id and _delivery_failure_already_logged(lead, failure.message_id):
+        return False
+
+    phone = normalize_manual_phone(failure.remote_phone) or failure.remote_phone
+    template_bit = f" ({failure.template_name})" if failure.template_name else ""
+    msg_id_bit = f" · {failure.message_id[:20]}" if failure.message_id else ""
+    remarks = (
+        f"{DELIVERY_FAILED_MARKER}{template_bit} to {phone}: "
+        f"{failure.error_message}{msg_id_bit}"
+    )
+    log = LeadConversationLog(
+        lead=lead,
+        conversation_date=(failure.timestamp or dj_timezone.now()).date(),
+        remarks=remarks[:4000],
+    )
+    log.save()
+    if failure.timestamp:
+        LeadConversationLog.objects.filter(pk=log.pk).update(created_at=failure.timestamp)
+
+    mark_failed(lead, failure.error_message)
+    return True
+
+
 def decode_webhook_body(request: HttpRequest) -> tuple[dict[str, Any], Optional[str]]:
     raw = request.body
     if not raw:
@@ -494,8 +592,8 @@ def process_whatsapp_webhook(request: HttpRequest) -> tuple[dict[str, Any], int]
     if decode_error:
         return {"status": "error", "detail": decode_error}, 400
 
-    messages = parse_whatsapp_webhook(payload)
-    if not messages:
+    messages, failures = parse_whatsapp_webhook(payload)
+    if not messages and not failures:
         return {"status": "success", "synced": 0}, 200
 
     synced = 0
@@ -508,4 +606,20 @@ def process_whatsapp_webhook(request: HttpRequest) -> tuple[dict[str, Any], int]
                 "Failed to sync WhatsApp webhook message for %s",
                 msg.remote_phone,
             )
-    return {"status": "success", "synced": synced}, 200
+
+    recorded_failures = 0
+    for item in failures:
+        try:
+            if sync_webhook_delivery_failure(item):
+                recorded_failures += 1
+        except Exception:
+            logger.exception(
+                "Failed to record WhatsApp delivery failure for %s",
+                item.remote_phone,
+            )
+
+    return {
+        "status": "success",
+        "synced": synced,
+        "delivery_failures": recorded_failures,
+    }, 200
