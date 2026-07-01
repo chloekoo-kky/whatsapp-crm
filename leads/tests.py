@@ -6,7 +6,7 @@ from django.test import Client, TestCase, override_settings
 from django.urls import reverse
 from django.db.models import Exists, OuterRef
 
-from leads.models import ChatMessage, Lead, LeadConversationLog, LeadGroup, WhatsAppScriptTemplate
+from leads.models import CategoryRule, ChatMessage, Lead, LeadConversationLog, LeadGroup, WhatsAppScriptTemplate
 from leads.chat_messages import record_inbound_chat_message, record_outbound_chat_message
 from leads.display import lead_whatsapp_active_chat, lead_whatsapp_dispatched
 from leads.views import _leads_qs_for_tab, _leads_tab_base_qs
@@ -1144,6 +1144,46 @@ class WhatsAppBatchScheduleTests(TestCase):
         lead.refresh_from_db()
         self.assertTrue(lead.whatsapp_batches.filter(pk=done.pk).exists())
 
+    def test_bulk_dequeue_removes_pending_leads_from_queue(self):
+        import json as _json
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        from leads.models import WhatsAppBatchSchedule
+
+        batch = WhatsAppBatchSchedule.objects.create(
+            scheduled_at=timezone.now() + timedelta(hours=2),
+        )
+        pending_a = self._make_pending_lead("BulkA")
+        pending_b = self._make_pending_lead("BulkB")
+        processing = self._make_pending_lead("Processing")
+        processing.whatsapp_status = Lead.WhatsappStatus.PROCESSING
+        processing.save(update_fields=["whatsapp_status"])
+        pending_a.whatsapp_batches.add(batch)
+        pending_b.whatsapp_batches.add(batch)
+
+        client = Client()
+        response = client.post(
+            reverse("leads_bulk_dequeue"),
+            data=_json.dumps({"ids": [pending_a.pk, pending_b.pk, processing.pk]}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["updated"], 2)
+        self.assertEqual(data["skipped"], 1)
+
+        pending_a.refresh_from_db()
+        pending_b.refresh_from_db()
+        processing.refresh_from_db()
+        self.assertEqual(pending_a.whatsapp_status, Lead.WhatsappStatus.IDLE)
+        self.assertEqual(pending_b.whatsapp_status, Lead.WhatsappStatus.IDLE)
+        self.assertEqual(processing.whatsapp_status, Lead.WhatsappStatus.PROCESSING)
+        self.assertFalse(pending_a.whatsapp_batches.filter(pk=batch.pk).exists())
+        self.assertFalse(pending_b.whatsapp_batches.filter(pk=batch.pk).exists())
+
     def test_bulk_assign_batch_skips_leads_already_in_pending_batch(self):
         import json as _json
         from datetime import timedelta
@@ -1454,67 +1494,93 @@ class ClinicUpdatePhoneTests(TestCase):
         mock_send.assert_not_called()
         trigger = json.loads(response["HX-Trigger"])
         self.assertNotIn("leadCardSink", trigger)
+        self.assertNotIn("leadCardDispatched", trigger)
 
-
-class BatchReportTests(TestCase):
-    def setUp(self):
+    def test_force_send_success_triggers_dispatched_and_sink(self):
+        from django.test import RequestFactory
         from django.utils import timezone
 
-        from leads.models import WhatsAppBatchSchedule
+        from leads.views import _force_send_grid_response
 
-        self.batch = WhatsAppBatchSchedule.objects.create(
-            scheduled_at=timezone.now(),
-            outbound_template_name="just_to_say_hi",
-            status=WhatsAppBatchSchedule.Status.COMPLETED,
-            sent_count=2,
+        self.lead.whatsapp_sent_at = timezone.now()
+        self.lead.whatsapp_status = Lead.WhatsappStatus.SENT
+        self.lead.save(update_fields=["whatsapp_sent_at", "whatsapp_status"])
+        request = RequestFactory().post(
+            "/",
+            data={"group_id": str(self.group.pk)},
         )
-        self.sent_a = Lead.objects.create(
+        response = _force_send_grid_response(
+            request,
+            self.lead,
+            ok=True,
+            sink_card=True,
+        )
+        trigger = json.loads(response["HX-Trigger"])
+        self.assertEqual(trigger["leadCardDispatched"], self.lead.pk)
+        self.assertEqual(trigger["leadCardSink"], self.lead.pk)
+        body = response.content.decode()
+        self.assertIn("hx-swap-oob", body)
+        self.assertIn("clinic-card--dispatched", body)
+
+
+class DailyReportTests(TestCase):
+    def setUp(self):
+        from datetime import datetime, time
+
+        from django.utils import timezone
+
+        from leads.whatsapp_service import campaign_timezone
+
+        self.tz = campaign_timezone()
+        self.today = timezone.now().astimezone(self.tz).date()
+        start = timezone.make_aware(datetime.combine(self.today, time.min), self.tz)
+        self.lead_sent = Lead.objects.create(
             name="Alpha Clinic",
             address="1 Main St",
             group=get_or_create_uncategorized_group(),
             phone_number="+60111111111",
             whatsapp_status=Lead.WhatsappStatus.SENT,
+            whatsapp_sent_at=start,
         )
-        self.sent_b = Lead.objects.create(
+        ChatMessage.objects.create(
+            lead=self.lead_sent,
+            body="Hi",
+            is_outbound=True,
+            template_name="say_hi",
+            created_at=start,
+        )
+        self.lead_reply = Lead.objects.create(
             name="Beta Clinic",
             address="2 Main St",
             group=get_or_create_uncategorized_group(),
-            phone_numbers=["+60222222222", "+60333333333"],
+            phone_number="+60222222222",
             whatsapp_status=Lead.WhatsappStatus.SENT,
         )
-        self.pending = Lead.objects.create(
-            name="Gamma Clinic",
-            address="3 Main St",
-            group=get_or_create_uncategorized_group(),
-            phone_number="+60444444444",
-            whatsapp_status=Lead.WhatsappStatus.PENDING,
+        ChatMessage.objects.create(
+            lead=self.lead_reply,
+            body="Hello back",
+            is_outbound=False,
+            created_at=start,
         )
-        self.sent_a.whatsapp_batches.add(self.batch)
-        self.sent_b.whatsapp_batches.add(self.batch)
-        self.pending.whatsapp_batches.add(self.batch)
 
-    def test_reports_page_lists_assigned_leads_for_batch(self):
+    def test_reports_page_shows_daily_dashboard(self):
         client = Client()
         response = client.get(
             reverse("reports"),
-            {"batch_id": self.batch.pk},
+            {"date": self.today.isoformat()},
         )
         self.assertEqual(response.status_code, 200)
         html = response.content.decode()
+        self.assertIn("Daily reports", html)
         self.assertIn("Alpha Clinic", html)
         self.assertIn("Beta Clinic", html)
-        self.assertIn("Gamma Clinic", html)
-        self.assertIn("+60111111111", html)
-        self.assertIn("+60222222222", html)
-        self.assertIn("+60444444444", html)
-        self.assertIn("First Message Sent", html)
-        self.assertIn("Pending Queue", html)
+        self.assertIn("First sends", html)
 
-    def test_batch_report_export_xlsx(self):
+    def test_daily_report_export_xlsx(self):
         client = Client()
         response = client.get(
-            reverse("batch_report_export_xlsx"),
-            {"batch_id": self.batch.pk},
+            reverse("daily_report_export_xlsx"),
+            {"date": self.today.isoformat()},
         )
         self.assertEqual(response.status_code, 200)
         self.assertIn(
@@ -1528,19 +1594,56 @@ class BatchReportTests(TestCase):
         wb = load_workbook(BytesIO(response.content))
         ws = wb.active
         rows = list(ws.iter_rows(values_only=True))
-        self.assertEqual(rows[3], ("Name", "Contact number", "Status"))
-        self.assertEqual(rows[4][0], "Alpha Clinic")
-        self.assertEqual(rows[4][1], "+60111111111")
-        self.assertEqual(rows[4][2], "First Message Sent")
-        self.assertEqual(rows[5][0], "Beta Clinic")
-        self.assertIn("+60222222222", rows[5][1])
-        self.assertIn("+60333333333", rows[5][1])
-        self.assertEqual(rows[5][2], "First Message Sent")
-        self.assertEqual(rows[6][0], "Gamma Clinic")
-        self.assertEqual(rows[6][1], "+60444444444")
-        self.assertEqual(rows[6][2], "Pending Queue")
+        header_idx = next(i for i, row in enumerate(rows) if row[0] == "Name")
+        self.assertEqual(
+            rows[header_idx],
+            ("Name", "Contact number", "First send today", "Outbound", "Inbound", "Status"),
+        )
+        names = {row[0] for row in rows[header_idx + 1 :]}
+        self.assertIn("Alpha Clinic", names)
+        self.assertIn("Beta Clinic", names)
 
-    def test_batch_report_export_requires_batch_id(self):
+
+class CategoryRuleManagementTests(TestCase):
+    def test_category_rules_page_lists_rules(self):
+        CategoryRule.objects.create(
+            match_phrase="dental",
+            category=Lead.Category.DENTAL,
+            priority=10,
+        )
         client = Client()
-        response = client.get(reverse("batch_report_export_xlsx"))
-        self.assertEqual(response.status_code, 400)
+        response = client.get(reverse("category_rules"))
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"dental", response.content)
+
+    def test_category_rule_save_and_delete(self):
+        client = Client()
+        create = client.post(
+            reverse("category_rule_save"),
+            data={
+                "match_phrase": "gym",
+                "category": Lead.Category.FITNESS,
+                "priority": "50",
+            },
+        )
+        self.assertEqual(create.status_code, 302)
+        rule = CategoryRule.objects.get(match_phrase="gym")
+        self.assertEqual(rule.category, Lead.Category.FITNESS)
+
+        update = client.post(
+            reverse("category_rule_save"),
+            data={
+                "id": str(rule.pk),
+                "match_phrase": "fitness",
+                "category": Lead.Category.FITNESS,
+                "priority": "20",
+            },
+        )
+        self.assertEqual(update.status_code, 302)
+        rule.refresh_from_db()
+        self.assertEqual(rule.match_phrase, "fitness")
+        self.assertEqual(rule.priority, 20)
+
+        delete = client.post(reverse("category_rule_delete", kwargs={"pk": rule.pk}))
+        self.assertEqual(delete.status_code, 302)
+        self.assertFalse(CategoryRule.objects.filter(pk=rule.pk).exists())

@@ -94,6 +94,20 @@
       }
     }
 
+    if (elt.classList.contains("lead-force-send-btn") && xhr) {
+      var forceTriggerHeader = xhr.getResponseHeader("HX-Trigger");
+      if (forceTriggerHeader) {
+        try {
+          var forceTriggers = JSON.parse(forceTriggerHeader);
+          if (forceTriggers.leadCardSink != null && window.__sinkLeadCard) {
+            window.__sinkLeadCard(forceTriggers.leadCardSink);
+          } else if (forceTriggers.leadCardDispatched != null && window.__applyLeadDispatchedChrome) {
+            window.__applyLeadDispatchedChrome(forceTriggers.leadCardDispatched);
+          }
+        } catch (forceParseErr) { /* ignore */ }
+      }
+    }
+
   });
 
   document.body.addEventListener("htmx:afterSwap", function (evt) {
@@ -178,54 +192,56 @@
 
   });
 
-  document.body.addEventListener("leadCardSink", function (evt) {
+  window.__htmxTriggerValue = function (detail, key) {
+    if (detail == null) return null;
+    if (typeof detail === "object") {
+      if (key && detail[key] != null) return detail[key];
+      if (detail.value != null) return detail.value;
+      if (detail.detail != null) return detail.detail;
+    }
+    return detail;
+  };
 
-    var id = evt.detail;
-
+  window.__applyLeadDispatchedChrome = function (id) {
     if (id == null) return;
-
     var cell = document.getElementById("lead-grid-cell-" + id);
-
-    var grid = document.getElementById("clinics-grid-inner");
-
-    if (cell && grid) {
-
+    if (cell) {
       cell.setAttribute("data-whatsapp-status", "sent");
-
       cell.setAttribute("data-whatsapp-dispatched", "1");
-
-      cell.classList.add("lead-card--sinking");
-
-      grid.appendChild(cell);
-
-      window.setTimeout(function () { cell.classList.remove("lead-card--sinking"); }, 320);
-
     }
-
     var row = document.querySelector('tr.clinic-row[data-clinic-id="' + id + '"]');
-
-    var tbody = document.getElementById("clinics-table-body");
-
-    if (row && tbody) {
-
-      row.setAttribute("data-whatsapp-dispatched", "1");
-
-      tbody.appendChild(row);
-
-    }
-
+    if (row) row.setAttribute("data-whatsapp-dispatched", "1");
     var card = document.querySelector('.clinic-card[data-clinic-id="' + id + '"]');
-
     if (card) {
-
       card.setAttribute("data-whatsapp-dispatched", "1");
-
       card.classList.add("clinic-card--dispatched", "border-2", "border-emerald-400", "hover:border-emerald-500");
-
       card.classList.remove("border", "border-slate-200/90", "hover:border-slate-300");
-
     }
+  };
 
+  window.__sinkLeadCard = function (id) {
+    if (id == null) return;
+    window.__applyLeadDispatchedChrome(id);
+    var cell = document.getElementById("lead-grid-cell-" + id);
+    var grid = document.getElementById("clinics-grid-inner");
+    if (cell && grid) {
+      cell.classList.add("lead-card--sinking");
+      grid.appendChild(cell);
+      window.setTimeout(function () { cell.classList.remove("lead-card--sinking"); }, 320);
+    }
+    var row = document.querySelector('tr.clinic-row[data-clinic-id="' + id + '"]');
+    var tbody = document.getElementById("clinics-table-body");
+    if (row && tbody) tbody.appendChild(row);
+  };
+
+  document.body.addEventListener("leadCardDispatched", function (evt) {
+    var id = window.__htmxTriggerValue(evt.detail, "leadCardDispatched");
+    window.__applyLeadDispatchedChrome(id);
+  });
+
+  document.body.addEventListener("leadCardSink", function (evt) {
+    var id = window.__htmxTriggerValue(evt.detail, "leadCardSink");
+    window.__sinkLeadCard(id);
   });
 
   window.__chatInboxPollTimer = null;

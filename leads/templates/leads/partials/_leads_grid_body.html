@@ -1,10 +1,6 @@
 {# Folder context (is_trash_view, is_uncategorized_view, is_queue_view, current_group_id) from dashboard / get_leads_table. #}
-{% load clinic_display %}
 {% for c in clinics %}
-  <div id="lead-grid-cell-{{ c.id }}" class="lead-card-container leads-funnel-grid__cell group/cell relative min-w-0" data-whatsapp-status="{{ c.whatsapp_status }}" data-awaiting-client-reply="{% if c|whatsapp_active_chat %}1{% else %}0{% endif %}" data-whatsapp-dispatched="{% if c|whatsapp_dispatched %}1{% else %}0{% endif %}">
-    {% include "leads/partials/_lead_grid_card.html" with c=c is_trash_view=is_trash_view|default:False is_uncategorized_view=is_uncategorized_view|default:False is_whatsapp_chats_view=is_whatsapp_chats_view|default:False is_queue_view=is_queue_view|default:False current_group_id=current_group_id %}
-    <p id="lead-junk-error-{{ c.id }}" class="mt-1 px-1 text-[10px] font-medium text-rose-700 empty:hidden" role="alert"></p>
-  </div>
+  {% include "leads/partials/_lead_grid_cell.html" with c=c is_trash_view=is_trash_view|default:False is_uncategorized_view=is_uncategorized_view|default:False is_whatsapp_chats_view=is_whatsapp_chats_view|default:False is_queue_view=is_queue_view|default:False current_group_id=current_group_id %}
 {% empty %}
 <p class="col-span-full py-12 text-center text-sm text-slate-500 md:col-span-2 lg:col-span-3">No leads yet. Run a hunt to import from Serper.</p>
 {% endfor %}

@@ -45,6 +45,7 @@
       const importFullBackupUrl = "{{ import_full_backup_url|escapejs }}" || "/leads/import/backup/";
       const bulkManualUrl = "{{ bulk_manual_url|escapejs }}" || "/leads/api/bulk-manual/";
       const bulkWhatsappQueueUrl = "{{ bulk_whatsapp_queue_url|escapejs }}" || "/leads/api/bulk-whatsapp-queue/";
+      const bulkDequeueUrl = "{{ bulk_dequeue_url|escapejs }}" || "/leads/api/bulk-dequeue/";
       const bulkAssignBatchUrl = "{{ bulk_assign_batch_url|escapejs }}" || "/leads/api/bulk-assign-batch/";
       const whatsappBatchesJsonUrl = "{{ whatsapp_batches_json_url|escapejs }}" || "/leads/ajax/whatsapp/batches/";
       const queueGroupTabId = "{{ queue_group.pk|escapejs }}";
@@ -894,17 +895,19 @@
         var onTrashTab = trashGroupTabId &&
           String(currentLeadGroupTabId) === String(trashGroupTabId);
 
-        // Queue → "Choose batch"; Trash → no bulk action; everything else → "Push to queue".
+        // Queue → "Choose batch" + "Remove from queue"; Trash → no bulk action; else → "Push to queue".
         var showQueueBtn = onLeadsPage && !onQueueTab && !onTrashTab;
         var showBatchBtn = onLeadsPage && onQueueTab;
+        var showDequeueBtn = onLeadsPage && onQueueTab;
 
-        var visible = n > 0 && onLeadsPage && (showQueueBtn || showBatchBtn);
+        var visible = n > 0 && onLeadsPage && (showQueueBtn || showBatchBtn || showDequeueBtn);
         dock.hidden = !visible;
         dock.setAttribute('aria-hidden', visible ? 'false' : 'true');
         dock.classList.toggle('bulk-action-dock--visible', visible);
 
         var queueBtn = document.getElementById('bulk-wa-queue-btn');
         var batchBtn = document.getElementById('bulk-choose-batch-btn');
+        var dequeueBtn = document.getElementById('bulk-dequeue-btn');
         // NOTE: the Tailwind `inline-flex` utility on these buttons overrides the
         // `[hidden]` UA rule, so toggling the `hidden` property alone won't hide
         // them. Force visibility via inline `display` (highest specificity).
@@ -915,6 +918,48 @@
         if (batchBtn) {
           batchBtn.hidden = !showBatchBtn;
           batchBtn.style.display = showBatchBtn ? '' : 'none';
+        }
+        if (dequeueBtn) {
+          dequeueBtn.hidden = !showDequeueBtn;
+          dequeueBtn.style.display = showDequeueBtn ? '' : 'none';
+        }
+      }
+
+      async function bulkDequeueSelectedFromQueue() {
+        var ids = getUniqueSelectedLeadIds();
+        if (!ids.length) return;
+        if (!window.confirm('Remove ' + ids.length + ' selected lead(s) from the WhatsApp queue?')) return;
+        var btn = document.getElementById('bulk-dequeue-btn');
+        if (btn) btn.disabled = true;
+        try {
+          var res = await fetch(bulkDequeueUrl, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-CSRFToken': getCsrfToken(),
+            },
+            body: JSON.stringify({ ids: ids }),
+          });
+          var data = await res.json();
+          if (!res.ok || !data.ok) {
+            throw new Error((data.detail && String(data.detail)) || ('HTTP ' + res.status));
+          }
+          var statusEl = document.getElementById('clinic-save-status');
+          if (statusEl) {
+            var msg = 'Removed ' + (data.updated || 0) + ' lead(s) from the queue.';
+            if (data.skipped) msg += ' ' + data.skipped + ' skipped (not pending).';
+            statusEl.textContent = msg;
+            statusEl.classList.remove('hidden');
+            window.setTimeout(function () { statusEl.classList.add('hidden'); }, 3200);
+          }
+          if (selectAll) selectAll.checked = false;
+          await switchLeadGroupTab(currentLeadGroupTabId, { force: true, skipHistory: true });
+        } catch (err) {
+          console.error(err);
+          window.alert((err && err.message) || 'Could not remove selected leads from the queue.');
+        } finally {
+          if (btn) btn.disabled = false;
         }
       }
 
@@ -961,6 +1006,10 @@
 
       document.getElementById('bulk-wa-queue-btn')?.addEventListener('click', function () {
         bulkPushSelectedToWhatsappQueue();
+      });
+
+      document.getElementById('bulk-dequeue-btn')?.addEventListener('click', function () {
+        bulkDequeueSelectedFromQueue();
       });
 
       // --- Choose batch (assign selected Queue leads to a WhatsApp batch) ---

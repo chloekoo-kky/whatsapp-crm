@@ -11,7 +11,7 @@ import html
 import json
 import logging
 from collections import Counter
-from datetime import datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from io import BytesIO
 from typing import Optional
 
@@ -21,7 +21,7 @@ from django.db.models.deletion import ProtectedError
 from django.db.models import Case, Count, Exists, Max, OuterRef, Prefetch, Subquery, Value, When, BooleanField
 from django.db.models.functions import Lower
 from django.http import HttpResponse, JsonResponse
-from django.shortcuts import get_object_or_404
+from django.shortcuts import get_object_or_404, redirect
 from django.template.loader import render_to_string
 from django.urls import reverse
 from django.utils import timezone as django_timezone
@@ -45,6 +45,7 @@ from leads.display import (
     whatsapp_me_url,
 )
 from leads.models import (
+    CategoryRule,
     ChainBrandStatus,
     ChatMessage,
     Lead,
@@ -421,6 +422,7 @@ class LeadDashboardView(ListView):
         context["import_full_backup_url"] = reverse("import_full_backup")
         context["bulk_manual_url"] = reverse("leads_bulk_manual")
         context["bulk_whatsapp_queue_url"] = reverse("leads_bulk_whatsapp_queue")
+        context["bulk_dequeue_url"] = reverse("leads_bulk_dequeue")
         context["bulk_assign_batch_url"] = reverse("leads_bulk_assign_batch")
         context["whatsapp_batches_json_url"] = reverse("whatsapp_batches_json")
         context["get_leads_table_url"] = reverse("get_leads_table")
@@ -750,102 +752,156 @@ def _whatsapp_activity_entries(limit: int = 10, *, request=None) -> list[dict]:
     return entries[:limit]
 
 
-def _batch_report_choices() -> list[dict]:
-    """Dropdown options for the batch-assigned leads report."""
+def _daily_report_day_bounds(report_date: date) -> tuple[datetime, datetime]:
+    """Inclusive start / exclusive end for a calendar day in campaign timezone."""
     tz = campaign_timezone()
-    choices = []
-    qs = (
-        WhatsAppBatchSchedule.objects.annotate(
-            assigned_leads=Count("leads"),
+    start = django_timezone.make_aware(datetime.combine(report_date, time.min), tz)
+    return start, start + timedelta(days=1)
+
+
+def _resolve_daily_report_date(request) -> date:
+    raw = (request.GET.get("date") or "").strip()
+    tz = campaign_timezone()
+    today = django_timezone.now().astimezone(tz).date()
+    if raw:
+        try:
+            return datetime.strptime(raw, "%Y-%m-%d").date()
+        except ValueError:
+            pass
+    return today
+
+
+def _daily_report_summary(report_date: date) -> dict:
+    start, end = _daily_report_day_bounds(report_date)
+    first_sends = Lead.objects.filter(
+        whatsapp_sent_at__gte=start,
+        whatsapp_sent_at__lt=end,
+    ).count()
+    outbound = ChatMessage.objects.filter(
+        is_outbound=True,
+        created_at__gte=start,
+        created_at__lt=end,
+    ).count()
+    inbound = ChatMessage.objects.filter(
+        is_outbound=False,
+        created_at__gte=start,
+        created_at__lt=end,
+    ).count()
+    log_entries = LeadConversationLog.objects.filter(
+        conversation_date=report_date,
+    ).count()
+    failed_logs = LeadConversationLog.objects.filter(
+        conversation_date=report_date,
+        remarks__icontains=DELIVERY_FAILED_MARKER,
+    ).count()
+    return {
+        "first_sends": first_sends,
+        "outbound_messages": outbound,
+        "inbound_replies": inbound,
+        "log_entries": log_entries,
+        "delivery_failures": failed_logs,
+    }
+
+
+def _daily_report_leads(report_date: date) -> list[Lead]:
+    start, end = _daily_report_day_bounds(report_date)
+    lead_ids: set[int] = set()
+    lead_ids.update(
+        Lead.objects.filter(
+            whatsapp_sent_at__gte=start,
+            whatsapp_sent_at__lt=end,
+        ).values_list("pk", flat=True)
+    )
+    lead_ids.update(
+        ChatMessage.objects.filter(
+            created_at__gte=start,
+            created_at__lt=end,
+        ).values_list("lead_id", flat=True)
+    )
+    lead_ids.update(
+        LeadConversationLog.objects.filter(
+            conversation_date=report_date,
+        ).values_list("lead_id", flat=True)
+    )
+    if not lead_ids:
+        return []
+    outbound_counts = {
+        row["lead_id"]: row["c"]
+        for row in ChatMessage.objects.filter(
+            lead_id__in=lead_ids,
+            is_outbound=True,
+            created_at__gte=start,
+            created_at__lt=end,
         )
-        .order_by("-scheduled_at", "-id")
-    )
-    for batch in qs:
-        local = batch.scheduled_at.astimezone(tz)
-        choices.append(
-            {
-                "id": batch.pk,
-                "label": (
-                    f"{local:%b %d, %Y · %I:%M %p} · {batch.outbound_template_name} "
-                    f"· {batch.assigned_leads} lead(s) · {batch.get_status_display()}"
-                ),
-            }
+        .values("lead_id")
+        .annotate(c=Count("id"))
+    }
+    inbound_counts = {
+        row["lead_id"]: row["c"]
+        for row in ChatMessage.objects.filter(
+            lead_id__in=lead_ids,
+            is_outbound=False,
+            created_at__gte=start,
+            created_at__lt=end,
         )
-    return choices
-
-
-def _resolve_batch_report_id(request) -> int | None:
-    raw = (request.GET.get("batch_id") or "").strip()
-    if raw.isdigit():
-        batch_id = int(raw)
-        if WhatsAppBatchSchedule.objects.filter(pk=batch_id).exists():
-            return batch_id
-    batch = (
-        WhatsAppBatchSchedule.objects.annotate(assigned_leads=Count("leads"))
-        .filter(assigned_leads__gt=0)
-        .order_by("-scheduled_at", "-id")
-        .first()
+        .values("lead_id")
+        .annotate(c=Count("id"))
+    }
+    first_send_ids = set(
+        Lead.objects.filter(
+            pk__in=lead_ids,
+            whatsapp_sent_at__gte=start,
+            whatsapp_sent_at__lt=end,
+        ).values_list("pk", flat=True)
     )
-    if batch:
-        return batch.pk
-    latest = WhatsAppBatchSchedule.objects.order_by("-scheduled_at", "-id").first()
-    return latest.pk if latest else None
-
-
-def _batch_report_leads_qs(batch_id: int):
-    return (
-        Lead.objects.filter(whatsapp_batches__pk=batch_id)
-        .order_by("name", "pk")
-        .distinct()
+    leads = list(
+        Lead.objects.filter(pk__in=lead_ids).order_by("name", "pk")
     )
+    for lead in leads:
+        phones = lead_phone_list(lead)
+        lead.report_phone_display = " · ".join(phones) if phones else ""
+        lead.report_outbound_count = outbound_counts.get(lead.pk, 0)
+        lead.report_inbound_count = inbound_counts.get(lead.pk, 0)
+        lead.report_first_send_today = lead.pk in first_send_ids
+    return leads
 
 
-def _batch_report_context(request) -> dict:
-    batch_id = _resolve_batch_report_id(request)
-    batch = None
-    report_leads: list[Lead] = []
-    if batch_id is not None:
-        batch = WhatsAppBatchSchedule.objects.filter(pk=batch_id).first()
-        if batch:
-            report_leads = list(_batch_report_leads_qs(batch_id))
-            for lead in report_leads:
-                phones = lead_phone_list(lead)
-                lead.report_phone_display = " · ".join(phones) if phones else ""
+def _daily_report_context(request) -> dict:
+    report_date = _resolve_daily_report_date(request)
+    tz = campaign_timezone()
+    today = django_timezone.now().astimezone(tz).date()
+    report_leads = _daily_report_leads(report_date)
     return {
         "nav_active": "reports",
-        "batch_choices": _batch_report_choices(),
-        "selected_batch": batch,
-        "selected_batch_id": batch.pk if batch else None,
+        "report_date": report_date,
+        "report_date_iso": report_date.isoformat(),
+        "report_date_prev": (report_date - timedelta(days=1)).isoformat(),
+        "report_date_next": (report_date + timedelta(days=1)).isoformat(),
+        "report_is_today": report_date == today,
+        "report_summary": _daily_report_summary(report_date),
         "report_leads": report_leads,
         "report_lead_count": len(report_leads),
-        "batch_report_export_url": reverse("batch_report_export_xlsx"),
-        "campaign_timezone": str(campaign_timezone()),
+        "daily_report_export_url": reverse("daily_report_export_xlsx"),
+        "campaign_timezone": str(tz),
     }
 
 
 @method_decorator(ensure_csrf_cookie, name="dispatch")
 class ReportsView(TemplateView):
-    """Batch report — all leads assigned to a chosen WhatsApp batch."""
+    """Daily outreach dashboard — messages and replies grouped by calendar day."""
 
     template_name = "leads/reports.html"
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        context.update(_batch_report_context(self.request))
+        context.update(_daily_report_context(self.request))
         return context
 
 
 @require_GET
-def batch_report_export_xlsx(request):
-    """Download name + phone for leads assigned to a WhatsApp batch."""
-    raw = (request.GET.get("batch_id") or "").strip()
-    if not raw.isdigit():
-        return HttpResponse(
-            "batch_id is required.",
-            status=400,
-            content_type="text/plain; charset=utf-8",
-        )
-    batch = get_object_or_404(WhatsAppBatchSchedule, pk=int(raw))
+def daily_report_export_xlsx(request):
+    """Download daily outreach summary for a chosen calendar day."""
+    report_date = _resolve_daily_report_date(request)
     try:
         from openpyxl import Workbook
     except ImportError:
@@ -855,20 +911,29 @@ def batch_report_export_xlsx(request):
             content_type="text/plain; charset=utf-8",
         )
 
+    summary = _daily_report_summary(report_date)
+    report_leads = _daily_report_leads(report_date)
     wb = Workbook()
     ws = wb.active
-    ws.title = "Batch report"
-    local = batch.scheduled_at.astimezone(campaign_timezone())
-    ws.append(["Batch", f"{local:%Y-%m-%d %H:%M} · {batch.outbound_template_name}"])
-    ws.append(["Batch status", batch.get_status_display()])
+    ws.title = "Daily report"
+    ws.append(["Date", report_date.isoformat()])
+    ws.append(["Timezone", str(campaign_timezone())])
     ws.append([])
-    ws.append(["Name", "Contact number", "Status"])
-    for lead in _batch_report_leads_qs(batch.pk).iterator(chunk_size=400):
-        phones = lead_phone_list(lead)
+    ws.append(["First messages sent", summary["first_sends"]])
+    ws.append(["Outbound messages", summary["outbound_messages"]])
+    ws.append(["Client replies", summary["inbound_replies"]])
+    ws.append(["Conversation log entries", summary["log_entries"]])
+    ws.append(["Delivery failures", summary["delivery_failures"]])
+    ws.append([])
+    ws.append(["Name", "Contact number", "First send today", "Outbound", "Inbound", "Status"])
+    for lead in report_leads:
         ws.append(
             [
                 lead.name,
-                " ; ".join(phones) if phones else "",
+                lead.report_phone_display,
+                "Yes" if lead.report_first_send_today else "",
+                lead.report_outbound_count,
+                lead.report_inbound_count,
                 lead.get_whatsapp_status_display(),
             ]
         )
@@ -876,13 +941,69 @@ def batch_report_export_xlsx(request):
     buf = BytesIO()
     wb.save(buf)
     buf.seek(0)
-    fname = f"batch_{batch.pk}_assigned_leads_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
+    fname = f"daily_report_{report_date.isoformat()}_{datetime.now().strftime('%H%M')}.xlsx"
     resp = HttpResponse(
         buf.getvalue(),
         content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
     resp["Content-Disposition"] = f'attachment; filename="{fname}"'
     return resp
+
+
+@method_decorator(ensure_csrf_cookie, name="dispatch")
+class CategoryRulesView(TemplateView):
+    """In-app CRUD for name-matching category rules (replaces Django admin for rules)."""
+
+    template_name = "leads/categories.html"
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context["nav_active"] = "categories"
+        context["category_rules"] = CategoryRule.objects.order_by("priority", "id")
+        context["category_choices"] = Lead.Category.choices
+        return context
+
+
+@csrf_protect
+@require_POST
+def category_rule_save(request):
+    """Create or update a category matching rule."""
+    rule_id = (request.POST.get("id") or "").strip()
+    match_phrase = (request.POST.get("match_phrase") or "").strip()[:200]
+    category = (request.POST.get("category") or "").strip().lower()
+    allowed = {c[0] for c in Lead.Category.choices}
+    if not match_phrase:
+        return HttpResponse("Match phrase is required.", status=400)
+    if category not in allowed:
+        return HttpResponse("Invalid category.", status=400)
+    try:
+        priority = int((request.POST.get("priority") or "100").strip())
+    except ValueError:
+        priority = 100
+    priority = max(0, min(priority, 32767))
+
+    if rule_id.isdigit():
+        rule = get_object_or_404(CategoryRule, pk=int(rule_id))
+        rule.match_phrase = match_phrase
+        rule.category = category
+        rule.priority = priority
+        rule.save(update_fields=["match_phrase", "category", "priority"])
+    else:
+        CategoryRule.objects.create(
+            match_phrase=match_phrase,
+            category=category,
+            priority=priority,
+        )
+    return redirect("category_rules")
+
+
+@csrf_protect
+@require_POST
+def category_rule_delete(request, pk: int):
+    """Delete a category matching rule."""
+    rule = get_object_or_404(CategoryRule, pk=pk)
+    rule.delete()
+    return redirect("category_rules")
 
 
 @method_decorator(ensure_csrf_cookie, name="dispatch")
@@ -1342,8 +1463,10 @@ def _force_send_grid_response(
         ctx["lead"] = enriched[0]
 
     trigger = {"waRowFlash": lead.pk, "funnelMetricsRefresh": True}
-    if ok and sink_card and not ctx.get("is_queue_view"):
-        trigger["leadCardSink"] = lead.pk
+    if ok and not ctx.get("is_queue_view"):
+        trigger["leadCardDispatched"] = lead.pk
+        if sink_card:
+            trigger["leadCardSink"] = lead.pk
     if ok and ctx.get("is_queue_view"):
         response = _lead_grid_cell_fade_out_response(request, lead.pk)
         response["HX-Trigger"] = json.dumps(trigger)
@@ -1356,6 +1479,23 @@ def _force_send_grid_response(
         ctx,
         request=request,
     )
+    if ok and enriched and not ctx.get("is_queue_view"):
+        cell_ctx = {
+            "c": enriched[0],
+            "oob": True,
+            **{k: ctx[k] for k in (
+                "is_trash_view",
+                "is_uncategorized_view",
+                "is_whatsapp_chats_view",
+                "is_queue_view",
+                "current_group_id",
+            ) if k in ctx},
+        }
+        html += render_to_string(
+            "leads/partials/_lead_grid_cell.html",
+            cell_ctx,
+            request=request,
+        )
     response = HttpResponse(html)
     response["HX-Trigger"] = json.dumps(trigger)
     response["HX-Retarget"] = f"#lead-bottom-actions-{lead.pk}"
@@ -1495,6 +1635,45 @@ def leads_bulk_whatsapp_queue(request):
 
     updated = enqueue_leads_for_whatsapp(id_list)
     return JsonResponse({"ok": True, "updated": updated, "action": "queue"})
+
+
+@csrf_protect
+@require_POST
+def leads_bulk_dequeue(request):
+    """Remove selected pending leads from the WhatsApp outreach queue."""
+    try:
+        body = json.loads(request.body.decode() or "{}")
+    except json.JSONDecodeError:
+        return JsonResponse({"ok": False, "detail": "Invalid JSON body."}, status=400)
+
+    ids = body.get("ids")
+    if not isinstance(ids, list) or not ids:
+        return JsonResponse({"ok": False, "detail": "ids must be a non-empty list."}, status=400)
+
+    id_list: list[int] = []
+    for x in ids:
+        try:
+            id_list.append(int(x))
+        except (TypeError, ValueError):
+            continue
+    if not id_list:
+        return JsonResponse({"ok": False, "detail": "No valid ids."}, status=400)
+
+    dequeued_ids = list(
+        Lead.objects.filter(
+            pk__in=id_list,
+            whatsapp_status=Lead.WhatsappStatus.PENDING,
+        ).values_list("pk", flat=True)
+    )
+    updated = Lead.objects.filter(pk__in=dequeued_ids).update(
+        whatsapp_status=Lead.WhatsappStatus.IDLE,
+        whatsapp_last_error="",
+    )
+    clear_pending_batch_memberships(dequeued_ids)
+    skipped = len(id_list) - updated
+    return JsonResponse(
+        {"ok": True, "updated": updated, "skipped": skipped, "action": "dequeue"}
+    )
 
 
 @csrf_protect
