@@ -2,7 +2,7 @@
 {% if msg.is_outbound %}
 <div class="flex justify-end">
   <div class="max-w-[85%] rounded-2xl rounded-br-md bg-gradient-to-br from-sky-500 to-sky-600 px-3.5 py-2.5 text-sm leading-relaxed text-white shadow-sm">
-    {% if msg.template_name %}
+    {% if msg|chat_outbound_is_template %}
     <p class="text-[10px] font-semibold uppercase tracking-wide text-sky-100/90">Template · {{ msg.template_name }}</p>
     {% else %}
     <p class="text-[10px] font-semibold uppercase tracking-wide text-sky-100/90">You</p>

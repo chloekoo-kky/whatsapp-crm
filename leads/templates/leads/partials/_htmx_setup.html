@@ -188,15 +188,43 @@
 
     var grid = document.getElementById("clinics-grid-inner");
 
-    if (!cell || !grid) return;
+    if (cell && grid) {
 
-    cell.setAttribute("data-whatsapp-status", "pending");
+      cell.setAttribute("data-whatsapp-status", "sent");
 
-    cell.classList.add("lead-card--sinking");
+      cell.setAttribute("data-whatsapp-dispatched", "1");
 
-    grid.appendChild(cell);
+      cell.classList.add("lead-card--sinking");
 
-    window.setTimeout(function () { cell.classList.remove("lead-card--sinking"); }, 320);
+      grid.appendChild(cell);
+
+      window.setTimeout(function () { cell.classList.remove("lead-card--sinking"); }, 320);
+
+    }
+
+    var row = document.querySelector('tr.clinic-row[data-clinic-id="' + id + '"]');
+
+    var tbody = document.getElementById("clinics-table-body");
+
+    if (row && tbody) {
+
+      row.setAttribute("data-whatsapp-dispatched", "1");
+
+      tbody.appendChild(row);
+
+    }
+
+    var card = document.querySelector('.clinic-card[data-clinic-id="' + id + '"]');
+
+    if (card) {
+
+      card.setAttribute("data-whatsapp-dispatched", "1");
+
+      card.classList.add("clinic-card--dispatched", "border-2", "border-emerald-400", "hover:border-emerald-500");
+
+      card.classList.remove("border", "border-slate-200/90", "hover:border-slate-300");
+
+    }
 
   });
 

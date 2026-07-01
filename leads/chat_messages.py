@@ -38,6 +38,33 @@ def _parse_agent_remarks(remarks: str) -> str:
     return (match.group(1).strip() if match else text).strip()
 
 
+def lead_already_received_template(lead: Lead, template_name: str) -> bool:
+    """True when this lead already has an outbound row for the template name."""
+    from leads.whatsapp_service import normalize_outbound_template_name
+
+    name = normalize_outbound_template_name(template_name)
+    if not name:
+        return False
+    return ChatMessage.objects.filter(
+        lead=lead,
+        is_outbound=True,
+        template_name=name,
+    ).exists()
+
+
+def outbound_message_is_template(msg: ChatMessage) -> bool:
+    """True only for Meta template sends, not Business-app free-text replies."""
+    name = (msg.template_name or "").strip()
+    if not name:
+        return False
+    from leads.whatsapp_service import meta_template_preview_body
+
+    expected = meta_template_preview_body(name).strip()
+    if not expected:
+        return False
+    return msg.body.strip() == expected
+
+
 def record_outbound_chat_message(
     lead: Lead,
     *,
@@ -171,19 +198,12 @@ def _inbound_body_exists(lead: Lead, body: str, *, created_at) -> bool:
 
 
 def _repair_outbound_template_rows(lead: Lead) -> None:
-    """Fix outbound rows mis-tagged as templates when body is free text."""
-    from leads.whatsapp_service import meta_template_preview_body
-
+    """Clear mis-tagged template labels on free-text Business app / agent replies."""
     for msg in ChatMessage.objects.filter(lead=lead, is_outbound=True):
-        name = (msg.template_name or "").strip()
-        if not name:
+        if outbound_message_is_template(msg):
             continue
-        expected = meta_template_preview_body(name).strip()
-        if not expected:
-            continue
-        if msg.body.strip() == expected:
-            continue
-        ChatMessage.objects.filter(pk=msg.pk).update(template_name="")
+        if (msg.template_name or "").strip():
+            ChatMessage.objects.filter(pk=msg.pk).update(template_name="")
 
 
 @transaction.atomic
@@ -203,29 +223,19 @@ def sync_chat_messages_from_logs(lead: Lead) -> None:
             continue
 
         if OFFICIAL_API_MARKER in remarks:
-            outbound = (
-                ChatMessage.objects.filter(lead=lead, is_outbound=True)
-                .order_by("created_at", "id")
-                .first()
-            )
-            tpl = (outbound.template_name if outbound else "") or default_template
+            # mark_sent and YCloud webhooks already persist template rows — do not
+            # rewrite the first outbound message on every drawer open.
+            if ChatMessage.objects.filter(lead=lead, is_outbound=True).exists():
+                continue
+            tpl = default_template
             preview = meta_template_preview_body(tpl)
-            if outbound is None:
-                msg = record_outbound_chat_message(
-                    lead,
-                    template_name=tpl,
-                    body=preview,
-                    created_at=log.created_at,
-                )
-                ChatMessage.objects.filter(pk=msg.pk).update(created_at=log.created_at)
-            else:
-                updates: dict[str, object] = {}
-                if preview and outbound.body.strip() != preview.strip():
-                    updates["body"] = preview
-                if tpl and not outbound.template_name:
-                    updates["template_name"] = tpl
-                if updates:
-                    ChatMessage.objects.filter(pk=outbound.pk).update(**updates)
+            msg = record_outbound_chat_message(
+                lead,
+                template_name=tpl,
+                body=preview,
+                created_at=log.created_at,
+            )
+            ChatMessage.objects.filter(pk=msg.pk).update(created_at=log.created_at)
             continue
 
         if "[WhatsApp · client]" in remarks:
@@ -252,6 +262,12 @@ def sync_chat_messages_from_logs(lead: Lead) -> None:
             if not body:
                 continue
             if mid and outbound_chat_message_exists(lead, mid):
+                continue
+            if not mid and ChatMessage.objects.filter(
+                lead=lead,
+                is_outbound=True,
+                body=body,
+            ).exists():
                 continue
             msg = upsert_outbound_chat_message(
                 lead,

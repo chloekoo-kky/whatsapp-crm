@@ -81,6 +81,7 @@ from leads.whatsapp_service import (
     sync_meta_message_templates_to_config,
     primary_phone,
     queue_counts,
+    record_whatsapp_activity_warning,
     reset_campaign_metrics_snapshot,
     send_free_text_to_lead,
     send_text_to_lead,
@@ -301,8 +302,8 @@ def _lead_chat_indicator_map(qs) -> dict[str, dict[str, bool]]:
 
 
 def _leads_tab_sink_order(qs):
-    """Order leads chronologically by creation time (newest first)."""
-    return qs.order_by("-created_at", "id")
+    """Respect manual ``display_order`` (higher = lower on page); newest first among ties."""
+    return qs.order_by("display_order", "-created_at", "id")
 
 
 def _leads_qs_for_tab(group_id_key: Optional[str], search_record_id: Optional[int]):
@@ -1331,7 +1332,9 @@ def _lead_grid_cell_fade_out_response(request, lead_id: int) -> HttpResponse:
     return response
 
 
-def _force_send_grid_response(request, lead: Lead, *, ok: bool) -> HttpResponse:
+def _force_send_grid_response(
+    request, lead: Lead, *, ok: bool, sink_card: bool = False
+) -> HttpResponse:
     """HTMX response after Send now: remove queue row on success, else refresh actions."""
     ctx = _lead_grid_action_context(request, lead)
     enriched, _ = _dashboard_prepare_clinics(_leads_tab_base_qs().filter(pk=lead.pk))
@@ -1339,6 +1342,8 @@ def _force_send_grid_response(request, lead: Lead, *, ok: bool) -> HttpResponse:
         ctx["lead"] = enriched[0]
 
     trigger = {"waRowFlash": lead.pk, "funnelMetricsRefresh": True}
+    if ok and sink_card and not ctx.get("is_queue_view"):
+        trigger["leadCardSink"] = lead.pk
     if ok and ctx.get("is_queue_view"):
         response = _lead_grid_cell_fade_out_response(request, lead.pk)
         response["HX-Trigger"] = json.dumps(trigger)
@@ -1377,6 +1382,15 @@ def whatsapp_force_send(request, pk: int):
         lead.save(update_fields=["whatsapp_status", "whatsapp_last_error"])
         return _force_send_grid_response(request, lead, ok=False)
 
+    template_name = get_force_send_template_name()
+    from leads.chat_messages import lead_already_received_template
+
+    if lead_already_received_template(lead, template_name):
+        detail = f"Template '{template_name}' was already sent to this lead."
+        record_whatsapp_activity_warning(detail, lead=lead)
+        return _force_send_grid_response(request, lead, ok=False)
+
+    was_unsent = lead.whatsapp_sent_at is None
     lead.whatsapp_status = Lead.WhatsappStatus.PROCESSING
     lead.whatsapp_last_error = ""
     lead.save(update_fields=["whatsapp_status", "whatsapp_last_error"])
@@ -1388,14 +1402,19 @@ def whatsapp_force_send(request, pk: int):
     ok, detail = send_text_to_lead(
         lead,
         priority=True,
-        template_name=get_force_send_template_name(),
+        template_name=template_name,
     )
     if not ok and is_dispatch_blocked_detail(detail):
         lead.whatsapp_status = Lead.WhatsappStatus.PENDING
         lead.whatsapp_last_error = detail[:4000]
         lead.save(update_fields=["whatsapp_status", "whatsapp_last_error"])
     lead.refresh_from_db()
-    return _force_send_grid_response(request, lead, ok=ok)
+    return _force_send_grid_response(
+        request,
+        lead,
+        ok=ok,
+        sink_card=ok and was_unsent,
+    )
 
 
 @require_GET

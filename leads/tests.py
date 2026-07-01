@@ -624,6 +624,50 @@ class YCloudWebhookTests(TestCase):
         self.assertNotEqual(chat.body, "wrong draft copy")
         self.assertEqual(chat.meta_message_id, "wamid.TEMPLATE123")
 
+    def test_lead_already_received_template(self):
+        from leads.chat_messages import lead_already_received_template
+
+        groups = ensure_pipeline_system_groups()
+        lead = Lead.objects.create(
+            name="Dup Template Clinic",
+            address="1 Main St",
+            phone_number="+60123456789",
+            group=groups["uncategorized"],
+        )
+        self.assertFalse(lead_already_received_template(lead, "say_hi"))
+        ChatMessage.objects.create(
+            lead=lead,
+            body="Hi~",
+            is_outbound=True,
+            template_name="say_hi",
+        )
+        self.assertTrue(lead_already_received_template(lead, "say_hi"))
+        self.assertFalse(lead_already_received_template(lead, "say_hi_en"))
+
+    def test_mark_sent_sinks_display_order_on_first_send(self):
+        from leads.whatsapp_service import mark_sent
+
+        groups = ensure_pipeline_system_groups()
+        group = LeadGroup.objects.create(name="Sink Folder", sort_order=60)
+        top = Lead.objects.create(
+            name="Top Lead",
+            address="1 Main St",
+            phone_number="+60111111111",
+            group=group,
+            display_order=1,
+        )
+        lead = Lead.objects.create(
+            name="Sink Lead",
+            address="2 Main St",
+            phone_number="+60222222222",
+            group=group,
+            display_order=2,
+        )
+        mark_sent(lead, "+60126336429", template_name="say_hi")
+        lead.refresh_from_db()
+        top.refresh_from_db()
+        self.assertGreater(lead.display_order, top.display_order)
+
     @override_settings(WHATSAPP_FROM_NUMBER="+60126336429")
     def test_parse_ycloud_delivery_failure(self):
         from leads.whatsapp_webhook import DELIVERY_FAILED_MARKER, parse_ycloud_webhook
@@ -735,6 +779,55 @@ class YCloudWebhookTests(TestCase):
         self.assertEqual(len(messages), 1)
         self.assertEqual(messages[0].body, "Thanks, we open at 9am tomorrow.")
         self.assertEqual(messages[0].template_name, "")
+
+    @override_settings(WHATSAPP_FROM_NUMBER="+60126336429")
+    def test_sync_logs_do_not_retag_free_text_as_template(self):
+        from django.utils import timezone
+
+        from leads.chat_messages import chat_messages_for_lead, record_outbound_chat_message
+        from leads.models import WhatsAppConfig
+        from leads.whatsapp_service import OFFICIAL_API_MARKER
+
+        groups = ensure_pipeline_system_groups()
+        lead = Lead.objects.create(
+            name="Retag Clinic",
+            address="1 Main St",
+            phone_number="+60123456789",
+            group=groups["uncategorized"],
+            whatsapp_status=Lead.WhatsappStatus.SENT,
+        )
+        config = WhatsAppConfig.load()
+        config.outbound_template_name = "say_hi"
+        config.meta_message_templates = [
+            {
+                "name": "say_hi",
+                "status": "APPROVED",
+                "language": "en_US",
+                "body": "Hi~ are you open today? may I know your business hours?",
+            },
+        ]
+        config.save(update_fields=["outbound_template_name", "meta_message_templates"])
+
+        record_outbound_chat_message(
+            lead,
+            template_name="say_hi",
+            body="Hi~ are you open today? may I know your business hours?",
+        )
+        record_outbound_chat_message(
+            lead,
+            template_name="",
+            body="We open at 9am — reply from Business app",
+        )
+        LeadConversationLog.objects.create(
+            lead=lead,
+            conversation_date=timezone.now().date(),
+            remarks=f"{OFFICIAL_API_MARKER} Template queued by YCloud for 6012XXXX789",
+        )
+
+        messages = chat_messages_for_lead(lead)
+        free_text = [m for m in messages if "9am" in m.body]
+        self.assertEqual(len(free_text), 1)
+        self.assertEqual(free_text[0].template_name, "")
 
     @override_settings(WHATSAPP_FROM_NUMBER="+60126336529")
     def test_ycloud_webhook_post_syncs_inbound(self):
@@ -1334,6 +1427,33 @@ class ClinicUpdatePhoneTests(TestCase):
             ok=True,
         )
         self.assertIn("lead-force-send-btn", response.content.decode())
+
+    @patch("leads.views.send_text_to_lead")
+    def test_force_send_skips_duplicate_template(self, mock_send):
+        from leads.models import WhatsAppConfig
+
+        config = WhatsAppConfig.load()
+        config.force_send_template_name = "say_hi"
+        config.meta_message_templates = [
+            {"name": "say_hi", "status": "APPROVED", "language": "en_US", "body": "Hi"},
+        ]
+        config.save(update_fields=["force_send_template_name", "meta_message_templates"])
+        ChatMessage.objects.create(
+            lead=self.lead,
+            body="Hi~ are you open today?",
+            is_outbound=True,
+            template_name="say_hi",
+        )
+        client = Client()
+        with self.settings(WHATSAPP_FROM_NUMBER="+60126336429", YCLOUD_API_KEY="test"):
+            response = client.post(
+                reverse("whatsapp_force_send", kwargs={"pk": self.lead.pk}),
+                data={"group_id": str(self.group.pk)},
+            )
+        self.assertEqual(response.status_code, 200)
+        mock_send.assert_not_called()
+        trigger = json.loads(response["HX-Trigger"])
+        self.assertNotIn("leadCardSink", trigger)
 
 
 class BatchReportTests(TestCase):

@@ -28,6 +28,7 @@ from leads.pipeline import (
     QUEUE_GROUP_NAME,
     TRASH_GROUP_NAME,
     UNCATEGORIZED_GROUP_NAME,
+    sink_lead_display_order,
 )
 from leads.ycloud_service import (
     build_template_payload,
@@ -722,18 +723,21 @@ def mark_sent(
     delivery_status: str = "",
 ) -> None:
     now = timezone.now()
+    is_first_send = lead.whatsapp_sent_at is None
     lead.whatsapp_status = Lead.WhatsappStatus.SENT
     lead.whatsapp_sent_at = now
     lead.whatsapp_instance_id = phone_number_id
     lead.whatsapp_last_error = ""
-    lead.save(
-        update_fields=[
-            "whatsapp_status",
-            "whatsapp_sent_at",
-            "whatsapp_instance_id",
-            "whatsapp_last_error",
-        ]
-    )
+    update_fields = [
+        "whatsapp_status",
+        "whatsapp_sent_at",
+        "whatsapp_instance_id",
+        "whatsapp_last_error",
+    ]
+    if is_first_send:
+        lead.display_order = sink_lead_display_order(lead)
+        update_fields.append("display_order")
+    lead.save(update_fields=update_fields)
     remark = build_official_dispatch_remark(
         lead,
         meta_message_id=meta_message_id,

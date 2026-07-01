@@ -57,6 +57,13 @@ def whatsapp_dispatched(clinic):
 
 
 @register.filter
+def chat_outbound_is_template(msg):
+    from leads.chat_messages import outbound_message_is_template
+
+    return outbound_message_is_template(msg)
+
+
+@register.filter
 def chat_time(value):
     """Render chat timestamps in the campaign timezone (not UTC)."""
     if value is None:
