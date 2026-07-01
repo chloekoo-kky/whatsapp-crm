@@ -300,15 +300,19 @@ def _parse_ycloud_business_outbound(
     remote_phone = normalize_manual_phone(msg_to)
     if not remote_phone:
         return []
+    msg_type = (message.get("type") or "").strip().lower()
     text_body = _extract_text_or_placeholder(message)
     if not text_body:
-        tpl_name = _extract_template_name(message)
-        if tpl_name:
-            from leads.whatsapp_service import meta_template_preview_body
+        if msg_type == "template":
+            tpl_name = _extract_template_name(message)
+            if tpl_name:
+                from leads.whatsapp_service import meta_template_preview_body
 
-            text_body = meta_template_preview_body(tpl_name)
+                text_body = meta_template_preview_body(tpl_name)
     if not text_body:
         return []
+
+    template_name = _extract_template_name(message) if msg_type == "template" else ""
 
     return [
         ParsedWebhookMessage(
@@ -319,7 +323,7 @@ def _parse_ycloud_business_outbound(
             timestamp=_iso_timestamp(
                 message.get("sendTime") or message.get("createTime") or message.get("updateTime")
             ),
-            template_name=_extract_template_name(message),
+            template_name=template_name,
         )
     ]
 

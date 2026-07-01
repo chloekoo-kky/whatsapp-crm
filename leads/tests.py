@@ -711,6 +711,30 @@ class YCloudWebhookTests(TestCase):
         self.assertEqual(response.json()["synced"], 1)
         chat = ChatMessage.objects.get(lead=lead, is_outbound=True)
         self.assertEqual(chat.body, "Coex phone reply logged")
+        self.assertEqual(chat.template_name, "")
+
+    @override_settings(WHATSAPP_FROM_NUMBER="+60126336429")
+    def test_business_app_free_text_not_labeled_as_template(self):
+        from leads.chat_messages import chat_messages_for_lead, upsert_outbound_chat_message
+
+        groups = ensure_pipeline_system_groups()
+        lead = Lead.objects.create(
+            name="Free Text Clinic",
+            address="1 Main St",
+            phone_number="+60123456789",
+            group=groups["uncategorized"],
+            whatsapp_status=Lead.WhatsappStatus.SENT,
+        )
+        upsert_outbound_chat_message(
+            lead,
+            body="Thanks, we open at 9am tomorrow.",
+            meta_message_id="wamid.FREE_TEXT_ECHO",
+            template_name="",
+        )
+        messages = chat_messages_for_lead(lead)
+        self.assertEqual(len(messages), 1)
+        self.assertEqual(messages[0].body, "Thanks, we open at 9am tomorrow.")
+        self.assertEqual(messages[0].template_name, "")
 
     @override_settings(WHATSAPP_FROM_NUMBER="+60126336529")
     def test_ycloud_webhook_post_syncs_inbound(self):

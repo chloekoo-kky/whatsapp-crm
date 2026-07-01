@@ -9,6 +9,7 @@ from django.db import transaction
 from leads.models import ChatMessage, Lead, LeadConversationLog
 
 _CLIENT_LOG_RE = re.compile(r"^\[WhatsApp · client\]\s*(.*)$", re.DOTALL)
+_AGENT_LOG_RE = re.compile(r"^\[WhatsApp · agent\]\s*(.*)$", re.DOTALL)
 _WA_ID_PREFIX = "wa-id:"
 
 
@@ -25,6 +26,15 @@ def _parse_client_remarks(remarks: str) -> str:
         parts = text.split("\n", 1)
         text = parts[1].strip() if len(parts) > 1 else ""
     match = _CLIENT_LOG_RE.match(text)
+    return (match.group(1).strip() if match else text).strip()
+
+
+def _parse_agent_remarks(remarks: str) -> str:
+    text = (remarks or "").strip()
+    if text.startswith(_WA_ID_PREFIX):
+        parts = text.split("\n", 1)
+        text = parts[1].strip() if len(parts) > 1 else ""
+    match = _AGENT_LOG_RE.match(text)
     return (match.group(1).strip() if match else text).strip()
 
 
@@ -47,8 +57,10 @@ def record_outbound_chat_message(
         name = template_name.strip()
     if body is not None:
         snapshot = body.strip()
+    elif name:
+        snapshot = meta_template_preview_body(name).strip()
     else:
-        snapshot = meta_template_preview_body(name or whatsapp_template_name()).strip()
+        snapshot = ""
     msg = ChatMessage.objects.create(
         lead=lead,
         body=snapshot,
@@ -89,8 +101,11 @@ def upsert_outbound_chat_message(
             updates: dict[str, object] = {}
             if snapshot and existing.body.strip() != snapshot:
                 updates["body"] = snapshot
-            if tpl and existing.template_name != tpl:
-                updates["template_name"] = tpl
+            if tpl:
+                if existing.template_name != tpl:
+                    updates["template_name"] = tpl
+            elif snapshot and existing.template_name:
+                updates["template_name"] = ""
             if updates:
                 ChatMessage.objects.filter(pk=existing.pk).update(**updates)
                 for field, value in updates.items():
@@ -102,7 +117,7 @@ def upsert_outbound_chat_message(
 
     return record_outbound_chat_message(
         lead,
-        template_name=tpl or None,
+        template_name=tpl,
         body=snapshot or None,
         meta_message_id=mid,
         created_at=created_at,
@@ -156,7 +171,7 @@ def _inbound_body_exists(lead: Lead, body: str, *, created_at) -> bool:
 
 
 def _repair_outbound_template_rows(lead: Lead) -> None:
-    """Align stored outbound copy with synced Meta template catalog."""
+    """Fix outbound rows mis-tagged as templates when body is free text."""
     from leads.whatsapp_service import meta_template_preview_body
 
     for msg in ChatMessage.objects.filter(lead=lead, is_outbound=True):
@@ -164,8 +179,11 @@ def _repair_outbound_template_rows(lead: Lead) -> None:
         if not name:
             continue
         expected = meta_template_preview_body(name).strip()
-        if expected and msg.body.strip() != expected:
-            ChatMessage.objects.filter(pk=msg.pk).update(body=expected)
+        if not expected:
+            continue
+        if msg.body.strip() == expected:
+            continue
+        ChatMessage.objects.filter(pk=msg.pk).update(template_name="")
 
 
 @transaction.atomic
@@ -223,6 +241,23 @@ def sync_chat_messages_from_logs(lead: Lead) -> None:
                 lead,
                 body=body,
                 meta_message_id=mid,
+                created_at=log.created_at,
+            )
+            ChatMessage.objects.filter(pk=msg.pk).update(created_at=log.created_at)
+            continue
+
+        if "[WhatsApp · agent]" in remarks:
+            mid = _meta_id_from_remarks(remarks)
+            body = _parse_agent_remarks(remarks)
+            if not body:
+                continue
+            if mid and outbound_chat_message_exists(lead, mid):
+                continue
+            msg = upsert_outbound_chat_message(
+                lead,
+                body=body,
+                meta_message_id=mid,
+                template_name="",
                 created_at=log.created_at,
             )
             ChatMessage.objects.filter(pk=msg.pk).update(created_at=log.created_at)
