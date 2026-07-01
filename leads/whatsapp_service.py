@@ -425,6 +425,38 @@ def primary_phone(lead: Lead) -> str:
     return ""
 
 
+def reset_lead_whatsapp_after_phone_change(
+    lead: Lead,
+    *,
+    old_phones: list[str],
+    new_phones: list[str],
+) -> bool:
+    """Clear prior dispatch state when the contact number changes so Send now works again."""
+    if old_phones == new_phones:
+        return False
+
+    from leads.models import ChatMessage
+
+    in_queue = bool(lead.group and lead.group.name == QUEUE_GROUP_NAME)
+    if lead.whatsapp_status == Lead.WhatsappStatus.PROCESSING:
+        lead.whatsapp_status = (
+            Lead.WhatsappStatus.PENDING if in_queue else Lead.WhatsappStatus.IDLE
+        )
+    elif lead.whatsapp_status in (
+        Lead.WhatsappStatus.SENT,
+        Lead.WhatsappStatus.FAILED,
+    ):
+        lead.whatsapp_status = (
+            Lead.WhatsappStatus.PENDING if in_queue else Lead.WhatsappStatus.IDLE
+        )
+
+    lead.whatsapp_sent_at = None
+    lead.whatsapp_last_error = ""
+    lead.whatsapp_instance_id = ""
+    ChatMessage.objects.filter(lead=lead).delete()
+    return True
+
+
 def _mask_phone_for_activity_log(phone: str) -> str:
     digits = "".join(ch for ch in (phone or "") if ch.isdigit())
     if len(digits) <= 6:

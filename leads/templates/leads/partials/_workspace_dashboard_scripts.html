@@ -492,6 +492,31 @@
             if (d.phone_slot_inner_grid) slot.outerHTML = d.phone_slot_inner_grid;
           });
 
+          if (d.whatsapp_status != null) {
+            row.setAttribute('data-whatsapp-status', String(d.whatsapp_status));
+            var gridCell = document.getElementById('lead-grid-cell-' + id);
+            if (gridCell) gridCell.setAttribute('data-whatsapp-status', String(d.whatsapp_status));
+          }
+          if (d.whatsapp_dispatched != null) {
+            var dispatched = d.whatsapp_dispatched ? '1' : '0';
+            row.setAttribute('data-whatsapp-dispatched', dispatched);
+            var gridCellDisp = document.getElementById('lead-grid-cell-' + id);
+            if (gridCellDisp) gridCellDisp.setAttribute('data-whatsapp-dispatched', dispatched);
+            if (row.classList.contains('clinic-card')) {
+              row.classList.toggle('clinic-card--dispatched', !!d.whatsapp_dispatched);
+              row.classList.toggle('border-2', !!d.whatsapp_dispatched);
+              row.classList.toggle('border-emerald-400', !!d.whatsapp_dispatched);
+              row.classList.toggle('hover:border-emerald-500', !!d.whatsapp_dispatched);
+              row.classList.toggle('border', !d.whatsapp_dispatched);
+              row.classList.toggle('border-slate-200/90', !d.whatsapp_dispatched);
+              row.classList.toggle('hover:border-slate-300', !d.whatsapp_dispatched);
+            }
+          }
+          if (d.grid_bottom_actions_html) {
+            var bottomActions = document.getElementById('lead-bottom-actions-' + id);
+            if (bottomActions) bottomActions.outerHTML = d.grid_bottom_actions_html;
+          }
+
           var copyPhone = '';
           if (Array.isArray(d.phone_numbers) && d.phone_numbers.length) {
             copyPhone = d.phone_numbers.join(' ; ');

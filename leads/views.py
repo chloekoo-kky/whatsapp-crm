@@ -76,6 +76,7 @@ from leads.whatsapp_service import (
     meta_template_choices_for_ui,
     get_force_send_template_name,
     normalize_outbound_template_name,
+    reset_lead_whatsapp_after_phone_change,
     sync_meta_message_templates_to_config,
     primary_phone,
     queue_counts,
@@ -332,9 +333,30 @@ def _leads_qs_for_tab(group_id_key: Optional[str], search_record_id: Optional[in
     return _leads_tab_sink_order(qs)
 
 
+def _folder_context_for_group(grp: LeadGroup) -> dict:
+    return {
+        "current_group_name": grp.name,
+        "current_group_id": grp.pk,
+        "is_trash_view": grp.name == TRASH_GROUP_NAME,
+        "is_uncategorized_view": grp.name == UNCATEGORIZED_GROUP_NAME,
+        "is_queue_view": grp.name == QUEUE_GROUP_NAME,
+        "is_whatsapp_chats_view": grp.name == WHATSAPP_CHATS_GROUP_NAME,
+        "force_send_template_name": get_force_send_template_name(),
+    }
+
+
 def _lead_grid_action_context(request, lead: Lead) -> dict:
     """Template context for grid card bottom action partials."""
-    return {"lead": lead, **_active_folder_context(request)}
+    gid_raw = (
+        request.GET.get("group_id") or request.POST.get("group_id") or ""
+    ).strip().lower()
+    if gid_raw.isdigit():
+        ctx = _active_folder_context(request)
+    elif lead.group_id:
+        ctx = _folder_context_for_group(lead.group)
+    else:
+        ctx = _active_folder_context(request)
+    return {"lead": lead, **ctx}
 
 
 def _active_folder_context(request) -> dict:
@@ -345,15 +367,7 @@ def _active_folder_context(request) -> dict:
     if gid_raw.isdigit():
         grp = LeadGroup.objects.filter(pk=int(gid_raw)).first()
         if grp:
-            return {
-                "current_group_name": grp.name,
-                "current_group_id": grp.pk,
-                "is_trash_view": grp.name == TRASH_GROUP_NAME,
-                "is_uncategorized_view": grp.name == UNCATEGORIZED_GROUP_NAME,
-                "is_queue_view": grp.name == QUEUE_GROUP_NAME,
-                "is_whatsapp_chats_view": grp.name == WHATSAPP_CHATS_GROUP_NAME,
-                "force_send_template_name": get_force_send_template_name(),
-            }
+            return _folder_context_for_group(grp)
     uncategorized = get_or_create_uncategorized_group()
     return {
         "current_group_name": UNCATEGORIZED_GROUP_NAME,
@@ -672,6 +686,16 @@ def _batch_schedule_card_context(*, request=None, message: str = "", ok: bool = 
     }
 
 
+def _normalize_activity_remark(message: str) -> str:
+    text = (message or "").strip()
+    if not text:
+        return text
+    return text.replace(
+        "Template successfully delivered to",
+        "Template accepted by YCloud for",
+    )
+
+
 def _whatsapp_activity_entries(limit: int = 10, *, request=None) -> list[dict]:
     if request is not None and _activity_log_suppress_active(request):
         return []
@@ -683,7 +707,7 @@ def _whatsapp_activity_entries(limit: int = 10, *, request=None) -> list[dict]:
         logs = logs.filter(created_at__gt=cleared_after)
     logs = logs[:limit]
     for log in logs:
-        remarks = (log.remarks or "").strip()
+        remarks = _normalize_activity_remark((log.remarks or "").strip())
         is_guard = GATEWAY_GUARD_LOG_PREFIX in remarks
         kind = "warning" if is_guard else "dispatch"
         timestamp = _activity_timestamp_hms(log.created_at)
@@ -705,34 +729,6 @@ def _whatsapp_activity_entries(limit: int = 10, *, request=None) -> list[dict]:
                 "badge_class": "bg-amber-900 text-amber-200"
                 if is_guard
                 else "bg-emerald-900 text-emerald-200",
-            }
-        )
-
-    failed = Lead.objects.none()
-    if cleared_after is None:
-        failed = (
-            Lead.objects.filter(whatsapp_status=Lead.WhatsappStatus.FAILED)
-            .order_by("-id")[:limit]
-        )
-    for lead in failed:
-        err = (lead.whatsapp_last_error or "Dispatch failed").strip()
-        timestamp = _activity_timestamp_hms(django_timezone.now())
-        kind = "failed"
-        entries.append(
-            {
-                "sort_ts": float(lead.id),
-                "when": timestamp,
-                "kind": kind,
-                "lead_name": lead.name,
-                "message": err[:240],
-                "display_line": _activity_display_line(
-                    kind=kind,
-                    timestamp=timestamp,
-                    lead_name=lead.name,
-                    message=err[:240],
-                    lead=lead,
-                ),
-                "badge_class": "bg-rose-900 text-rose-200",
             }
         )
 
@@ -975,7 +971,7 @@ def whatsapp_activity_log(request):
         "true",
         "yes",
     )
-    live_refresh = connected and not config.is_paused
+    live_refresh = connected
     if _activity_log_suppress_active(request):
         activity = []
     else:
@@ -2274,14 +2270,14 @@ def _actions_cell_html_grid(_lead: Lead) -> str:
     return ""
 
 
-def _clinic_edit_payload(lead: Lead) -> dict:
+def _clinic_edit_payload(lead: Lead, request=None) -> dict:
     """Shared JSON shape for PATCH lead and incremental dashboard DOM updates."""
     brand_n = _same_brand_row_count(lead)
     branches_html = _branches_line_inner_html(lead, brand_n)
     cat = lead.category
     phones = lead_phone_list(lead)
     primary = phones[0] if phones else ""
-    return {
+    payload = {
         "ok": True,
         "id": lead.pk,
         "name": lead.name,
@@ -2302,6 +2298,8 @@ def _clinic_edit_payload(lead: Lead) -> dict:
         "location_count_estimate": lead.location_count_estimate,
         "same_brand_count": brand_n,
         "whatsapp_draft": lead.whatsapp_draft or "",
+        "whatsapp_status": lead.whatsapp_status,
+        "whatsapp_dispatched": lead_whatsapp_dispatched(lead),
         "card_title": clinic_card_title(lead),
         "whatsapp_me_url": whatsapp_me_url(lead.phone_number or ""),
         "name_cell_html": _name_cell_html(lead),
@@ -2312,6 +2310,13 @@ def _clinic_edit_payload(lead: Lead) -> dict:
         "type_html": _category_badges_html(lead),
         "branches_line_html": branches_html,
     }
+    if request is not None:
+        payload["grid_bottom_actions_html"] = render_to_string(
+            "leads/partials/_lead_grid_bottom_actions.html",
+            _lead_grid_action_context(request, lead),
+            request=request,
+        )
+    return payload
 
 
 @csrf_protect
@@ -2335,7 +2340,11 @@ def clinic_update(request, pk: int):
         return JsonResponse({"detail": "Invalid category."}, status=400)
 
     lead.name = name[:255]
+    old_phones = lead_phone_list(lead)
     phones = _normalize_phone_numbers_body(body)
+    reset_lead_whatsapp_after_phone_change(
+        lead, old_phones=old_phones, new_phones=phones
+    )
     lead.phone_numbers = phones
     lead.phone_number = phones[0][:64] if phones else ""
     lead.address = (body.get("address") or "").strip()
@@ -2371,7 +2380,7 @@ def clinic_update(request, pk: int):
     sync_chain_flags_for_name(lead.name)
 
     lead.refresh_from_db()
-    return JsonResponse(_clinic_edit_payload(lead))
+    return JsonResponse(_clinic_edit_payload(lead, request=request))
 
 
 @csrf_protect

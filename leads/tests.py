@@ -1184,6 +1184,53 @@ class YCloudWabaResolveTests(TestCase):
         self.assertEqual(waba, "1478974178167699")
 
 
+class ClinicUpdatePhoneTests(TestCase):
+    def setUp(self):
+        groups = ensure_pipeline_system_groups()
+        self.group = LeadGroup.objects.create(name="Test Folder", sort_order=50)
+        self.lead = Lead.objects.create(
+            name="Phone Change Clinic",
+            address="1 Main St",
+            phone_number="+60123456789",
+            phone_numbers=["+60123456789"],
+            group=self.group,
+            whatsapp_status=Lead.WhatsappStatus.SENT,
+        )
+        ChatMessage.objects.create(
+            lead=self.lead,
+            body="Hi",
+            is_outbound=True,
+            template_name="say_hi",
+        )
+
+    def test_clinic_update_phone_resets_whatsapp_dispatch_state(self):
+        client = Client()
+        response = client.patch(
+            reverse("clinic_update", kwargs={"pk": self.lead.pk}),
+            data=json.dumps(
+                {
+                    "name": self.lead.name,
+                    "phone_numbers": ["+60198765432"],
+                    "address": self.lead.address,
+                    "category": "unknown",
+                }
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["phone_numbers"], ["+60198765432"])
+        self.assertEqual(data["whatsapp_status"], Lead.WhatsappStatus.IDLE)
+        self.assertFalse(data["whatsapp_dispatched"])
+        self.assertIn("lead-force-send-btn", data["grid_bottom_actions_html"])
+
+        self.lead.refresh_from_db()
+        self.assertEqual(self.lead.phone_number, "+60198765432")
+        self.assertEqual(self.lead.whatsapp_status, Lead.WhatsappStatus.IDLE)
+        self.assertIsNone(self.lead.whatsapp_sent_at)
+        self.assertFalse(ChatMessage.objects.filter(lead=self.lead).exists())
+
+
 class BatchReportTests(TestCase):
     def setUp(self):
         from django.utils import timezone

@@ -2,11 +2,11 @@
   id="live-activity-log-panel"
   class="flex h-full min-h-[20rem] flex-col"
   data-wa-connected="{% if gateway_status == 'CONNECTED' %}1{% else %}0{% endif %}"
-  data-wa-paused="{% if config.is_paused %}1{% else %}0{% endif %}"
+  data-wa-paused="0"
   data-gateway-status="{{ gateway_status }}"
   {% if suppress_polling %}data-wa-poll-suppressed="1"{% endif %}
   hx-get="{% url 'get_live_activity_logs' %}?fragment=list{% if gateway_status == 'CONNECTED' %}&connected=1{% endif %}"
-  {% if not suppress_polling and not config.is_paused and gateway_status == 'CONNECTED' %}data-wa-poll-eligible="1"{% endif %}
+  {% if not suppress_polling and gateway_status == 'CONNECTED' %}data-wa-poll-eligible="1"{% endif %}
   hx-target="#live-activity-log-list"
   hx-swap="innerHTML"{% if oob %} hx-swap-oob="true"{% endif %}>
   {% if gateway_status == 'CONNECTED' %}

@@ -87,7 +87,6 @@
     if (!isWhatsappWorkspaceVisible()) return false;
     if (!isWaActivityLogPollingEnabled()) return false;
     if (panel.getAttribute("data-wa-poll-suppressed") === "1") return false;
-    if (panel.getAttribute("data-wa-paused") !== "0") return false;
     return panel.getAttribute("data-gateway-status") === "CONNECTED";
   }
 
@@ -99,14 +98,10 @@
       el.className = "text-[10px] text-slate-500";
       return;
     }
-    var paused = panel.getAttribute("data-wa-paused") === "1";
     var connected = panel.getAttribute("data-gateway-status") === "CONNECTED";
     var enabled = isWaActivityLogPollingEnabled();
     var visible = isWhatsappWorkspaceVisible();
-    if (paused) {
-      el.textContent = "paused — polling off";
-      el.className = "text-[10px] text-amber-400/90";
-    } else if (!visible) {
+    if (!visible) {
       el.textContent = "polling off";
       el.className = "text-[10px] text-slate-500";
     } else if (!enabled) {
