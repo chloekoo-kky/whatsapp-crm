@@ -15,9 +15,9 @@
 
   hx-indicator="this"
 
-  title="Send now"
+  title="Send now ({{ force_send_template_name|default:'template' }})"
 
-  aria-label="Send now">
+  aria-label="Send now using {{ force_send_template_name|default:'template' }} template">
 
   <span aria-hidden="true">⚡</span>
 

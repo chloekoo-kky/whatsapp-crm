@@ -15,6 +15,7 @@ from leads.views import (
     whatsapp_batches_json,
     leads_bulk_assign_batch,
     whatsapp_refresh_meta_templates,
+    save_force_send_template,
     whatsapp_force_send,
     whatsapp_pending_count,
     bulk_action_by_group,
@@ -107,6 +108,11 @@ urlpatterns = [
         "leads/ajax/whatsapp/templates/refresh/",
         whatsapp_refresh_meta_templates,
         name="whatsapp_refresh_meta_templates",
+    ),
+    path(
+        "leads/ajax/whatsapp/force-send-template/",
+        save_force_send_template,
+        name="save_force_send_template",
     ),
     path(
         "leads/ajax/whatsapp/script-template/",

@@ -304,11 +304,15 @@ def sync_meta_message_templates_to_config() -> tuple[int, str | None]:
     active = (config.outbound_template_name or "").strip()
     if active not in catalog_names:
         config.outbound_template_name = _default_template_from_catalog(catalog)
+    force_send = (config.force_send_template_name or "").strip()
+    if force_send and force_send not in catalog_names:
+        config.force_send_template_name = ""
     config.save(
         update_fields=[
             "meta_message_templates",
             "meta_templates_synced_at",
             "outbound_template_name",
+            "force_send_template_name",
         ]
     )
     return len(catalog), None
@@ -369,6 +373,15 @@ def get_active_config_template_name() -> str:
     """Active outbound template from ``WhatsAppConfig`` (default ``just_to_say_hi``)."""
     config = WhatsAppConfig.load()
     return normalize_outbound_template_name(config.outbound_template_name)
+
+
+def get_force_send_template_name() -> str:
+    """Template for the Send now (⚡) button; falls back to ``outbound_template_name``."""
+    config = WhatsAppConfig.load()
+    raw = (config.force_send_template_name or "").strip()
+    if raw:
+        return normalize_outbound_template_name(raw)
+    return get_active_config_template_name()
 
 
 def meta_template_preview_body(template_name: str | None = None) -> str:
@@ -602,9 +615,14 @@ def record_whatsapp_activity_warning(message: str, *, lead: Optional[Lead] = Non
     )
 
 
-def build_official_dispatch_remark(lead: Lead) -> str:
+def build_official_dispatch_remark(lead: Lead, *, meta_message_id: str = "") -> str:
     phone = _mask_phone_for_activity_log(primary_phone(lead))
-    return f"{OFFICIAL_API_MARKER} Template successfully delivered to {phone}"
+    remark = f"{OFFICIAL_API_MARKER} Template accepted by YCloud for {phone}"
+    msg_id = (meta_message_id or "").strip()
+    if msg_id:
+        short_id = msg_id if len(msg_id) <= 20 else f"{msg_id[:17]}…"
+        remark = f"{remark} · {short_id}"
+    return remark
 
 
 def queue_counts() -> dict[str, int]:
@@ -656,6 +674,7 @@ def mark_sent(
     *,
     priority: bool = False,
     meta_message_id: str = "",
+    template_name: str | None = None,
 ) -> None:
     now = timezone.now()
     lead.whatsapp_status = Lead.WhatsappStatus.SENT
@@ -670,7 +689,7 @@ def mark_sent(
             "whatsapp_last_error",
         ]
     )
-    remark = build_official_dispatch_remark(lead)
+    remark = build_official_dispatch_remark(lead, meta_message_id=meta_message_id)
     if priority:
         remark = f"Priority Force Trigger — {remark}"
     LeadConversationLog.objects.create(
@@ -678,10 +697,13 @@ def mark_sent(
         conversation_date=now.date(),
         remarks=remark,
     )
+    selected_template = normalize_outbound_template_name(
+        template_name or get_active_config_template_name()
+    )
     record_outbound_chat_message(
         lead,
-        template_name=whatsapp_template_name(),
-        body=build_message_body(lead),
+        template_name=selected_template,
+        body=build_message_body(lead) or meta_template_preview_body(selected_template),
         meta_message_id=meta_message_id,
     )
 
@@ -731,11 +753,13 @@ def send_text_to_lead(
         return False, detail
 
     meta_message_id = message_id_from_response(data)
+    selected_template = str(payload.get("template", {}).get("name") or "").strip()
     mark_sent(
         lead,
         from_number,
         priority=priority,
         meta_message_id=meta_message_id,
+        template_name=selected_template or template_name,
     )
     return True, ""
 

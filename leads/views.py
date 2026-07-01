@@ -74,6 +74,7 @@ from leads.whatsapp_service import (
     meta_access_token,
     meta_template_preview_body,
     meta_template_choices_for_ui,
+    get_force_send_template_name,
     normalize_outbound_template_name,
     sync_meta_message_templates_to_config,
     primary_phone,
@@ -351,6 +352,7 @@ def _active_folder_context(request) -> dict:
                 "is_uncategorized_view": grp.name == UNCATEGORIZED_GROUP_NAME,
                 "is_queue_view": grp.name == QUEUE_GROUP_NAME,
                 "is_whatsapp_chats_view": grp.name == WHATSAPP_CHATS_GROUP_NAME,
+                "force_send_template_name": get_force_send_template_name(),
             }
     uncategorized = get_or_create_uncategorized_group()
     return {
@@ -360,6 +362,7 @@ def _active_folder_context(request) -> dict:
         "is_uncategorized_view": True,
         "is_queue_view": False,
         "is_whatsapp_chats_view": False,
+        "force_send_template_name": get_force_send_template_name(),
     }
 
 
@@ -613,6 +616,10 @@ def _whatsapp_dashboard_context(*, request=None) -> dict:
         "meta_template_choices": meta_template_choices_for_ui(),
         "meta_templates_synced_at": config.meta_templates_synced_at,
         "active_template_preview_body": meta_template_preview_body(),
+        "force_send_template_name": get_force_send_template_name(),
+        "force_send_template_preview_body": meta_template_preview_body(
+            get_force_send_template_name()
+        ),
         "weekday_choices": WHATSAPP_WEEKDAY_CHOICES,
         "allowed_days_set": set(config.normalized_allowed_days()),
         "campaign_timezone": str(campaign_timezone()),
@@ -1240,12 +1247,53 @@ def whatsapp_refresh_meta_templates(request):
         {**context, "oob": True},
         request=request,
     )
+    force_send_oob = render_to_string(
+        "leads/partials/_force_send_template_settings.html",
+        {**context, "oob": True},
+        request=request,
+    )
     card_oob = render_to_string(
         "leads/partials/_whatsapp_script_templates_section.html",
         {**context, "oob": True},
         request=request,
     )
-    return HttpResponse(toast_html + field_oob + card_oob)
+    return HttpResponse(toast_html + field_oob + force_send_oob + card_oob)
+
+
+@csrf_protect
+@require_POST
+def save_force_send_template(request):
+    """HTMX: persist the Meta template used by Send now (⚡) on group folder cards."""
+    from leads.whatsapp_service import validate_outbound_template_name
+
+    template_name = normalize_outbound_template_name(
+        request.POST.get("force_send_template_name")
+    )
+    valid, error = validate_outbound_template_name(template_name)
+    if not valid:
+        toast_html = render_to_string(
+            "leads/partials/_whatsapp_config_toast.html",
+            {"ok": False, "message": error},
+            request=request,
+        )
+        return HttpResponse(toast_html, status=400)
+
+    config = WhatsAppConfig.load()
+    config.force_send_template_name = template_name
+    config.save(update_fields=["force_send_template_name"])
+
+    context = _whatsapp_dashboard_context(request=request)
+    toast_html = render_to_string(
+        "leads/partials/_whatsapp_config_toast.html",
+        {"message": f"Send now template set to {template_name}."},
+        request=request,
+    )
+    settings_oob = render_to_string(
+        "leads/partials/_force_send_template_settings.html",
+        {**context, "oob": True},
+        request=request,
+    )
+    return HttpResponse(toast_html + settings_oob)
 
 
 @csrf_protect
@@ -1327,7 +1375,11 @@ def whatsapp_force_send(request, pk: int):
         f"\n[TRACKING DETECTED] whatsapp_force_send initiating Meta dispatch "
         f"for lead #{lead.pk} ({lead.name})\n"
     )
-    ok, detail = send_text_to_lead(lead, priority=True)
+    ok, detail = send_text_to_lead(
+        lead,
+        priority=True,
+        template_name=get_force_send_template_name(),
+    )
     if not ok and is_dispatch_blocked_detail(detail):
         lead.whatsapp_status = Lead.WhatsappStatus.PENDING
         lead.whatsapp_last_error = detail[:4000]

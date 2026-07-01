@@ -990,6 +990,30 @@ class WhatsAppMetaTemplateSyncTests(TestCase):
         )
         self.assertEqual(payload["template"]["language"]["code"], "en_US")
 
+    def test_get_force_send_template_name_falls_back_to_outbound(self):
+        from leads.models import WhatsAppConfig
+        from leads.whatsapp_service import get_force_send_template_name
+
+        config = WhatsAppConfig.load()
+        config.meta_message_templates = [
+            {"name": "say_hi", "status": "APPROVED", "language": "en_US", "body": "Hi"},
+            {"name": "say_hi_en", "status": "APPROVED", "language": "en", "body": "Hello"},
+        ]
+        config.outbound_template_name = "say_hi"
+        config.force_send_template_name = ""
+        config.save(
+            update_fields=[
+                "meta_message_templates",
+                "outbound_template_name",
+                "force_send_template_name",
+            ]
+        )
+        self.assertEqual(get_force_send_template_name(), "say_hi")
+
+        config.force_send_template_name = "say_hi_en"
+        config.save(update_fields=["force_send_template_name"])
+        self.assertEqual(get_force_send_template_name(), "say_hi_en")
+
     def test_known_meta_template_names_requires_synced_catalog(self):
         from leads.models import WhatsAppConfig
         from leads.whatsapp_service import known_meta_template_names

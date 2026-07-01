@@ -335,6 +335,12 @@ class WhatsAppConfig(models.Model):
         default="just_to_say_hi",
         help_text="Meta-approved template name used for outbound first-touch dispatch.",
     )
+    force_send_template_name = models.CharField(
+        max_length=64,
+        blank=True,
+        default="",
+        help_text="Meta template used by the Send now (⚡) button on group folder cards.",
+    )
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
