@@ -186,34 +186,23 @@ def whatsapp_me_path(phone: str) -> str:
 
 
 def category_badge_html(category: str) -> str:
-    """Tailwind pill HTML for a ``Lead.Category`` value (server-side list/grid and JSON patches)."""
-    from leads.models import Lead
+    """Tailwind pill HTML for a lead category slug (server-side list/grid and JSON patches)."""
+    from leads.category_types import UNKNOWN_SLUG, category_label_for
 
-    t = (category or Lead.Category.UNKNOWN).strip().lower()
-    labels = {
-        Lead.Category.GP: "GP",
-        Lead.Category.AESTHETIC: "Aesthetic",
-        Lead.Category.DENTAL: "Dental",
-        Lead.Category.FITNESS: "Fitness",
-        Lead.Category.CAFE: "Café / F&B",
-        Lead.Category.RETAIL: "Retail",
-        Lead.Category.SERVICE: "Service",
-        Lead.Category.INVALID: "Invalid",
-        Lead.Category.UNKNOWN: "Unknown",
-    }
+    t = (category or UNKNOWN_SLUG).strip().lower()
     palette = {
-        Lead.Category.GP: ("bg-sky-100", "text-sky-900"),
-        Lead.Category.AESTHETIC: ("bg-fuchsia-100", "text-fuchsia-900"),
-        Lead.Category.DENTAL: ("bg-teal-100", "text-teal-900"),
-        Lead.Category.FITNESS: ("bg-violet-100", "text-violet-900"),
-        Lead.Category.CAFE: ("bg-amber-100", "text-amber-950"),
-        Lead.Category.RETAIL: ("bg-lime-100", "text-lime-900"),
-        Lead.Category.SERVICE: ("bg-indigo-100", "text-indigo-900"),
-        Lead.Category.INVALID: ("bg-red-100", "text-red-900"),
-        Lead.Category.UNKNOWN: ("bg-slate-100", "text-slate-700"),
+        "gp": ("bg-sky-100", "text-sky-900"),
+        "aesthetic": ("bg-fuchsia-100", "text-fuchsia-900"),
+        "dental": ("bg-teal-100", "text-teal-900"),
+        "fitness": ("bg-violet-100", "text-violet-900"),
+        "cafe": ("bg-amber-100", "text-amber-950"),
+        "retail": ("bg-lime-100", "text-lime-900"),
+        "service": ("bg-indigo-100", "text-indigo-900"),
+        "invalid": ("bg-red-100", "text-red-900"),
+        "unknown": ("bg-slate-100", "text-slate-700"),
     }
-    bg, fg = palette.get(t, palette[Lead.Category.UNKNOWN])
-    label = labels.get(t, labels[Lead.Category.UNKNOWN])
+    bg, fg = palette.get(t, ("bg-slate-100", "text-slate-800"))
+    label = category_label_for(t)
     label_esc = html.escape(label)
     return (
         f'<span class="inline-flex rounded-full {bg} px-2.5 py-0.5 text-xs '

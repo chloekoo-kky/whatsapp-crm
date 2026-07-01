@@ -4,7 +4,7 @@ Leads UI views.
 The dashboard **Run hunt** action POSTs JSON to ``POST /hunt/?limit=…`` with
 ``city``, ``shop_keyword`` (required: free-text keyword before scraping), ``query`` (optional
 Maps fragment; defaults to the keyword when empty), and optional ``require_website`` in the body;
-``limit`` is from the query string (default 20, max 100). Hunts import via Serper only.
+``limit`` is from the query string (default 100, max 100). Hunts import via Serper only.
 """
 
 import html
@@ -15,6 +15,7 @@ from datetime import date, datetime, time, timedelta
 from io import BytesIO
 from typing import Optional
 
+from django.conf import settings
 from django.db import IntegrityError, connection, transaction
 from django.db.models import Q
 from django.db.models.deletion import ProtectedError
@@ -44,11 +45,13 @@ from leads.display import (
     whatsapp_me_path,
     whatsapp_me_url,
 )
+from leads.category_types import is_valid_category_slug, lead_category_choices, normalize_category_slug
 from leads.models import (
     CategoryRule,
     ChainBrandStatus,
     ChatMessage,
     Lead,
+    LeadCategoryType,
     LeadConversationLog,
     LeadGroup,
     SearchQueryRecord,
@@ -159,8 +162,9 @@ def _normalize_phone_numbers_body(body: dict) -> list[str]:
             return [n]
     return []
 
-HUNT_LIMIT_CHOICES = (10, 20, 50, 100)
-DEFAULT_HUNT_LIMIT = 20
+HUNT_LIMIT_CHOICES = (20, 40, 60, 100)
+DEFAULT_HUNT_LIMIT = getattr(settings, "HUNT_DEFAULT_LIMIT", 100)
+MAX_HUNT_LIMIT = getattr(settings, "HUNT_MAX_LIMIT", 100)
 DEFAULT_HUNT_COUNTRY = "Malaysia"
 
 
@@ -420,8 +424,7 @@ class LeadDashboardView(ListView):
         context["export_xlsx_url"] = reverse("clinics_export_xlsx")
         context["export_full_backup_url"] = reverse("export_full_backup")
         context["import_full_backup_url"] = reverse("import_full_backup")
-        context["category_choices"] = Lead.Category.choices
-        context["category_rules_fragment_url"] = reverse("category_rules_fragment")
+        context["category_choices"] = lead_category_choices()
         context["bulk_manual_url"] = reverse("leads_bulk_manual")
         context["bulk_whatsapp_queue_url"] = reverse("leads_bulk_whatsapp_queue")
         context["bulk_dequeue_url"] = reverse("leads_bulk_dequeue")
@@ -960,57 +963,47 @@ def daily_report_export_xlsx(request):
     return resp
 
 
-@csrf_protect
-@require_POST
-def report_lead_reset_whatsapp(request, pk: int):
-    """TEMP: wipe WhatsApp chat + dispatch state for a lead (remove after testing)."""
-    lead = get_object_or_404(Lead, pk=pk)
-    report_date = (request.POST.get("report_date") or "").strip()
-    ChatMessage.objects.filter(lead=lead).delete()
-    LeadConversationLog.objects.filter(lead=lead).delete()
-    lead.whatsapp_status = Lead.WhatsappStatus.IDLE
-    lead.whatsapp_sent_at = None
-    lead.whatsapp_last_error = ""
-    lead.whatsapp_instance_id = ""
-    lead.save(
-        update_fields=[
-            "whatsapp_status",
-            "whatsapp_sent_at",
-            "whatsapp_last_error",
-            "whatsapp_instance_id",
-        ]
-    )
-    clear_pending_batch_memberships(lead.pk)
-    url = reverse("reports")
-    if report_date:
-        url = f"{url}?date={report_date}"
-    return redirect(url)
-
-
 def _category_rules_manage_context() -> dict:
     return {
         "category_rules": CategoryRule.objects.order_by("priority", "id"),
-        "category_choices": Lead.Category.choices,
+        "category_choices": lead_category_choices(),
     }
 
 
-def _wants_category_rules_fragment(request) -> bool:
-    return request.headers.get("X-Category-Rules-Fragment") == "1"
+def _category_types_manage_context() -> dict:
+    return {
+        "category_types": LeadCategoryType.objects.order_by("sort_order", "label", "slug"),
+    }
 
 
-def _category_rules_fragment_response(request) -> HttpResponse:
+def _wants_category_types_fragment(request) -> bool:
+    return request.headers.get("X-Category-Types-Fragment") == "1"
+
+
+def _category_types_fragment_response(request) -> HttpResponse:
     html = render_to_string(
-        "leads/partials/_category_rules_manage.html",
-        _category_rules_manage_context(),
+        "leads/partials/_category_types_manage.html",
+        _category_types_manage_context(),
         request=request,
     )
     return HttpResponse(html)
 
 
 @require_GET
-def category_rules_fragment(request):
-    """HTML fragment for the in-dashboard category rules dialog."""
-    return _category_rules_fragment_response(request)
+def category_types_fragment(request):
+    """HTML fragment for the category types management dialog."""
+    return _category_types_fragment_response(request)
+
+
+@require_GET
+def category_options_fragment(request):
+    """HTML ``<option>`` list for all category dropdowns."""
+    html = render_to_string(
+        "leads/partials/_category_option_list.html",
+        {"category_choices": lead_category_choices()},
+        request=request,
+    )
+    return HttpResponse(html)
 
 
 @method_decorator(ensure_csrf_cookie, name="dispatch")
@@ -1023,7 +1016,81 @@ class CategoryRulesView(TemplateView):
         context = super().get_context_data(**kwargs)
         context["nav_active"] = "categories"
         context.update(_category_rules_manage_context())
+        context["category_types_fragment_url"] = reverse("category_types_fragment")
+        context["category_options_fragment_url"] = reverse("category_options_fragment")
         return context
+
+
+@csrf_protect
+@require_POST
+def category_type_save(request):
+    """Create or update a lead category type (dropdown option)."""
+    type_id = (request.POST.get("id") or "").strip()
+    label = (request.POST.get("label") or "").strip()[:80]
+    raw_slug = (request.POST.get("slug") or "").strip()
+    if not label:
+        return HttpResponse("Label is required.", status=400)
+    try:
+        sort_order = int((request.POST.get("sort_order") or "100").strip())
+    except ValueError:
+        sort_order = 100
+    sort_order = max(0, min(sort_order, 32767))
+
+    if type_id.isdigit():
+        cat_type = get_object_or_404(LeadCategoryType, pk=int(type_id))
+        if not cat_type.is_system:
+            slug = normalize_category_slug(raw_slug, fallback_label=label)
+            if not slug:
+                return HttpResponse("Slug is required.", status=400)
+            if LeadCategoryType.objects.filter(slug=slug).exclude(pk=cat_type.pk).exists():
+                return HttpResponse("A category with this slug already exists.", status=400)
+            cat_type.slug = slug
+        cat_type.label = label
+        cat_type.sort_order = sort_order
+        cat_type.save(update_fields=["slug", "label", "sort_order"])
+    else:
+        slug = normalize_category_slug(raw_slug, fallback_label=label)
+        if not slug:
+            return HttpResponse("Slug is required.", status=400)
+        base = slug
+        n = 2
+        while LeadCategoryType.objects.filter(slug=slug).exists():
+            suffix = f"_{n}"
+            slug = f"{base[: 32 - len(suffix)]}{suffix}"
+            n += 1
+        LeadCategoryType.objects.create(
+            slug=slug,
+            label=label,
+            sort_order=sort_order,
+            is_system=False,
+        )
+
+    if _wants_category_types_fragment(request):
+        return _category_types_fragment_response(request)
+    return redirect("category_rules")
+
+
+@csrf_protect
+@require_POST
+def category_type_delete(request, pk: int):
+    """Delete a user-created category type."""
+    cat_type = get_object_or_404(LeadCategoryType, pk=pk)
+    if cat_type.is_system:
+        return HttpResponse("System categories cannot be deleted.", status=400)
+    if Lead.objects.filter(category=cat_type.slug).exists():
+        return HttpResponse(
+            "Leads still use this category. Reassign them before deleting.",
+            status=400,
+        )
+    if CategoryRule.objects.filter(category=cat_type.slug).exists():
+        return HttpResponse(
+            "Category rules still reference this type. Update or delete those rules first.",
+            status=400,
+        )
+    cat_type.delete()
+    if _wants_category_types_fragment(request):
+        return _category_types_fragment_response(request)
+    return redirect("category_rules")
 
 
 @csrf_protect
@@ -1033,10 +1100,9 @@ def category_rule_save(request):
     rule_id = (request.POST.get("id") or "").strip()
     match_phrase = (request.POST.get("match_phrase") or "").strip()[:200]
     category = (request.POST.get("category") or "").strip().lower()
-    allowed = {c[0] for c in Lead.Category.choices}
     if not match_phrase:
         return HttpResponse("Match phrase is required.", status=400)
-    if category not in allowed:
+    if not is_valid_category_slug(category):
         return HttpResponse("Invalid category.", status=400)
     try:
         priority = int((request.POST.get("priority") or "100").strip())
@@ -1056,8 +1122,6 @@ def category_rule_save(request):
             category=category,
             priority=priority,
         )
-    if _wants_category_rules_fragment(request):
-        return _category_rules_fragment_response(request)
     return redirect("category_rules")
 
 
@@ -1067,8 +1131,6 @@ def category_rule_delete(request, pk: int):
     """Delete a category matching rule."""
     rule = get_object_or_404(CategoryRule, pk=pk)
     rule.delete()
-    if _wants_category_rules_fragment(request):
-        return _category_rules_fragment_response(request)
     return redirect("category_rules")
 
 
@@ -2378,10 +2440,10 @@ def hunt_trigger(request):
     ``city`` and ``query`` from JSON body.
     """
     try:
-        raw_limit = request.GET.get("limit", "20")
-        limit = max(1, min(int(raw_limit), 100))
+        raw_limit = request.GET.get("limit", str(DEFAULT_HUNT_LIMIT))
+        limit = max(1, min(int(raw_limit), MAX_HUNT_LIMIT))
     except (TypeError, ValueError):
-        limit = 20
+        limit = DEFAULT_HUNT_LIMIT
 
     try:
         body = json.loads(request.body.decode() or "{}")
@@ -2641,8 +2703,7 @@ def clinic_update(request, pk: int):
         return JsonResponse({"detail": "Name is required."}, status=400)
 
     raw_type = (body.get("category") or body.get("clinic_type") or "unknown").strip().lower()
-    _allowed_types = {c[0] for c in Lead.Category.choices}
-    if raw_type not in _allowed_types:
+    if not is_valid_category_slug(raw_type):
         return JsonResponse({"detail": "Invalid category."}, status=400)
 
     lead.name = name[:255]
@@ -2703,8 +2764,7 @@ def lead_manual_create(request):
         return JsonResponse({"detail": "Name is required."}, status=400)
 
     raw_type = (body.get("category") or body.get("clinic_type") or "unknown").strip().lower()
-    _allowed_types = {c[0] for c in Lead.Category.choices}
-    if raw_type not in _allowed_types:
+    if not is_valid_category_slug(raw_type):
         return JsonResponse({"detail": "Invalid category."}, status=400)
 
     group = get_or_create_uncategorized_group()
@@ -3003,8 +3063,7 @@ def leads_bulk_manual_category(request):
         return JsonResponse({"detail": "ids must be a list."}, status=400)
 
     raw_cat = (body.get("category") or body.get("clinic_type") or "").strip().lower()
-    allowed = {c[0] for c in Lead.Category.choices}
-    if raw_cat not in allowed:
+    if not is_valid_category_slug(raw_cat):
         return JsonResponse({"detail": "Invalid category."}, status=400)
 
     id_list: list[int] = []

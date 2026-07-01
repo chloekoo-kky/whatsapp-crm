@@ -186,7 +186,7 @@ class HuntIn(Schema):
 
     )
 
-    limit: int = Field(default=20, ge=1, le=100)
+    limit: int = Field(default=100, ge=1, le=100)
 
     require_website: bool = Field(
 

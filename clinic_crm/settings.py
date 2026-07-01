@@ -55,6 +55,10 @@ SERPER_API_KEY = env("SERPER_API_KEY", default="")
 # Reserved for future AI features (not used by the app today).
 GEMINI_API_KEY = env("GEMINI_API_KEY", default="")
 
+# Serper Maps hunt: default total leads to import; max per hunt (paginated in 20-result pages).
+HUNT_DEFAULT_LIMIT = env.int("HUNT_DEFAULT_LIMIT", default=100)
+HUNT_MAX_LIMIT = env.int("HUNT_MAX_LIMIT", default=100)
+
 def _env_str(name: str, *, default: str = "") -> str:
     """Prefer live process env (Docker env_file), then django-environ / mounted .env."""
     direct = (os.environ.get(name) or "").strip()

@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="csrf-token" content="{{ csrf_token }}" />
   <title>Categories — Lead CRM</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
@@ -24,8 +25,8 @@
 
   <main class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
     <header class="shrink-0 border-b border-slate-200/80 bg-white px-6 py-4">
-      <h1 class="text-lg font-semibold text-slate-900">Category rules</h1>
-      <p class="mt-0.5 text-sm text-slate-500">Match phrases in business names to auto-assign categories on import. Lower priority runs first.</p>
+      <h1 class="text-lg font-semibold text-slate-900">Categories</h1>
+      <p class="mt-0.5 text-sm text-slate-500">Manage category types and auto-assignment rules for imported leads.</p>
     </header>
 
     <div class="min-h-0 flex-1 overflow-y-auto p-6">
@@ -34,5 +35,121 @@
       </div>
     </div>
   </main>
+
+  <dialog id="category-types-dialog" class="z-[110] w-[calc(100%-1.5rem)] max-w-2xl overflow-hidden rounded-2xl border border-slate-200/90 bg-white p-0 shadow-2xl ring-1 ring-slate-900/5 backdrop:bg-slate-900/45">
+    <div class="flex max-h-[min(92vh,680px)] flex-col">
+      <div class="flex items-start justify-between gap-3 border-b border-slate-100 bg-slate-50/80 px-5 py-4">
+        <div>
+          <h2 class="text-base font-semibold tracking-tight text-slate-900">Category types</h2>
+          <p class="mt-0.5 text-xs text-slate-500">Add, edit, or delete dropdown options (Unknown, GP, Dental, …).</p>
+        </div>
+        <button type="button" id="category-types-close-x" class="rounded-lg p-1.5 text-slate-400 transition hover:bg-white hover:text-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/40" aria-label="Close">
+          <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <div id="category-types-manage-body" class="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+        <p class="text-sm text-slate-400">Loading…</p>
+      </div>
+      <div class="flex items-center justify-end gap-2 border-t border-slate-100 bg-slate-50/80 px-5 py-3">
+        <button type="button" id="category-types-close" class="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50">Done</button>
+      </div>
+    </div>
+  </dialog>
+
+  <script>
+    (function () {
+      var typesFragmentUrl = "{{ category_types_fragment_url|escapejs }}";
+      var optionsFragmentUrl = "{{ category_options_fragment_url|escapejs }}";
+      var dialog = document.getElementById("category-types-dialog");
+      var body = document.getElementById("category-types-manage-body");
+
+      function getCsrfToken() {
+        var m = document.querySelector('meta[name="csrf-token"]');
+        if (m) return m.getAttribute("content") || "";
+        var match = document.cookie.match(/(?:^|;\\s*)csrftoken=([^;]+)/);
+        return match ? decodeURIComponent(match[1]) : "";
+      }
+
+      async function refreshCategorySelects() {
+        var res = await fetch(optionsFragmentUrl, { credentials: "same-origin" });
+        if (!res.ok) return;
+        var html = await res.text();
+        document.querySelectorAll("select.category-select").forEach(function (sel) {
+          var prev = sel.value;
+          sel.innerHTML = html;
+          if (prev && sel.querySelector('option[value="' + prev + '"]')) sel.value = prev;
+        });
+      }
+
+      function bindCategoryTypeForms(root) {
+        if (!root) return;
+        root.querySelectorAll("form[data-category-type-form]").forEach(function (form) {
+          if (form.dataset.bound === "1") return;
+          form.dataset.bound = "1";
+          form.addEventListener("submit", async function (e) {
+            e.preventDefault();
+            var isDelete = form.getAttribute("data-category-type-form") === "delete";
+            if (isDelete && !window.confirm("Delete this category type?")) return;
+            var submitBtn = form.querySelector('[type="submit"]');
+            if (submitBtn) submitBtn.disabled = true;
+            try {
+              var res = await fetch(form.action, {
+                method: "POST",
+                credentials: "same-origin",
+                headers: {
+                  "X-CSRFToken": getCsrfToken(),
+                  "X-Category-Types-Fragment": "1",
+                },
+                body: new FormData(form),
+              });
+              if (!res.ok) {
+                window.alert(await res.text() || "Could not save category type.");
+                return;
+              }
+              body.innerHTML = await res.text();
+              bindCategoryTypeForms(body);
+              await refreshCategorySelects();
+            } catch (err) {
+              console.error(err);
+              window.alert("Network error while saving category type.");
+            } finally {
+              if (submitBtn && document.body.contains(submitBtn)) submitBtn.disabled = false;
+            }
+          });
+        });
+      }
+
+      async function loadCategoryTypesFragment() {
+        if (!body) return;
+        body.innerHTML = '<p class="text-sm text-slate-400">Loading…</p>';
+        var res = await fetch(typesFragmentUrl, { credentials: "same-origin" });
+        if (!res.ok) {
+          body.innerHTML = '<p class="text-sm text-rose-600">Could not load category types.</p>';
+          return;
+        }
+        body.innerHTML = await res.text();
+        bindCategoryTypeForms(body);
+      }
+
+      async function openCategoryTypesDialog() {
+        if (!dialog) return;
+        dialog.showModal();
+        await loadCategoryTypesFragment();
+      }
+
+      document.querySelectorAll(".category-types-settings-btn").forEach(function (btn) {
+        btn.addEventListener("click", function (e) {
+          e.preventDefault();
+          openCategoryTypesDialog();
+        });
+      });
+
+      document.getElementById("category-types-close")?.addEventListener("click", function () { dialog?.close(); });
+      document.getElementById("category-types-close-x")?.addEventListener("click", function () { dialog?.close(); });
+      dialog?.addEventListener("click", function (e) {
+        if (e.target === dialog) dialog.close();
+      });
+    })();
+  </script>
 </body>
 </html>

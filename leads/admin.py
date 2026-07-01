@@ -4,6 +4,7 @@ from leads.models import (
     CategoryRule,
     ChainBrandStatus,
     Lead,
+    LeadCategoryType,
     LeadConversationLog,
     LeadGroup,
     SearchQueryRecord,
@@ -33,6 +34,14 @@ class SearchQueryRecordAdmin(admin.ModelAdmin):
     list_filter = ("created_at",)
     search_fields = ("keyword", "maps_search_query", "search_city", "search_country")
     ordering = ("-created_at",)
+
+
+@admin.register(LeadCategoryType)
+class LeadCategoryTypeAdmin(admin.ModelAdmin):
+    list_display = ("sort_order", "label", "slug", "is_system")
+    list_filter = ("is_system",)
+    search_fields = ("label", "slug")
+    ordering = ("sort_order", "label")
 
 
 @admin.register(CategoryRule)

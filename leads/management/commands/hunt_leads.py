@@ -58,7 +58,7 @@ class Command(BaseCommand):
 
         query = (options["query"] or "").strip()
         country = (options["country"] or "").strip()
-        limit = max(1, min(int(options["limit"] or 20), 100))
+        limit = max(1, min(int(options["limit"] or 100), 100))
         require_website = bool(options["require_website"])
 
         self.stdout.write(

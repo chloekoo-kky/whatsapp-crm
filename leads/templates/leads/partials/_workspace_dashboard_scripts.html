@@ -44,7 +44,6 @@
       const exportFullBackupUrl = "{{ export_full_backup_url|escapejs }}" || "/leads/export/backup/";
       const importFullBackupUrl = "{{ import_full_backup_url|escapejs }}" || "/leads/import/backup/";
       const bulkManualUrl = "{{ bulk_manual_url|escapejs }}" || "/leads/api/bulk-manual/";
-      const categoryRulesFragmentUrl = "{{ category_rules_fragment_url|escapejs }}" || "/categories/fragment/";
       const bulkWhatsappQueueUrl = "{{ bulk_whatsapp_queue_url|escapejs }}" || "/leads/api/bulk-whatsapp-queue/";
       const bulkDequeueUrl = "{{ bulk_dequeue_url|escapejs }}" || "/leads/api/bulk-dequeue/";
       const bulkAssignBatchUrl = "{{ bulk_assign_batch_url|escapejs }}" || "/leads/api/bulk-assign-batch/";
@@ -58,7 +57,7 @@
       const leadDeleteUrlTemplate = "/leads/api/clinic/__ID__/delete/";
       const leadVipUrlTemplate = "/leads/api/clinic/__ID__/very-important/";
       const leadConversationLogUrlTemplate = "/leads/api/clinic/__ID__/conversation-log/";
-      const defaultLimit = {{ hunt_limit_default|default:20 }};
+      const defaultLimit = {{ hunt_limit_default|default:100 }};
       const REQUIRE_WEBSITE_KEY = "clinic_crm_require_website";
       const CHAT_INDICATOR_POLL_KEY = "clinic_crm_chat_indicator_poll";
       const VIEW_MODE_KEY = "clinic_crm_clinic_view";
@@ -3099,82 +3098,6 @@
         if (!window.confirm('Delete this conversation log?')) return;
         btn.disabled = true;
         await deleteLeadConversationLog(leadId, logId);
-      });
-
-      const categoryRulesDialog = document.getElementById('category-rules-dialog');
-      const categoryRulesManageBody = document.getElementById('category-rules-manage-body');
-
-      function closeCategoryRulesDialog() {
-        if (categoryRulesDialog) categoryRulesDialog.close();
-      }
-
-      async function loadCategoryRulesFragment() {
-        if (!categoryRulesManageBody) return;
-        categoryRulesManageBody.innerHTML = '<p class="text-sm text-slate-400">Loading…</p>';
-        var res = await fetch(categoryRulesFragmentUrl, { credentials: 'same-origin' });
-        if (!res.ok) {
-          categoryRulesManageBody.innerHTML = '<p class="text-sm text-rose-600">Could not load category rules.</p>';
-          return;
-        }
-        categoryRulesManageBody.innerHTML = await res.text();
-        bindCategoryRulesForms(categoryRulesManageBody);
-      }
-
-      function bindCategoryRulesForms(root) {
-        if (!root) return;
-        root.querySelectorAll('form[data-category-rule-form]').forEach(function (form) {
-          if (form.dataset.bound === '1') return;
-          form.dataset.bound = '1';
-          form.addEventListener('submit', async function (e) {
-            e.preventDefault();
-            var isDelete = form.getAttribute('data-category-rule-form') === 'delete';
-            if (isDelete && !window.confirm('Delete this category rule?')) return;
-            var submitBtn = form.querySelector('[type="submit"]');
-            if (submitBtn) submitBtn.disabled = true;
-            try {
-              var res = await fetch(form.action, {
-                method: 'POST',
-                credentials: 'same-origin',
-                headers: {
-                  'X-CSRFToken': getCsrfToken(),
-                  'X-Category-Rules-Fragment': '1',
-                },
-                body: new FormData(form),
-              });
-              if (!res.ok) {
-                var errText = await res.text();
-                window.alert(errText || 'Could not save category rule.');
-                return;
-              }
-              categoryRulesManageBody.innerHTML = await res.text();
-              bindCategoryRulesForms(categoryRulesManageBody);
-            } catch (err) {
-              console.error(err);
-              window.alert('Network error while saving category rule.');
-            } finally {
-              if (submitBtn && document.body.contains(submitBtn)) submitBtn.disabled = false;
-            }
-          });
-        });
-      }
-
-      async function openCategoryRulesDialog() {
-        if (!categoryRulesDialog) return;
-        categoryRulesDialog.showModal();
-        await loadCategoryRulesFragment();
-      }
-
-      document.addEventListener('click', function (e) {
-        if (e.target.closest('.category-rules-settings-btn')) {
-          e.preventDefault();
-          openCategoryRulesDialog();
-        }
-      });
-
-      document.getElementById('category-rules-close')?.addEventListener('click', closeCategoryRulesDialog);
-      document.getElementById('category-rules-close-x')?.addEventListener('click', closeCategoryRulesDialog);
-      categoryRulesDialog?.addEventListener('click', function (e) {
-        if (e.target === categoryRulesDialog) closeCategoryRulesDialog();
       });
 
       const bulkManualDialog = document.getElementById('bulk-manual-dialog');

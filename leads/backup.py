@@ -338,7 +338,9 @@ def restore_from_workbook(file_obj) -> dict:
         "scripts_created": 0,
     }
 
-    valid_categories = {c[0] for c in Lead.Category.choices}
+    from leads.category_types import UNKNOWN_SLUG, lead_category_choices
+
+    valid_categories = {c[0] for c in lead_category_choices()}
     valid_statuses = {s[0] for s in Lead.WhatsappStatus.choices}
 
     # Groups first so lead FKs can be linked by name.
@@ -380,7 +382,7 @@ def restore_from_workbook(file_obj) -> dict:
             address = _p_str(row.get("address"))
             category = _p_str(row.get("category")).strip().lower()
             if category not in valid_categories:
-                category = Lead.Category.UNKNOWN
+                category = UNKNOWN_SLUG
             status = _p_str(row.get("whatsapp_status")).strip().lower()
             if status not in valid_statuses:
                 status = Lead.WhatsappStatus.IDLE

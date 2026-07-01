@@ -1,12 +1,12 @@
 import json
 from datetime import date
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from django.test import Client, TestCase, override_settings
 from django.urls import reverse
 from django.db.models import Exists, OuterRef
 
-from leads.models import CategoryRule, ChatMessage, Lead, LeadConversationLog, LeadGroup, WhatsAppScriptTemplate
+from leads.models import CategoryRule, ChatMessage, Lead, LeadCategoryType, LeadConversationLog, LeadGroup, WhatsAppScriptTemplate
 from leads.chat_messages import record_inbound_chat_message, record_outbound_chat_message
 from leads.display import lead_whatsapp_active_chat, lead_whatsapp_dispatched
 from leads.views import _leads_qs_for_tab, _leads_tab_base_qs
@@ -1697,33 +1697,59 @@ class CategoryRuleManagementTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"dental", response.content)
 
-    def test_category_rules_fragment_returns_manage_html(self):
-        CategoryRule.objects.create(
-            match_phrase="spa",
-            category=Lead.Category.AESTHETIC,
-            priority=10,
-        )
+    def test_category_types_fragment_returns_manage_html(self):
         client = Client()
-        response = client.get(reverse("category_rules_fragment"))
+        response = client.get(reverse("category_types_fragment"))
         self.assertEqual(response.status_code, 200)
         html = response.content.decode()
-        self.assertIn("spa", html)
-        self.assertIn("data-category-rule-form", html)
+        self.assertIn("data-category-type-form", html)
+        self.assertIn("Unknown", html)
 
-    def test_category_rule_save_via_fragment_header(self):
+    def test_category_type_save_via_fragment_header(self):
         client = Client()
         response = client.post(
-            reverse("category_rule_save"),
+            reverse("category_type_save"),
             data={
-                "match_phrase": "ortho",
-                "category": Lead.Category.DENTAL,
-                "priority": "5",
+                "label": "Veterinary",
+                "slug": "vet",
+                "sort_order": "50",
             },
-            HTTP_X_CATEGORY_RULES_FRAGMENT="1",
+            HTTP_X_CATEGORY_TYPES_FRAGMENT="1",
         )
         self.assertEqual(response.status_code, 200)
-        self.assertIn(b"ortho", response.content)
-        self.assertTrue(CategoryRule.objects.filter(match_phrase="ortho").exists())
+        self.assertIn(b"Veterinary", response.content)
+        self.assertTrue(LeadCategoryType.objects.filter(slug="vet").exists())
+
+    def test_category_type_save_and_delete(self):
+        client = Client()
+        create = client.post(
+            reverse("category_type_save"),
+            data={
+                "label": "Pilates",
+                "slug": "pilates",
+                "sort_order": "80",
+            },
+        )
+        self.assertEqual(create.status_code, 302)
+        cat_type = LeadCategoryType.objects.get(slug="pilates")
+        self.assertEqual(cat_type.label, "Pilates")
+
+        update = client.post(
+            reverse("category_type_save"),
+            data={
+                "id": str(cat_type.pk),
+                "label": "Pilates Studio",
+                "slug": "pilates",
+                "sort_order": "75",
+            },
+        )
+        self.assertEqual(update.status_code, 302)
+        cat_type.refresh_from_db()
+        self.assertEqual(cat_type.label, "Pilates Studio")
+
+        delete = client.post(reverse("category_type_delete", kwargs={"pk": cat_type.pk}))
+        self.assertEqual(delete.status_code, 302)
+        self.assertFalse(LeadCategoryType.objects.filter(pk=cat_type.pk).exists())
 
     def test_category_rule_save_and_delete(self):
         client = Client()
@@ -1756,3 +1782,70 @@ class CategoryRuleManagementTests(TestCase):
         delete = client.post(reverse("category_rule_delete", kwargs={"pk": rule.pk}))
         self.assertEqual(delete.status_code, 302)
         self.assertFalse(CategoryRule.objects.filter(pk=rule.pk).exists())
+
+
+class SerperHuntPaginationTests(TestCase):
+    @override_settings(SERPER_API_KEY="test-key", HUNT_MAX_LIMIT=100)
+    @patch("leads.services.requests.post")
+    def test_fetch_paginates_when_limit_above_page_size(self, mock_post):
+        from leads.services import fetch_leads_from_serper
+
+        page1 = [
+            {"title": f"Biz {i}", "address": f"St {i}", "phoneNumber": f"+6012{i:07d}"}
+            for i in range(20)
+        ]
+        page2 = [
+            {"title": f"Biz {i}", "address": f"St {i}", "phoneNumber": f"+6013{i:07d}"}
+            for i in range(20, 35)
+        ]
+
+        def _resp(places):
+            resp = Mock()
+            resp.raise_for_status = Mock()
+            resp.json.return_value = {"places": places}
+            return resp
+
+        mock_post.side_effect = [_resp(page1), _resp(page2)]
+
+        result = fetch_leads_from_serper(
+            "Kuala Lumpur",
+            "",
+            num=40,
+            shop_keyword="dental clinic",
+            state="Selangor",
+            country="Malaysia",
+        )
+
+        self.assertEqual(mock_post.call_count, 2)
+        second_payload = mock_post.call_args_list[1][1]["json"]
+        self.assertEqual(second_payload["page"], 2)
+        self.assertEqual(result.places_seen, 35)
+        self.assertEqual(result.created, 35)
+        self.assertEqual(Lead.objects.count(), 35)
+
+    @override_settings(SERPER_API_KEY="test-key", HUNT_MAX_LIMIT=100)
+    @patch("leads.services.requests.post")
+    def test_single_page_when_limit_is_20(self, mock_post):
+        from leads.services import fetch_leads_from_serper
+
+        places = [
+            {"title": f"Solo {i}", "address": f"Road {i}", "phoneNumber": f"+6014{i:07d}"}
+            for i in range(15)
+        ]
+        resp = Mock()
+        resp.raise_for_status = Mock()
+        resp.json.return_value = {"places": places}
+        mock_post.return_value = resp
+
+        result = fetch_leads_from_serper(
+            "Penang",
+            "",
+            num=20,
+            shop_keyword="gym",
+            state="Penang",
+            country="Malaysia",
+        )
+
+        self.assertEqual(mock_post.call_count, 1)
+        self.assertEqual(result.places_seen, 15)
+        self.assertEqual(result.created, 15)

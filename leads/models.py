@@ -168,7 +168,6 @@ class Lead(models.Model):
     )
     category = models.CharField(
         max_length=32,
-        choices=Category.choices,
         default=Category.UNKNOWN,
         help_text="Business type / relevance — rules, AI, or manual update.",
     )
@@ -550,6 +549,31 @@ class LeadConversationLog(models.Model):
         return f"{self.lead_id} @ {self.conversation_date:%Y-%m-%d}"
 
 
+class LeadCategoryType(models.Model):
+    """User-managed business category options (dropdown values on leads)."""
+
+    slug = models.SlugField(
+        max_length=32,
+        unique=True,
+        help_text="Stored on Lead.category (lowercase, e.g. dental, gp).",
+    )
+    label = models.CharField(max_length=80)
+    sort_order = models.PositiveSmallIntegerField(default=100)
+    is_system = models.BooleanField(
+        default=False,
+        help_text="System categories (Unknown, Invalid) cannot be deleted.",
+    )
+
+    class Meta:
+        db_table = "leads_leadcategorytype"
+        ordering = ["sort_order", "label", "slug"]
+        verbose_name = "Category type"
+        verbose_name_plural = "Category types"
+
+    def __str__(self) -> str:
+        return self.label
+
+
 class CategoryRule(models.Model):
     """
     If ``match_phrase`` (case-insensitive) appears in a lead's name, ``category`` applies.
@@ -562,7 +586,7 @@ class CategoryRule(models.Model):
     )
     category = models.CharField(
         max_length=32,
-        choices=Lead.Category.choices,
+        help_text="Lead.category slug assigned when the rule matches.",
     )
     priority = models.PositiveSmallIntegerField(
         default=100,

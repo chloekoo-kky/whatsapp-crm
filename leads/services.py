@@ -23,6 +23,24 @@ from leads.pipeline import (
 logger = logging.getLogger(__name__)
 
 SERPER_MAPS_URL = "https://google.serper.dev/maps"
+SERPER_MAPS_PAGE_SIZE = 20
+
+
+def _hunt_max_results() -> int:
+    return max(1, min(int(getattr(settings, "HUNT_MAX_LIMIT", 100)), 100))
+
+
+def _place_dedupe_key(raw: dict[str, Any]) -> str:
+    """Stable key to dedupe the same listing across Serper result pages."""
+    for key in ("cid", "placeId", "place_id"):
+        v = raw.get(key)
+        if v is not None and str(v).strip():
+            return f"id:{str(v).strip()}"
+    title = (raw.get("title") or raw.get("name") or "").strip().lower()
+    addr = (raw.get("address") or "").strip().lower()
+    if title or addr:
+        return f"na:{title}|{addr}"
+    return ""
 
 # Google ``gl`` (country) for Serper Maps — biases local results (e.g. Malaysia → my).
 _COUNTRY_NAME_TO_GL: dict[str, str] = {
@@ -63,15 +81,17 @@ def _country_hint_to_gl(country: str) -> str | None:
 
 def classify_category_from_name(name: str) -> str:
     """First matching admin rule (priority, id); case-insensitive substring on business name."""
+    from leads.category_types import UNKNOWN_SLUG
+
     n = (name or "").strip().lower()
     if not n:
-        return Lead.Category.UNKNOWN
+        return UNKNOWN_SLUG
     qs = CategoryRule.objects.order_by("priority", "id").only("match_phrase", "category")
     for rule in qs:
         piece = (rule.match_phrase or "").strip().lower()
         if piece and piece in n:
             return rule.category
-    return Lead.Category.UNKNOWN
+    return UNKNOWN_SLUG
 
 
 @dataclass
@@ -128,16 +148,131 @@ def _serper_maps_payload(
     num: int,
     *,
     country: str = "",
+    page: int = 1,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "q": search_q,
-        "num": max(1, min(num, 100)),
+        "num": max(1, min(num, SERPER_MAPS_PAGE_SIZE)),
+        "page": max(1, page),
         "hl": "en",
     }
     gl = _country_hint_to_gl(country)
     if gl:
         payload["gl"] = gl
     return payload
+
+
+def _request_serper_maps_places(
+    search_q: str,
+    *,
+    num: int,
+    country: str,
+    page: int,
+    api_key: str,
+) -> tuple[list[Any], list[str]]:
+    """One Serper Maps page; returns (places, errors)."""
+    payload = _serper_maps_payload(search_q, num, country=country, page=page)
+    headers = {"X-API-KEY": api_key, "Content-Type": "application/json"}
+    logger.info(
+        "Serper Maps request q=%r page=%s num=%s gl=%s",
+        search_q,
+        payload.get("page"),
+        payload.get("num"),
+        payload.get("gl"),
+    )
+    errors: list[str] = []
+    try:
+        resp = requests.post(SERPER_MAPS_URL, json=payload, headers=headers, timeout=60)
+        resp.raise_for_status()
+        data = resp.json()
+    except requests.HTTPError as exc:
+        detail = ""
+        if exc.response is not None:
+            try:
+                detail = exc.response.text[:500]
+            except Exception:
+                detail = str(exc.response)
+        errors.append(f"Serper HTTP error (page {page}): {exc} {detail}".strip())
+        return [], errors
+    except requests.RequestException as exc:
+        errors.append(f"Serper request failed (page {page}): {exc}")
+        return [], errors
+    except ValueError as exc:
+        errors.append(f"Invalid JSON from Serper (page {page}): {exc}")
+        return [], errors
+
+    places = _extract_serper_maps_places(data if isinstance(data, dict) else {})
+    if not places and page == 1:
+        if isinstance(data, dict) and data.get("places") is not None and not isinstance(
+            data.get("places"), list
+        ):
+            errors.append("Serper 'places' field was not a list — check API response shape.")
+        else:
+            hints = (
+                "Serper returned 0 Maps place rows. Try: (1) City spelling Google prefers "
+                '(e.g. "Melaka" or "Malacca"). (2) Clear or simplify the optional Maps query so '
+                "the hunt uses keyword + city + country. (3) Confirm SERPER_API_KEY and quota. "
+                f"Query sent: {search_q!r}"
+            )
+            errors.append(hints)
+        logger.warning(
+            "Serper Maps empty places for q=%r page=%s keys=%s",
+            search_q,
+            page,
+            list(data.keys()) if isinstance(data, dict) else type(data),
+        )
+    return places, errors
+
+
+def _collect_serper_maps_places(
+    search_q: str,
+    *,
+    target: int,
+    country: str,
+    api_key: str,
+) -> tuple[list[Any], list[str]]:
+    """Paginate Serper Maps until ``target`` unique listings or no more pages."""
+    max_pages = max(1, (target + SERPER_MAPS_PAGE_SIZE - 1) // SERPER_MAPS_PAGE_SIZE)
+    all_places: list[Any] = []
+    seen_keys: set[str] = set()
+    errors: list[str] = []
+
+    for page in range(1, max_pages + 1):
+        if len(all_places) >= target:
+            break
+        page_places, page_errors = _request_serper_maps_places(
+            search_q,
+            num=SERPER_MAPS_PAGE_SIZE,
+            country=country,
+            page=page,
+            api_key=api_key,
+        )
+        errors.extend(page_errors)
+        if page == 1 and page_errors and not page_places:
+            return [], errors
+        if not page_places:
+            break
+
+        added = 0
+        for raw in page_places:
+            if not isinstance(raw, dict):
+                continue
+            key = _place_dedupe_key(raw)
+            if key:
+                if key in seen_keys:
+                    continue
+                seen_keys.add(key)
+            all_places.append(raw)
+            added += 1
+            if len(all_places) >= target:
+                break
+
+        if added == 0:
+            break
+        if len(page_places) < SERPER_MAPS_PAGE_SIZE:
+            break
+
+    return all_places[:target], errors
 
 
 def _place_maps_url(raw: dict[str, Any]) -> str:
@@ -267,7 +402,7 @@ def fetch_leads_from_serper(
     city: str,
     query: str,
     *,
-    num: int = 20,
+    num: int = 100,
     shop_keyword: str = "",
     state: str = "",
     country: str = "",
@@ -275,9 +410,12 @@ def fetch_leads_from_serper(
     require_website: bool = False,
 ) -> FetchLeadsResult:
     """
-    Call Serper Maps API and persist leads. Uniqueness is (name, address); phone numbers are
-    deduplicated globally before insert. New rows land in the Uncategorized folder with
-    ``whatsapp_status=idle``.
+    Call Serper Maps API (paginated) and persist leads. Uniqueness is (name, address); phone
+    numbers are deduplicated globally before insert. New rows land in the Uncategorized folder
+    with ``whatsapp_status=idle``.
+
+    Serper Maps returns ~20 listings per page; when ``num`` > 20, additional pages are fetched
+    automatically until the target count or Serper runs out of results.
 
     When ``require_website`` is true, skip listings whose Maps payload has no non-Maps website
     or social profile URL (Facebook, Instagram, etc.).
@@ -317,63 +455,14 @@ def fetch_leads_from_serper(
             created_ids=[],
         )
 
-    payload = _serper_maps_payload(search_q, num, country=country_clean)
-    headers = {"X-API-KEY": api_key, "Content-Type": "application/json"}
-    logger.info(
-        "Serper Maps request q=%r num=%s gl=%s",
+    target = max(1, min(int(num), _hunt_max_results()))
+    places, errors = _collect_serper_maps_places(
         search_q,
-        payload.get("num"),
-        payload.get("gl"),
+        target=target,
+        country=country_clean,
+        api_key=api_key,
     )
-
-    try:
-        resp = requests.post(SERPER_MAPS_URL, json=payload, headers=headers, timeout=60)
-        resp.raise_for_status()
-        data = resp.json()
-    except requests.HTTPError as exc:
-        detail = ""
-        if exc.response is not None:
-            try:
-                detail = exc.response.text[:500]
-            except Exception:
-                detail = str(exc.response)
-        msg = f"Serper HTTP error: {exc} {detail}".strip()
-        logger.warning(msg)
-        return FetchLeadsResult(
-            created=0, skipped_existing=0, errors=[msg], places_seen=0, created_ids=[]
-        )
-    except requests.RequestException as exc:
-        msg = f"Serper request failed: {exc}"
-        logger.warning(msg)
-        return FetchLeadsResult(
-            created=0, skipped_existing=0, errors=[msg], places_seen=0, created_ids=[]
-        )
-    except ValueError as exc:
-        msg = f"Invalid JSON from Serper: {exc}"
-        logger.warning(msg)
-        return FetchLeadsResult(
-            created=0, skipped_existing=0, errors=[msg], places_seen=0, created_ids=[]
-        )
-
-    places = _extract_serper_maps_places(data if isinstance(data, dict) else {})
     if not places:
-        if isinstance(data, dict) and data.get("places") is not None and not isinstance(
-            data.get("places"), list
-        ):
-            errors.append("Serper 'places' field was not a list — check API response shape.")
-        else:
-            hints = (
-                "Serper returned 0 Maps place rows. Try: (1) City spelling Google prefers "
-                '(e.g. "Melaka" or "Malacca"). (2) Clear or simplify the optional Maps query so '
-                "the hunt uses keyword + city + country. (3) Confirm SERPER_API_KEY and quota. "
-                f"Query sent: {search_q!r}"
-            )
-            errors.append(hints)
-        logger.warning(
-            "Serper Maps empty places for q=%r keys=%s",
-            search_q,
-            list(data.keys()) if isinstance(data, dict) else type(data),
-        )
         return FetchLeadsResult(
             created=0,
             skipped_existing=0,
