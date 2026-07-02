@@ -1881,7 +1881,9 @@ class DailyReportTests(TestCase):
         )
         self.assertEqual(response.status_code, 200)
         html = response.content.decode()
-        self.assertIn("First sends by state", html)
+        self.assertIn('id="report-breakdown-drawer"', html)
+        self.assertIn('id="report-breakdown-data"', html)
+        self.assertIn('"first_sends"', html)
         self.assertIn("Selangor", html)
 
     def test_daily_report_location_and_state_breakdown_helpers(self):
@@ -1944,6 +1946,34 @@ class DailyReportTests(TestCase):
         state_rows = list(ws_states.iter_rows(values_only=True))
         self.assertEqual(state_rows[0], ("Metric", "State", "Count"))
         self.assertIn(("First sends", "Selangor", 1), state_rows)
+
+    def test_monthly_report_export_xlsx(self):
+        client = Client()
+        month = self.today.strftime("%Y-%m")
+        response = client.get(
+            reverse("monthly_report_export_xlsx"),
+            {"month": month},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            response["Content-Type"],
+        )
+        from io import BytesIO
+
+        from openpyxl import load_workbook
+
+        wb = load_workbook(BytesIO(response.content))
+        self.assertEqual(wb.active.title, "Monthly summary")
+        summary_rows = list(wb.active.iter_rows(values_only=True))
+        self.assertEqual(summary_rows[0][:2], ("Month", month))
+        summary_pairs = [(row[0], row[1]) for row in summary_rows if row[0]]
+        self.assertIn(("First messages sent", 1), summary_pairs)
+        self.assertIn("By day", wb.sheetnames)
+        self.assertIn("By state", wb.sheetnames)
+        day_rows = list(wb["By day"].iter_rows(values_only=True))
+        self.assertEqual(day_rows[0][0], "Date")
+        self.assertTrue(any(row[0] == self.today.isoformat() for row in day_rows[1:]))
 
 
 class CategoryRuleManagementTests(TestCase):

@@ -927,8 +927,176 @@ def _daily_report_lead_status_display(lead: Lead) -> str:
     return lead.get_whatsapp_status_display()
 
 
-def _daily_report_leads(report_date: date) -> list[Lead]:
-    start, end = _daily_report_day_bounds(report_date)
+def _month_bounds(year: int, month: int) -> tuple[datetime, datetime, date, date]:
+    """Inclusive calendar month in campaign timezone (end is exclusive)."""
+    tz = campaign_timezone()
+    first_day = date(year, month, 1)
+    if month == 12:
+        next_first = date(year + 1, 1, 1)
+    else:
+        next_first = date(year, month + 1, 1)
+    last_day = next_first - timedelta(days=1)
+    start = django_timezone.make_aware(datetime.combine(first_day, time.min), tz)
+    end = django_timezone.make_aware(datetime.combine(next_first, time.min), tz)
+    return start, end, first_day, last_day
+
+
+def _resolve_report_month(request) -> tuple[int, int]:
+    raw = (request.GET.get("month") or "").strip()
+    if raw:
+        try:
+            parsed = datetime.strptime(raw, "%Y-%m").date()
+            return parsed.year, parsed.month
+        except ValueError:
+            pass
+    report_date = _resolve_daily_report_date(request)
+    return report_date.year, report_date.month
+
+
+def _monthly_report_summary(
+    start: datetime, end: datetime, first_day: date, last_day: date
+) -> dict:
+    first_sends = Lead.objects.filter(
+        whatsapp_sent_at__gte=start,
+        whatsapp_sent_at__lt=end,
+    ).count()
+    outbound = ChatMessage.objects.filter(
+        is_outbound=True,
+        created_at__gte=start,
+        created_at__lt=end,
+    ).count()
+    inbound = ChatMessage.objects.filter(
+        is_outbound=False,
+        created_at__gte=start,
+        created_at__lt=end,
+    ).count()
+    log_entries = LeadConversationLog.objects.filter(
+        conversation_date__gte=first_day,
+        conversation_date__lte=last_day,
+    ).count()
+    failed_logs = LeadConversationLog.objects.filter(
+        conversation_date__gte=first_day,
+        conversation_date__lte=last_day,
+        remarks__icontains=DELIVERY_FAILED_MARKER,
+    ).count()
+    return {
+        "first_sends": first_sends,
+        "outbound_messages": outbound,
+        "inbound_replies": inbound,
+        "log_entries": log_entries,
+        "delivery_failures": failed_logs,
+    }
+
+
+def _monthly_report_state_breakdown(
+    metric: str,
+    start: datetime,
+    end: datetime,
+    first_day: date,
+    last_day: date,
+) -> list[dict[str, object]]:
+    if metric not in DAILY_REPORT_METRICS:
+        return []
+
+    counts: dict[str, int] = {}
+    if metric == "first_sends":
+        rows = (
+            Lead.objects.filter(
+                whatsapp_sent_at__gte=start,
+                whatsapp_sent_at__lt=end,
+            )
+            .values("search_state")
+            .annotate(c=Count("id"))
+        )
+        for row in rows:
+            label = _daily_report_state_label(row["search_state"])
+            counts[label] = counts.get(label, 0) + int(row["c"] or 0)
+    elif metric == "outbound_messages":
+        rows = (
+            ChatMessage.objects.filter(
+                is_outbound=True,
+                created_at__gte=start,
+                created_at__lt=end,
+            )
+            .values("lead__search_state")
+            .annotate(c=Count("id"))
+        )
+        for row in rows:
+            label = _daily_report_state_label(row["lead__search_state"])
+            counts[label] = counts.get(label, 0) + int(row["c"] or 0)
+    elif metric == "inbound_replies":
+        rows = (
+            ChatMessage.objects.filter(
+                is_outbound=False,
+                created_at__gte=start,
+                created_at__lt=end,
+            )
+            .values("lead__search_state")
+            .annotate(c=Count("id"))
+        )
+        for row in rows:
+            label = _daily_report_state_label(row["lead__search_state"])
+            counts[label] = counts.get(label, 0) + int(row["c"] or 0)
+    elif metric == "log_entries":
+        rows = (
+            LeadConversationLog.objects.filter(
+                conversation_date__gte=first_day,
+                conversation_date__lte=last_day,
+            )
+            .values("lead__search_state")
+            .annotate(c=Count("id"))
+        )
+        for row in rows:
+            label = _daily_report_state_label(row["lead__search_state"])
+            counts[label] = counts.get(label, 0) + int(row["c"] or 0)
+    elif metric == "delivery_failures":
+        rows = (
+            LeadConversationLog.objects.filter(
+                conversation_date__gte=first_day,
+                conversation_date__lte=last_day,
+                remarks__icontains=DELIVERY_FAILED_MARKER,
+            )
+            .values("lead__search_state")
+            .annotate(c=Count("id"))
+        )
+        for row in rows:
+            label = _daily_report_state_label(row["lead__search_state"])
+            counts[label] = counts.get(label, 0) + int(row["c"] or 0)
+
+    return [
+        {"state": state, "count": count}
+        for state, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    ]
+
+
+def _monthly_report_all_state_breakdowns(
+    start: datetime, end: datetime, first_day: date, last_day: date
+) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for metric, label in DAILY_REPORT_METRICS.items():
+        for item in _monthly_report_state_breakdown(metric, start, end, first_day, last_day):
+            rows.append(
+                {
+                    "metric_key": metric,
+                    "metric_label": label,
+                    "state": item["state"],
+                    "count": item["count"],
+                }
+            )
+    return rows
+
+
+def _monthly_report_daily_rows(first_day: date, last_day: date) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    day = first_day
+    while day <= last_day:
+        summary = _daily_report_summary(day)
+        rows.append({"date": day, **summary})
+        day += timedelta(days=1)
+    return rows
+
+
+def _report_leads_for_period(start: datetime, end: datetime) -> list[Lead]:
     lead_ids: set[int] = set()
     lead_ids.update(
         Lead.objects.filter(
@@ -973,13 +1141,10 @@ def _daily_report_leads(report_date: date) -> list[Lead]:
             whatsapp_sent_at__lt=end,
         ).values_list("pk", flat=True)
     )
-    # Only leads with at least one outbound message that day (real WhatsApp activity).
     active_lead_ids = [pk for pk in lead_ids if outbound_counts.get(pk, 0) > 0]
     if not active_lead_ids:
         return []
-    leads = list(
-        Lead.objects.filter(pk__in=active_lead_ids).order_by("name", "pk")
-    )
+    leads = list(Lead.objects.filter(pk__in=active_lead_ids).order_by("name", "pk"))
     for lead in leads:
         phones = lead_phone_list(lead)
         lead.report_phone_display = " · ".join(phones) if phones else ""
@@ -991,14 +1156,20 @@ def _daily_report_leads(report_date: date) -> list[Lead]:
     return leads
 
 
+def _monthly_report_leads(start: datetime, end: datetime) -> list[Lead]:
+    return _report_leads_for_period(start, end)
+
+
+def _daily_report_leads(report_date: date) -> list[Lead]:
+    start, end = _daily_report_day_bounds(report_date)
+    return _report_leads_for_period(start, end)
+
+
 def _daily_report_context(request) -> dict:
     report_date = _resolve_daily_report_date(request)
     tz = campaign_timezone()
     today = django_timezone.now().astimezone(tz).date()
     report_leads = _daily_report_leads(report_date)
-    selected_metric = (request.GET.get("metric") or "").strip().lower()
-    if selected_metric not in DAILY_REPORT_METRICS:
-        selected_metric = ""
     return {
         "nav_active": "reports",
         "report_date": report_date,
@@ -1010,14 +1181,17 @@ def _daily_report_context(request) -> dict:
         "report_leads": report_leads,
         "report_lead_count": len(report_leads),
         "report_metrics": DAILY_REPORT_METRICS,
-        "report_selected_metric": selected_metric,
-        "report_selected_metric_label": DAILY_REPORT_METRICS.get(selected_metric, ""),
-        "report_state_breakdown": (
-            _daily_report_state_breakdown(report_date, selected_metric)
-            if selected_metric
-            else []
-        ),
+        "report_breakdown_payload": {
+            "date_iso": report_date.isoformat(),
+            "metrics": DAILY_REPORT_METRICS,
+            "breakdowns": {
+                key: _daily_report_state_breakdown(report_date, key)
+                for key in DAILY_REPORT_METRICS
+            },
+        },
         "daily_report_export_url": reverse("daily_report_export_xlsx"),
+        "monthly_report_export_url": reverse("monthly_report_export_xlsx"),
+        "report_month_iso": f"{report_date.year:04d}-{report_date.month:02d}",
         "campaign_timezone": str(tz),
     }
 
@@ -1095,6 +1269,103 @@ def daily_report_export_xlsx(request):
     wb.save(buf)
     buf.seek(0)
     fname = f"daily_report_{report_date.isoformat()}_{datetime.now().strftime('%H%M')}.xlsx"
+    resp = HttpResponse(
+        buf.getvalue(),
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    resp["Content-Disposition"] = f'attachment; filename="{fname}"'
+    return resp
+
+
+@require_GET
+def monthly_report_export_xlsx(request):
+    """Download monthly outreach summary for a calendar month."""
+    year, month = _resolve_report_month(request)
+    start, end, first_day, last_day = _month_bounds(year, month)
+    try:
+        from openpyxl import Workbook
+    except ImportError:
+        return HttpResponse(
+            "openpyxl is not installed. Run: pip install openpyxl",
+            status=503,
+            content_type="text/plain; charset=utf-8",
+        )
+
+    summary = _monthly_report_summary(start, end, first_day, last_day)
+    report_leads = _monthly_report_leads(start, end)
+    state_breakdown_rows = _monthly_report_all_state_breakdowns(start, end, first_day, last_day)
+    daily_rows = _monthly_report_daily_rows(first_day, last_day)
+    month_label = f"{year:04d}-{month:02d}"
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Monthly summary"
+    ws.append(["Month", month_label])
+    ws.append(["Period", f"{first_day.isoformat()} to {last_day.isoformat()}"])
+    ws.append(["Timezone", str(campaign_timezone())])
+    ws.append([])
+    ws.append(["First messages sent", summary["first_sends"]])
+    ws.append(["Outbound messages", summary["outbound_messages"]])
+    ws.append(["Client replies", summary["inbound_replies"]])
+    ws.append(["Conversation log entries", summary["log_entries"]])
+    ws.append(["Delivery failures", summary["delivery_failures"]])
+    ws.append([])
+    ws.append(
+        [
+            "Name",
+            "State / area",
+            "Contact number",
+            "First send in month",
+            "Outbound",
+            "Inbound",
+            "Status",
+        ]
+    )
+    for lead in report_leads:
+        ws.append(
+            [
+                lead.name,
+                lead.report_location_display,
+                lead.report_phone_display,
+                "Yes" if lead.report_first_send_today else "",
+                lead.report_outbound_count,
+                lead.report_inbound_count,
+                lead.report_status_display,
+            ]
+        )
+
+    ws_days = wb.create_sheet("By day")
+    ws_days.append(
+        [
+            "Date",
+            "First sends",
+            "Outbound",
+            "Client replies",
+            "Log entries",
+            "Delivery failures",
+        ]
+    )
+    for row in daily_rows:
+        ws_days.append(
+            [
+                row["date"].isoformat(),
+                row["first_sends"],
+                row["outbound_messages"],
+                row["inbound_replies"],
+                row["log_entries"],
+                row["delivery_failures"],
+            ]
+        )
+
+    ws_states = wb.create_sheet("By state")
+    ws_states.append(["Metric", "State", "Count"])
+    for row in state_breakdown_rows:
+        ws_states.append([row["metric_label"], row["state"], row["count"]])
+
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    fname = f"monthly_report_{month_label}_{datetime.now().strftime('%H%M')}.xlsx"
     resp = HttpResponse(
         buf.getvalue(),
         content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
