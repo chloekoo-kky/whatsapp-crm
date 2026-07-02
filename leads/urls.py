@@ -27,6 +27,7 @@ from leads.views import (
     whatsapp_pending_count,
     bulk_action_by_group,
     chat_inbox,
+    chat_sync_conversations,
     send_free_text,
     chain_brand_exempt,
     chain_brand_mark_contacted,
@@ -149,6 +150,11 @@ urlpatterns = [
         "leads/ajax/chat/inbox/<int:pk>/",
         chat_inbox,
         name="chat_inbox",
+    ),
+    path(
+        "leads/ajax/chat/sync/<int:pk>/",
+        chat_sync_conversations,
+        name="chat_sync_conversations",
     ),
     path(
         "leads/ajax/chat/send_free_text/<int:pk>/",

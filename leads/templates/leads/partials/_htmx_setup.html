@@ -339,6 +339,36 @@
 
   };
 
+  window.__refreshOpenChatInbox = function (leadId) {
+
+    if (leadId == null) return;
+
+    var root = document.getElementById("chat-modal-container");
+
+    if (!root || !root.innerHTML.trim()) return;
+
+    var title = root.querySelector('[id^="chat-inbox-title-"]');
+
+    if (!title || title.id !== "chat-inbox-title-" + leadId) return;
+
+    var panel = root.querySelector(".chat-inbox-messages");
+
+    if (!panel || !window.htmx) return;
+
+    var url = panel.getAttribute("data-chat-poll-url");
+
+    if (!url) return;
+
+    window.htmx.ajax("GET", url, { target: panel, swap: "innerHTML" });
+
+  };
+
+  document.body.addEventListener("chatInboxRefresh", function (evt) {
+
+    window.__refreshOpenChatInbox(evt.detail);
+
+  });
+
   window.__startChatInboxPolling = function () {
 
     window.__stopChatInboxPolling();

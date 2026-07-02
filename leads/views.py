@@ -59,7 +59,7 @@ from leads.models import (
     WhatsAppConfig,
     WhatsAppScriptTemplate,
 )
-from leads.chat_messages import chat_messages_for_lead
+from leads.chat_messages import chat_messages_for_lead, refresh_chat_messages_for_lead
 from leads.whatsapp_webhook import (
     DELIVERY_FAILED_MARKER,
     handle_meta_webhook_verify,
@@ -1181,6 +1181,38 @@ def chat_inbox(request, pk: int):
     )
     html = render_to_string(template_name, context, request=request)
     return HttpResponse(html)
+
+
+@csrf_protect
+@require_POST
+def chat_sync_conversations(request, pk: int):
+    """HTMX: re-import WhatsApp logs and relabel free-text outbound rows as You."""
+    lead = get_object_or_404(Lead, pk=pk)
+    stats = refresh_chat_messages_for_lead(lead)
+    ctx = _lead_grid_action_context(request, lead)
+    enriched, _ = _dashboard_prepare_clinics(_leads_tab_base_qs().filter(pk=lead.pk))
+    if enriched:
+        ctx["lead"] = enriched[0]
+    html = render_to_string(
+        "leads/partials/_lead_grid_bottom_actions.html",
+        ctx,
+        request=request,
+    )
+    response = HttpResponse(html)
+    response["HX-Trigger"] = json.dumps(
+        {
+            "chatInboxRefresh": lead.pk,
+            "chatSyncDone": {
+                "leadId": lead.pk,
+                "added": stats["added"],
+                "repaired": stats["repaired"],
+                "total": stats["total"],
+            },
+        }
+    )
+    response["HX-Retarget"] = f"#lead-bottom-actions-{lead.pk}"
+    response["HX-Reswap"] = "outerHTML"
+    return response
 
 
 @csrf_protect

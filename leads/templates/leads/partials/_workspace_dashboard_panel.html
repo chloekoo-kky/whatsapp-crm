@@ -194,8 +194,8 @@
             </div>
           </div>
           <div id="leads-controls-bar" class="sticky top-0 z-20 -mx-4 flex flex-wrap items-center gap-2 border-t border-slate-100 bg-white/95 px-4 py-2.5 backdrop-blur-sm supports-[backdrop-filter]:bg-white/85 sm:-mx-5 sm:px-5">
-            <label class="inline-flex min-h-[2.5rem] cursor-pointer select-none items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-sm transition hover:border-indigo-200/90 hover:bg-slate-50/80 focus-within:outline-none focus-within:ring-2 focus-within:ring-indigo-500/30" title="Every row or card visible after filters">
-              <input type="checkbox" id="select-all-clinics" class="h-4 w-4 shrink-0 rounded border-slate-300 text-indigo-600 focus:ring-2 focus:ring-indigo-500/35" aria-label="Select all leads in current view" />
+            <label class="inline-flex min-h-[2.5rem] cursor-pointer select-none items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-sm transition hover:border-indigo-200/90 hover:bg-slate-50/80 focus-within:outline-none focus-within:ring-2 focus-within:ring-indigo-500/30" title="Select all leads visible on this page">
+              <input type="checkbox" id="select-all-clinics" class="h-4 w-4 shrink-0 rounded border-slate-300 text-indigo-600 focus:ring-2 focus:ring-indigo-500/35" aria-label="Select all leads on this page" />
               <span class="text-xs font-semibold text-slate-700">Select all</span>
             </label>
             <button type="button" id="filter-very-important-only"
@@ -223,8 +223,9 @@
               </select>
             </label>
             <div class="ml-auto flex flex-wrap items-center justify-end gap-2">
+              {% include "leads/partials/_leads_pagination_controls.html" %}
               <div class="min-w-[11.5rem] max-w-xs shrink-0">
-                {% include "leads/partials/_hunt_option_toggle.html" with toggle_id="chat-indicator-poll-toggle" toggle_name="chat_indicator_poll" toggle_label="Live chat badges" toggle_desc_id="chat-indicator-poll-desc" toggle_desc="When on, poll every few seconds for reply and queue updates on lead cards. When off, badges refresh only when you switch tabs or send messages." toggle_checked=True toggle_title="Periodic chat-indicator polling for the current folder" %}
+                {% include "leads/partials/_hunt_option_toggle.html" with toggle_id="chat-indicator-poll-toggle" toggle_name="chat_indicator_poll" toggle_label="Live chat badges" toggle_desc_id="chat-indicator-poll-desc" toggle_desc="When on, poll about every 15 seconds for reply updates on lead cards (only in folders with sent WhatsApp). When off, badges refresh when you switch tabs or send messages." toggle_checked=True toggle_title="Periodic chat-indicator polling for the current folder" %}
               </div>
               <div class="flex min-h-[2.5rem] items-center gap-0.5 rounded-xl border border-slate-200 bg-slate-50 p-1 shadow-inner" role="group" aria-label="Table layout">
                 <button type="button" class="view-mode-btn rounded-lg px-3 py-2 text-xs font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/35" data-view-mode="list" aria-pressed="true">List</button>

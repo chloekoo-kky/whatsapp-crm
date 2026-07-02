@@ -197,13 +197,16 @@ def _inbound_body_exists(lead: Lead, body: str, *, created_at) -> bool:
     ).exists()
 
 
-def _repair_outbound_template_rows(lead: Lead) -> None:
+def _repair_outbound_template_rows(lead: Lead) -> int:
     """Clear mis-tagged template labels on free-text Business app / agent replies."""
+    repaired = 0
     for msg in ChatMessage.objects.filter(lead=lead, is_outbound=True):
         if outbound_message_is_template(msg):
             continue
         if (msg.template_name or "").strip():
             ChatMessage.objects.filter(pk=msg.pk).update(template_name="")
+            repaired += 1
+    return repaired
 
 
 @transaction.atomic
@@ -285,6 +288,20 @@ def chat_messages_for_lead(lead: Lead) -> list[ChatMessage]:
     return list(
         ChatMessage.objects.filter(lead=lead).order_by("created_at", "id")
     )
+
+
+@transaction.atomic
+def refresh_chat_messages_for_lead(lead: Lead) -> dict[str, int]:
+    """Re-import WhatsApp conversation logs and relabel free-text outbound as You."""
+    before = ChatMessage.objects.filter(lead=lead).count()
+    sync_chat_messages_from_logs(lead)
+    after_sync = ChatMessage.objects.filter(lead=lead).count()
+    repaired = _repair_outbound_template_rows(lead)
+    return {
+        "added": max(0, after_sync - before),
+        "repaired": repaired,
+        "total": ChatMessage.objects.filter(lead=lead).count(),
+    }
 
 
 # Backwards-compatible alias

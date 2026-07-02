@@ -1,0 +1,22 @@
+{% load clinic_display %}
+
+{% if lead|whatsapp_dispatched %}
+
+<button type="button"
+  class="lead-chat-sync-btn relative inline-flex h-9 w-9 items-center justify-center rounded-lg border border-violet-200/90 bg-white text-violet-600 shadow-sm transition-all duration-300 hover:border-violet-300 hover:bg-violet-50/90 hover:text-violet-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/30"
+  hx-post="{% url 'chat_sync_conversations' pk=lead.id %}"
+  hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
+  hx-vals='{"group_id": "{{ current_group_id }}"}'
+  hx-target="#lead-bottom-actions-{{ lead.id }}"
+  hx-swap="outerHTML"
+  hx-indicator="this"
+  hx-on:click="event.stopPropagation()"
+  title="Sync chat from WhatsApp logs (temporary)"
+  aria-label="Sync chat conversations">
+  <span class="inline-flex" aria-hidden="true">
+    <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+  </span>
+  <svg class="htmx-indicator absolute h-3.5 w-3.5 animate-spin text-violet-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+</button>
+
+{% endif %}

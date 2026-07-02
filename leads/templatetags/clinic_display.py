@@ -1,4 +1,5 @@
 from django import template
+from django.utils import dateformat
 from django.utils.safestring import mark_safe
 
 from leads.display import (
@@ -73,3 +74,15 @@ def chat_time(value):
     except (TypeError, ValueError, OSError):
         return ""
     return local.strftime("%H:%M")
+
+
+@register.filter
+def campaign_datetime(value, fmt="M j, Y · g:i A"):
+    """Render datetimes in the WhatsApp campaign timezone (Asia/Kuala_Lumpur by default)."""
+    if value is None:
+        return ""
+    try:
+        local = value.astimezone(campaign_timezone())
+    except (TypeError, ValueError, OSError):
+        return ""
+    return dateformat.format(local, str(fmt))

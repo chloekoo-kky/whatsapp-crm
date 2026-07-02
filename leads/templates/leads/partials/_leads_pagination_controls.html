@@ -1,0 +1,19 @@
+<div id="leads-pagination-bar" class="flex min-h-[2.5rem] flex-wrap items-center justify-end gap-2">
+  <label class="inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-600 shadow-sm transition hover:border-slate-300 hover:bg-slate-50/80 focus-within:ring-2 focus-within:ring-indigo-500/35" title="Number of leads shown per page">
+    <span class="pl-0.5 text-slate-500">Per page</span>
+    <select id="leads-per-page-select" class="max-w-[4.5rem] cursor-pointer border-0 bg-transparent py-1 pr-6 text-xs font-semibold text-slate-700 focus:outline-none focus:ring-0" aria-label="Leads per page">
+      <option value="24">24</option>
+      <option value="48" selected>48</option>
+      <option value="96">96</option>
+    </select>
+  </label>
+  <div id="leads-pagination-controls" class="inline-flex min-h-[2.5rem] items-center gap-0.5 rounded-xl border border-slate-200 bg-white px-1 py-1 shadow-sm" role="navigation" aria-label="Lead list pages">
+    <button type="button" id="leads-page-prev" class="inline-flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/35 disabled:cursor-not-allowed disabled:opacity-40" aria-label="Previous page" title="Previous page">
+      <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/></svg>
+    </button>
+    <span id="leads-page-status" class="min-w-[4.5rem] px-1 text-center text-xs font-semibold tabular-nums text-slate-600" aria-live="polite">1 / 1</span>
+    <button type="button" id="leads-page-next" class="inline-flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/35 disabled:cursor-not-allowed disabled:opacity-40" aria-label="Next page" title="Next page">
+      <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
+    </button>
+  </div>
+</div>

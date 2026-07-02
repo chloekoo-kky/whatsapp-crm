@@ -59,7 +59,9 @@
       const leadConversationLogUrlTemplate = "/leads/api/clinic/__ID__/conversation-log/";
       const defaultLimit = {{ hunt_limit_default|default:100 }};
       const REQUIRE_WEBSITE_KEY = "clinic_crm_require_website";
+      const LEADS_PER_PAGE_KEY = "clinic_crm_leads_per_page";
       const CHAT_INDICATOR_POLL_KEY = "clinic_crm_chat_indicator_poll";
+      const CHAT_INDICATOR_POLL_MS = 15000;
       const VIEW_MODE_KEY = "clinic_crm_clinic_view";
       const LEAD_SORT_KEY = "clinic_crm_lead_sort";
       const shopTypesApiPath = "/leads/api/shop-types/";
@@ -146,7 +148,7 @@
           if (typeof window.refreshSelectionVisuals === 'function') window.refreshSelectionVisuals();
           if (typeof window.refreshSetCategoryButtonState === 'function') window.refreshSetCategoryButtonState();
           if (typeof window.refreshBulkAssignGroupButtonState === 'function') window.refreshBulkAssignGroupButtonState();
-          if (typeof window.applyTableFilter === 'function') window.applyTableFilter();
+          if (typeof window.applyTableFilter === 'function') window.applyTableFilter({ resetPage: false });
         } catch (err) {
           console.error(err);
           window.alert('Network error while removing lead from queue.');
@@ -293,6 +295,24 @@
           if (stored !== null) return stored === '1' || stored === 'true';
         } catch (e) { /* ignore */ }
         return true;
+      }
+
+      function isLeadsDashboardVisible() {
+        var dashPanel = document.getElementById('workspace-panel-dashboard');
+        return !!dashPanel && !dashPanel.hasAttribute('hidden') && !document.hidden;
+      }
+
+      function folderHasWhatsAppLeads() {
+        var tbody = document.getElementById('clinics-table-body');
+        if (!tbody) return false;
+        return tbody.querySelector('tr.clinic-row[data-whatsapp-dispatched="1"]') !== null;
+      }
+
+      function shouldPollLeadChatIndicators() {
+        if (!isChatIndicatorPollingEnabled()) return false;
+        if (!isLeadsDashboardVisible()) return false;
+        if (!document.getElementById('clinics-grid-inner')) return false;
+        return folderHasWhatsAppLeads();
       }
 
       function setLeadVipStarVisual(btn, on) {
@@ -552,12 +572,104 @@
 
         rebindLeadCardHtmx(id);
         flashClinicRowAfterSave(id);
-        applyTableFilter();
+        applyTableFilter({ resetPage: false });
         refreshSelectAllState();
         refreshSelectionVisuals();
       }
 
       const selectAll = document.getElementById('select-all-clinics');
+      let currentLeadPage = 1;
+
+      function readLeadsPerPage() {
+        var allowed = { 24: true, 48: true, 96: true };
+        try {
+          var stored = parseInt(localStorage.getItem(LEADS_PER_PAGE_KEY) || '48', 10);
+          if (allowed[stored]) return stored;
+        } catch (e) { /* ignore */ }
+        return 48;
+      }
+
+      function syncLeadsPerPageSelect() {
+        var sel = document.getElementById('leads-per-page-select');
+        if (!sel) return;
+        var perPage = String(readLeadsPerPage());
+        if (sel.value !== perPage) sel.value = perPage;
+      }
+
+      function getFilteredClinicRowsInOrder() {
+        var tbody = document.getElementById('clinics-table-body');
+        if (!tbody) return [];
+        return Array.from(tbody.querySelectorAll('tr.clinic-row:not(.hidden)'));
+      }
+
+      function updateLeadPaginationControls(totalFiltered, totalPages) {
+        var statusEl = document.getElementById('leads-page-status');
+        var prevBtn = document.getElementById('leads-page-prev');
+        var nextBtn = document.getElementById('leads-page-next');
+        var controls = document.getElementById('leads-pagination-controls');
+        if (statusEl) {
+          statusEl.textContent = totalFiltered
+            ? String(currentLeadPage) + ' / ' + String(totalPages)
+            : '0 / 0';
+        }
+        if (prevBtn) prevBtn.disabled = currentLeadPage <= 1 || totalFiltered === 0;
+        if (nextBtn) nextBtn.disabled = currentLeadPage >= totalPages || totalFiltered === 0;
+        if (controls) {
+          controls.classList.toggle('opacity-60', totalFiltered === 0);
+        }
+      }
+
+      function applyLeadPagination(resetPage) {
+        syncLeadsPerPageSelect();
+        var perPage = readLeadsPerPage();
+        if (resetPage) currentLeadPage = 1;
+        var rows = getFilteredClinicRowsInOrder();
+        var totalFiltered = rows.length;
+        var totalPages = Math.max(1, Math.ceil(totalFiltered / perPage) || 1);
+        if (currentLeadPage > totalPages) currentLeadPage = totalPages;
+        if (currentLeadPage < 1) currentLeadPage = 1;
+        var start = (currentLeadPage - 1) * perPage;
+        var end = start + perPage;
+        var visibleIds = Object.create(null);
+        rows.forEach(function (row, idx) {
+          if (idx >= start && idx < end) {
+            var id = row.getAttribute('data-clinic-id');
+            if (id) visibleIds[id] = true;
+          }
+        });
+        document.querySelectorAll('.clinic-row').forEach(function (row) {
+          var id = row.getAttribute('data-clinic-id');
+          var filterHidden = row.classList.contains('hidden');
+          if (filterHidden) {
+            row.classList.remove('lead-page-hidden');
+            return;
+          }
+          row.classList.toggle('lead-page-hidden', !visibleIds[id]);
+        });
+        document.querySelectorAll('.lead-card-container').forEach(function (cell) {
+          var row = cell.querySelector('.clinic-row');
+          if (!row) return;
+          var id = row.getAttribute('data-clinic-id');
+          var filterHidden = cell.classList.contains('hidden');
+          if (filterHidden) {
+            cell.classList.remove('lead-page-hidden');
+            return;
+          }
+          cell.classList.toggle('lead-page-hidden', !visibleIds[id]);
+        });
+        updateLeadPaginationControls(totalFiltered, totalPages);
+        clearSelectionsForHiddenRows();
+        refreshSelectAllState();
+        refreshSelectionVisuals();
+        refreshGridCardsDraggable();
+      }
+
+      function goToLeadPage(page) {
+        var next = parseInt(page, 10);
+        if (!next || next < 1) return;
+        currentLeadPage = next;
+        applyLeadPagination(false);
+      }
 
       function getActiveClinicsViewRoot() {
         const listEl = document.getElementById('clinics-view-list');
@@ -569,7 +681,7 @@
       function getVisibleClinicRows(root) {
         const scope = root || getActiveClinicsViewRoot();
         if (!scope) return [];
-        return Array.from(scope.querySelectorAll('.clinic-row:not(.hidden)'));
+        return Array.from(scope.querySelectorAll('.clinic-row:not(.hidden):not(.lead-page-hidden)'));
       }
 
       function setLeadCheckboxSelected(leadId, on) {
@@ -581,7 +693,7 @@
       }
 
       function clearSelectionsForHiddenRows() {
-        document.querySelectorAll('.clinic-row.hidden').forEach(function (row) {
+        document.querySelectorAll('.clinic-row.hidden, .clinic-row.lead-page-hidden').forEach(function (row) {
           const cb = row.querySelector('.clinic-select-cb');
           if (cb && cb.checked) setLeadCheckboxSelected(cb.value, false);
         });
@@ -863,17 +975,19 @@
 
       window.__startLeadChatIndicatorPolling = function () {
         window.__stopLeadChatIndicatorPolling();
-        if (!isChatIndicatorPollingEnabled()) return;
-        if (!document.getElementById('clinics-grid-inner')) return;
+        if (!shouldPollLeadChatIndicators()) return;
         window.__refreshLeadChatIndicators();
         leadChatIndicatorPollTimer = window.setInterval(function () {
+          if (!shouldPollLeadChatIndicators()) {
+            window.__stopLeadChatIndicatorPolling();
+            return;
+          }
           window.__refreshLeadChatIndicators();
-        }, 3000);
+        }, CHAT_INDICATOR_POLL_MS);
       };
 
       window.__syncLeadChatIndicatorPolling = function () {
-        if (!document.getElementById('clinics-grid-inner')) return;
-        if (isChatIndicatorPollingEnabled()) {
+        if (shouldPollLeadChatIndicators()) {
           window.__startLeadChatIndicatorPolling();
         } else {
           window.__stopLeadChatIndicatorPolling();
@@ -1470,7 +1584,7 @@
         } catch (e) { /* ignore */ }
         refreshSelectAllState();
         refreshSelectionVisuals();
-        applyTableFilter();
+        applyTableFilter({ resetPage: false });
         if (typeof window.__ensureGridHtmxBound === "function") window.__ensureGridHtmxBound();
       }
 
@@ -1545,7 +1659,9 @@
           localStorage.setItem(LEAD_SORT_KEY, leadSortMode);
         } catch (e) { /* ignore */ }
         syncLeadSortSelect();
+        currentLeadPage = 1;
         applyLeadSort();
+        applyLeadPagination(false);
         refreshSelectAllState();
         refreshSelectionVisuals();
       }
@@ -1578,7 +1694,7 @@
           btn.classList.toggle('ring-1', on);
           btn.classList.toggle('ring-emerald-400/50', on);
         }
-        applyTableFilter();
+        applyTableFilter({ resetPage: true });
         refreshSelectAllState();
         refreshSelectionVisuals();
       }
@@ -1599,17 +1715,38 @@
           var sentBtn = e.target.closest('#filter-sent-message-only');
           if (sentBtn) {
             toggleLeadFilterButton(sentBtn, 'emerald');
+            return;
+          }
+          if (e.target.closest('#leads-page-prev')) {
+            e.preventDefault();
+            goToLeadPage(currentLeadPage - 1);
+            return;
+          }
+          if (e.target.closest('#leads-page-next')) {
+            e.preventDefault();
+            goToLeadPage(currentLeadPage + 1);
           }
         });
         document.body.addEventListener('change', function (e) {
           if (e.target && e.target.id === 'lead-sort-select') {
             setLeadSortMode(e.target.value || 'default');
           }
+          if (e.target && e.target.id === 'leads-per-page-select') {
+            var perPage = parseInt(e.target.value, 10);
+            if (!perPage) return;
+            try {
+              localStorage.setItem(LEADS_PER_PAGE_KEY, String(perPage));
+            } catch (err) { /* ignore */ }
+            currentLeadPage = 1;
+            applyLeadPagination(false);
+          }
         });
       }
 
       initClinicViewModeFromStorage();
       applyLeadSort();
+      syncLeadsPerPageSelect();
+      applyTableFilter({ resetPage: false });
 
       bindSelectableSurface(document.getElementById('clinics-view-list'));
       bindSelectableSurface(document.getElementById('clinics-view-grid'));
@@ -1708,7 +1845,7 @@
         var si = document.getElementById('table-search');
         if (!si) return;
         si.value = text;
-        applyTableFilter();
+        applyTableFilter({ resetPage: true });
         si.focus();
       }
 
@@ -1755,14 +1892,15 @@
         var si = document.getElementById('table-search');
         if (si && si.value.trim() === tag) {
           si.value = '';
-          applyTableFilter();
+          applyTableFilter({ resetPage: true });
         } else {
           applyLeadFilterTag(tag);
         }
         refreshLeadFilterTagActiveState();
       });
 
-      function applyTableFilter() {
+      function applyTableFilter(opts) {
+        opts = opts || {};
         const searchInput = document.getElementById('table-search');
         const q = searchInput ? searchInput.value.trim().toLowerCase() : '';
         const vipBtn = document.getElementById('filter-very-important-only');
@@ -1781,11 +1919,9 @@
           var cell = row.closest('.lead-card-container');
           if (cell) cell.classList.toggle('hidden', hide);
         });
-        clearSelectionsForHiddenRows();
-        refreshGridCardsDraggable();
+        if (opts.resetPage) currentLeadPage = 1;
+        applyLeadPagination(false);
         refreshTableSearchClearVisibility();
-        refreshSelectAllState();
-        refreshSelectionVisuals();
         refreshFilteredLeadCount();
       }
 
@@ -1798,6 +1934,8 @@
         if (vip && vip.getAttribute('aria-pressed') === 'true') return false;
         var sent = document.getElementById('filter-sent-message-only');
         if (sent && sent.getAttribute('aria-pressed') === 'true') return false;
+        var filtered = getFilteredClinicRowsInOrder();
+        if (filtered.length > readLeadsPerPage()) return false;
         return true;
       }
 
@@ -1817,7 +1955,7 @@
       const searchInput = document.getElementById('table-search');
       if (searchInput) {
         searchInput.addEventListener('input', function () {
-          applyTableFilter();
+          applyTableFilter({ resetPage: true });
           refreshLeadFilterTagActiveState();
         });
       }
@@ -1827,7 +1965,7 @@
           si.value = '';
           si.focus();
         }
-        applyTableFilter();
+        applyTableFilter({ resetPage: true });
         refreshLeadFilterTagActiveState();
       });
       refreshTableSearchClearVisibility();
@@ -1904,19 +2042,29 @@
       }
 
       function syncLeadsAfterGroupFragmentSwap() {
+        currentLeadPage = 1;
         initClinicViewModeFromStorage();
         applyLeadSort();
         refreshSelectAllState();
         refreshSelectionVisuals();
         refreshSetCategoryButtonState();
         refreshBulkAssignGroupButtonState();
-        applyTableFilter();
+        applyTableFilter({ resetPage: false });
         if (window.htmx) {
           var tb = document.getElementById('clinics-table-body');
           if (tb) window.htmx.process(tb);
         }
         if (typeof window.__ensureGridHtmxBound === "function") window.__ensureGridHtmxBound();
+        if (typeof window.__syncLeadChatIndicatorPolling === "function") {
+          window.__syncLeadChatIndicatorPolling();
+        }
       }
+
+      document.addEventListener('visibilitychange', function () {
+        if (typeof window.__syncLeadChatIndicatorPolling === 'function') {
+          window.__syncLeadChatIndicatorPolling();
+        }
+      });
 
       (function bindLeadGroupTabDragDrop() {
         var wrap = document.getElementById('lead-group-tabs');
@@ -2542,7 +2690,7 @@
                 });
                 syncRowDataSearch(row, undefined, undefined, data.is_very_important);
               });
-              applyTableFilter();
+              applyTableFilter({ resetPage: false });
             })
             .catch(function () {
               starNodes.forEach(function (b) { b.disabled = false; });
@@ -2620,7 +2768,7 @@
               refreshSetCategoryButtonState();
               refreshBulkAssignGroupButtonState();
               refreshTableSearchClearVisibility();
-              applyTableFilter();
+              applyTableFilter({ resetPage: false });
             })
             .catch(function () {
               window.alert('Network error while deleting.');
