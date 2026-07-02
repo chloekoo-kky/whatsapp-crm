@@ -46,6 +46,13 @@ class Command(BaseCommand):
             action="store_true",
             help="Only import listings that have a website or social URL in Serper (skip Maps-only links).",
         )
+        parser.add_argument(
+            "--exclude-keyword",
+            action="append",
+            dest="exclude_keywords",
+            default=[],
+            help="Skip listings whose name/address contains this term (repeatable). Also sent to Serper as -term.",
+        )
 
     def handle(self, *args, **options) -> None:
         city = (options["city"] or "").strip()
@@ -78,6 +85,7 @@ class Command(BaseCommand):
             country=country,
             search_query_record=rec,
             require_website=require_website,
+            exclude_keywords=options.get("exclude_keywords"),
         )
         if result.errors:
             for err in result.errors:
@@ -92,10 +100,16 @@ class Command(BaseCommand):
                     else ""
                 )
                 + (
-                    f"; no website/social skipped: {result.skipped_no_website}."
-                    if getattr(result, "skipped_no_website", 0)
-                    else "."
+                    f"; no website/social skipped: {result.skipped_no_website}"
+                    if result.skipped_no_website
+                    else ""
                 )
+                + (
+                    f"; excluded keyword skipped: {result.skipped_excluded}"
+                    if result.skipped_excluded
+                    else ""
+                )
+                + "."
             )
         )
 

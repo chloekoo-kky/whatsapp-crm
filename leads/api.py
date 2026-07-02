@@ -196,6 +196,14 @@ class HuntIn(Schema):
 
     )
 
+    exclude_keywords: Optional[list[str]] = Field(
+
+        default=None,
+
+        description="Skip listings whose name/address contains any of these terms; also appended to Serper query as -term.",
+
+    )
+
 
 
 
@@ -327,6 +335,8 @@ def hunt_leads(request, body: HuntIn):
             search_query_record=rec,
 
             require_website=body.require_website,
+
+            exclude_keywords=body.exclude_keywords,
 
         )
 

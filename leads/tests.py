@@ -2171,3 +2171,96 @@ class SerperHuntPaginationTests(TestCase):
         self.assertEqual(mock_post.call_count, 1)
         self.assertEqual(result.places_seen, 15)
         self.assertEqual(result.created, 15)
+
+
+class SerperExcludeKeywordTests(TestCase):
+    def test_build_search_q_appends_exclude_suffix(self):
+        from leads.services import _build_search_q
+
+        q = _build_search_q(
+            "Iskandar Puteri",
+            "",
+            shop_keyword="klinik",
+            state="Johor",
+            country="Malaysia",
+            exclude_keywords=["dental", "24 jam"],
+        )
+        self.assertIn("klinik Iskandar Puteri Johor Malaysia", q)
+        self.assertIn("-dental", q)
+        self.assertIn('-"24 jam"', q)
+
+    @override_settings(SERPER_API_KEY="test-key", HUNT_MAX_LIMIT=100)
+    @patch("leads.services.requests.post")
+    def test_fetch_skips_excluded_places(self, mock_post):
+        from leads.services import fetch_leads_from_serper
+
+        places = [
+            {"title": "Alpha Klinik", "address": "St 1", "phoneNumber": "+60121111111"},
+            {"title": "Beta Dental Clinic", "address": "St 2", "phoneNumber": "+60122222222"},
+        ]
+        resp = Mock()
+        resp.raise_for_status = Mock()
+        resp.json.return_value = {"places": places}
+        mock_post.return_value = resp
+
+        result = fetch_leads_from_serper(
+            "Johor Bahru",
+            "",
+            num=20,
+            shop_keyword="klinik",
+            state="Johor",
+            country="Malaysia",
+            exclude_keywords=["dental"],
+        )
+
+        payload = mock_post.call_args[1]["json"]
+        self.assertIn("-dental", payload["q"])
+        self.assertEqual(result.skipped_excluded, 1)
+        self.assertEqual(result.places_seen, 1)
+        self.assertEqual(result.created, 1)
+        self.assertEqual(Lead.objects.get().name, "Alpha Klinik")
+
+
+class BackupExportTests(TestCase):
+    def test_build_backup_workbook_filters_selected_leads(self):
+        from io import BytesIO
+
+        from openpyxl import load_workbook
+
+        from leads.backup import build_backup_workbook
+
+        group = LeadGroup.objects.create(name="Quality", sort_order=10)
+        keep = Lead.objects.create(name="Keep Me", address="1 Road", group=group)
+        Lead.objects.create(name="Drop Me", address="2 Road", group=group)
+        ChatMessage.objects.create(lead=keep, body="Hi", is_outbound=True)
+        ChatMessage.objects.create(
+            lead=Lead.objects.get(name="Drop Me"),
+            body="Bye",
+            is_outbound=False,
+        )
+
+        wb = build_backup_workbook(lead_ids=[keep.pk])
+        buf = BytesIO()
+        wb.save(buf)
+        loaded = load_workbook(BytesIO(buf.getvalue()), read_only=True, data_only=True)
+
+        lead_rows = list(loaded["Leads"].iter_rows(min_row=2, values_only=True))
+        self.assertEqual(len(lead_rows), 1)
+        self.assertEqual(lead_rows[0][1], "Keep Me")
+
+        chat_rows = list(loaded["ChatMessages"].iter_rows(min_row=2, values_only=True))
+        self.assertEqual(len(chat_rows), 1)
+        self.assertEqual(chat_rows[0][0], keep.pk)
+
+        group_rows = list(loaded["Groups"].iter_rows(min_row=2, values_only=True))
+        self.assertEqual(len(group_rows), 1)
+        self.assertEqual(group_rows[0][0], "Quality")
+
+    def test_export_full_backup_view_accepts_ids_query(self):
+        keep = Lead.objects.create(name="Export Me", address="9 Road")
+        Lead.objects.create(name="Other", address="8 Road")
+        client = Client()
+        response = client.get(reverse("export_full_backup"), {"ids": str(keep.pk)})
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", response["Content-Type"])
+        self.assertIn(f"clinic_crm_backup_1_leads_", response["Content-Disposition"])

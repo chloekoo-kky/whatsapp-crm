@@ -194,16 +194,25 @@ def _p_json(value, default):
 # --------------------------------------------------------------------------- #
 # Export
 # --------------------------------------------------------------------------- #
-def build_backup_workbook():
-    """Return an openpyxl Workbook containing the full leads backup."""
+def build_backup_workbook(lead_ids: list[int] | None = None):
+    """Return an openpyxl Workbook containing the leads backup.
+
+    When ``lead_ids`` is provided, only those leads (and their chats/logs/groups) are
+    included. Otherwise every lead in the database is exported.
+    """
     from openpyxl import Workbook  # local import: optional dependency
 
     wb = Workbook()
+    id_filter = [int(x) for x in (lead_ids or []) if int(x) > 0] if lead_ids else None
+
+    lead_qs = Lead.objects.select_related("group").order_by("display_order", "-created_at")
+    if id_filter:
+        lead_qs = lead_qs.filter(pk__in=id_filter)
 
     ws_leads = wb.active
     ws_leads.title = "Leads"
     ws_leads.append(LEAD_HEADERS)
-    for c in Lead.objects.select_related("group").iterator(chunk_size=500):
+    for c in lead_qs.iterator(chunk_size=500):
         ws_leads.append(
             [
                 c.pk,
@@ -238,14 +247,24 @@ def build_backup_workbook():
 
     ws_groups = wb.create_sheet("Groups")
     ws_groups.append(GROUP_HEADERS)
-    for g in LeadGroup.objects.all().order_by("sort_order", "name"):
+    if id_filter:
+        group_ids = [
+            gid
+            for gid in lead_qs.values_list("group_id", flat=True).distinct()
+            if gid is not None
+        ]
+        groups_qs = LeadGroup.objects.filter(pk__in=group_ids).order_by("sort_order", "name")
+    else:
+        groups_qs = LeadGroup.objects.all().order_by("sort_order", "name")
+    for g in groups_qs:
         ws_groups.append([g.name, g.sort_order])
 
     ws_chats = wb.create_sheet("ChatMessages")
     ws_chats.append(CHAT_HEADERS)
-    for m in ChatMessage.objects.all().order_by("lead_id", "created_at", "id").iterator(
-        chunk_size=1000
-    ):
+    chat_qs = ChatMessage.objects.all().order_by("lead_id", "created_at", "id")
+    if id_filter:
+        chat_qs = chat_qs.filter(lead_id__in=id_filter)
+    for m in chat_qs.iterator(chunk_size=1000):
         ws_chats.append(
             [
                 m.lead_id,
@@ -259,9 +278,10 @@ def build_backup_workbook():
 
     ws_logs = wb.create_sheet("ConversationLogs")
     ws_logs.append(LOG_HEADERS)
-    for log in LeadConversationLog.objects.all().order_by(
-        "lead_id", "created_at", "id"
-    ).iterator(chunk_size=1000):
+    log_qs = LeadConversationLog.objects.all().order_by("lead_id", "created_at", "id")
+    if id_filter:
+        log_qs = log_qs.filter(lead_id__in=id_filter)
+    for log in log_qs.iterator(chunk_size=1000):
         ws_logs.append(
             [
                 log.lead_id,

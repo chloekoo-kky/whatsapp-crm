@@ -1449,8 +1449,15 @@
       if (backupAllBtn) {
         backupAllBtn.addEventListener('click', function () {
           exportXlsxShowErr('');
+          const ids = getUniqueSelectedLeadIds();
+          var url = exportFullBackupUrl || '/leads/export/backup/';
+          if (ids.length) {
+            var q = new URLSearchParams();
+            q.set('ids', ids.join(','));
+            url += (url.indexOf('?') >= 0 ? '&' : '?') + q.toString();
+          }
           backupAllSetBusy(true);
-          fetch(exportFullBackupUrl, { method: 'GET', credentials: 'same-origin' })
+          fetch(url, { method: 'GET', credentials: 'same-origin' })
             .then(function (res) {
               if (!res.ok) {
                 return res.text().then(function (txt) {
@@ -2035,6 +2042,109 @@
         refreshHuntKeywordTagActiveState();
       });
       renderHuntKeywordTags();
+
+      const HUNT_EXCLUDE_TAGS_KEY = 'clinic_crm_hunt_exclude_keywords';
+      const HUNT_EXCLUDE_TAG_MAX = 12;
+      const HUNT_EXCLUDE_TAG_LEN_MAX = 80;
+
+      function loadHuntExcludeKeywords() {
+        try {
+          var raw = localStorage.getItem(HUNT_EXCLUDE_TAGS_KEY);
+          if (!raw) return [];
+          var parsed = JSON.parse(raw);
+          if (!Array.isArray(parsed)) return [];
+          var out = [];
+          var seen = Object.create(null);
+          parsed.forEach(function (item) {
+            var text = String(item || '').trim().slice(0, HUNT_EXCLUDE_TAG_LEN_MAX);
+            if (!text || seen[text]) return;
+            seen[text] = true;
+            out.push(text);
+          });
+          return out.slice(0, HUNT_EXCLUDE_TAG_MAX);
+        } catch (e) {
+          return [];
+        }
+      }
+
+      function saveHuntExcludeKeywords(tags) {
+        try {
+          localStorage.setItem(HUNT_EXCLUDE_TAGS_KEY, JSON.stringify(tags.slice(0, HUNT_EXCLUDE_TAG_MAX)));
+        } catch (e) { /* ignore */ }
+      }
+
+      function refreshHuntExcludeTagSaveButton() {
+        var saveBtn = document.getElementById('hunt-exclude-tag-save');
+        var input = document.getElementById('hunt-exclude-keyword-input');
+        if (!saveBtn || !input) return;
+        var text = input.value.trim();
+        var tags = loadHuntExcludeKeywords();
+        saveBtn.disabled = !text || tags.indexOf(text) !== -1;
+      }
+
+      function renderHuntExcludeTags() {
+        var list = document.getElementById('hunt-exclude-tags-list');
+        if (!list) return;
+        var tags = loadHuntExcludeKeywords();
+        list.innerHTML = tags.map(function (tag) {
+          return (
+            '<span class="lead-filter-tag hunt-exclude-tag" data-tag="' + escapeLeadFilterTagHtml(tag) + '" role="listitem">' +
+              '<span class="lead-filter-tag-apply text-rose-700" title="Excluded on hunt: ' + escapeLeadFilterTagHtml(tag) + '">' +
+                escapeLeadFilterTagHtml(tag) +
+              '</span>' +
+              '<button type="button" class="lead-filter-tag-remove" aria-label="Remove exclude tag ' + escapeLeadFilterTagHtml(tag) + '" title="Remove tag">×</button>' +
+            '</span>'
+          );
+        }).join('');
+        refreshHuntExcludeTagSaveButton();
+      }
+
+      function addHuntExcludeTag(text) {
+        var cleaned = String(text || '').trim().slice(0, HUNT_EXCLUDE_TAG_LEN_MAX);
+        if (!cleaned) return;
+        var tags = loadHuntExcludeKeywords();
+        if (tags.indexOf(cleaned) !== -1) return;
+        tags.push(cleaned);
+        saveHuntExcludeKeywords(tags);
+        renderHuntExcludeTags();
+      }
+
+      function removeHuntExcludeTag(text) {
+        var cleaned = String(text || '').trim();
+        if (!cleaned) return;
+        var tags = loadHuntExcludeKeywords().filter(function (t) { return t !== cleaned; });
+        saveHuntExcludeKeywords(tags);
+        renderHuntExcludeTags();
+      }
+
+      document.getElementById('hunt-exclude-tag-save')?.addEventListener('click', function () {
+        var input = document.getElementById('hunt-exclude-keyword-input');
+        if (!input) return;
+        addHuntExcludeTag(input.value);
+        input.value = '';
+        input.focus();
+      });
+
+      document.getElementById('hunt-exclude-tags-list')?.addEventListener('click', function (e) {
+        var removeBtn = e.target.closest('.lead-filter-tag-remove');
+        if (!removeBtn) return;
+        e.preventDefault();
+        e.stopPropagation();
+        var chip = removeBtn.closest('.hunt-exclude-tag');
+        if (!chip) return;
+        removeHuntExcludeTag(chip.getAttribute('data-tag') || '');
+      });
+
+      document.getElementById('hunt-exclude-keyword-input')?.addEventListener('input', refreshHuntExcludeTagSaveButton);
+      document.getElementById('hunt-exclude-keyword-input')?.addEventListener('keydown', function (e) {
+        if (e.key !== 'Enter') return;
+        e.preventDefault();
+        var input = document.getElementById('hunt-exclude-keyword-input');
+        if (!input || !input.value.trim()) return;
+        addHuntExcludeTag(input.value);
+        input.value = '';
+      });
+      renderHuntExcludeTags();
 
       function applyTableFilter(opts) {
         opts = opts || {};
@@ -3514,6 +3624,7 @@
         const query = document.getElementById('query').value.trim();
         const shopKeywordEl = document.getElementById('hunt-shop-keyword');
         const shop_keyword = shopKeywordEl ? shopKeywordEl.value.trim() : '';
+        const exclude_keywords = loadHuntExcludeKeywords();
         const limitRaw = huntLimitInput ? huntLimitInput.value : String(defaultLimit);
         const limit = parseInt(limitRaw, 10) || defaultLimit;
         const qs = new URLSearchParams({ limit: String(limit) });
@@ -3527,7 +3638,7 @@
               'X-CSRFToken': getCsrfToken(),
             },
             credentials: 'same-origin',
-            body: JSON.stringify({ city, state, country, query, shop_keyword, require_website }),
+            body: JSON.stringify({ city, state, country, query, shop_keyword, require_website, exclude_keywords }),
           });
           const data = await res.json().catch(function () { return {}; });
 

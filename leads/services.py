@@ -104,6 +104,40 @@ class FetchLeadsResult:
     created_ids: list[int]
     skipped_no_website: int = 0
     skipped_duplicate_phone: int = 0
+    skipped_excluded: int = 0
+
+
+def _normalize_exclude_keywords(raw) -> list[str]:
+    """Normalize exclude terms from a comma string or JSON list."""
+    if raw is None:
+        return []
+    items = raw if isinstance(raw, list) else str(raw).split(",")
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        term = " ".join(str(item or "").strip().split()).lower()
+        if not term or term in seen:
+            continue
+        seen.add(term)
+        out.append(term[:80])
+    return out[:12]
+
+
+def _format_exclude_query_suffix(exclude_keywords: list[str]) -> str:
+    parts: list[str] = []
+    for term in exclude_keywords:
+        if " " in term:
+            parts.append(f'-"{term}"')
+        else:
+            parts.append(f"-{term}")
+    return " ".join(parts)
+
+
+def _place_matches_exclude_keywords(normalized: dict[str, Any], exclude_keywords: list[str]) -> bool:
+    if not exclude_keywords:
+        return False
+    hay = f"{normalized.get('name', '')} {normalized.get('address', '')}".lower()
+    return any(term in hay for term in exclude_keywords)
 
 
 def _serper_api_key() -> str:
@@ -114,7 +148,13 @@ def _serper_api_key() -> str:
 
 
 def _build_search_q(
-    city: str, query: str, *, shop_keyword: str, state: str = "", country: str = ""
+    city: str,
+    query: str,
+    *,
+    shop_keyword: str,
+    state: str = "",
+    country: str = "",
+    exclude_keywords: list[str] | None = None,
 ) -> str:
     city = city.strip()
     if not city:
@@ -130,7 +170,11 @@ def _build_search_q(
         parts.append(st)
     if ctry:
         parts.append(ctry)
-    return " ".join(parts).strip()
+    base = " ".join(parts).strip()
+    suffix = _format_exclude_query_suffix(exclude_keywords or [])
+    if suffix:
+        return f"{base} {suffix}".strip()
+    return base
 
 
 def _extract_serper_maps_places(data: dict[str, Any]) -> list[Any]:
@@ -506,6 +550,7 @@ def fetch_leads_from_serper(
     country: str = "",
     search_query_record: SearchQueryRecord | None = None,
     require_website: bool = False,
+    exclude_keywords: list[str] | None = None,
 ) -> FetchLeadsResult:
     """
     Call Serper Maps API (paginated) and persist leads. Uniqueness is (name, address); phone
@@ -517,13 +562,24 @@ def fetch_leads_from_serper(
 
     When ``require_website`` is true, skip listings whose Maps payload has no non-Maps website
     or social profile URL (Facebook, Instagram, etc.).
+
+    ``exclude_keywords`` are appended to the Serper query as ``-term`` and also used to skip
+    listings whose name or address contains any excluded phrase.
     """
     kw = (shop_keyword or "").strip()
     if not kw:
         raise ValueError("shop_keyword is required (non-empty).")
     kw = kw[:160]
+    exclude_terms = _normalize_exclude_keywords(exclude_keywords)
 
-    search_q = _build_search_q(city, query, shop_keyword=kw, state=state, country=country)
+    search_q = _build_search_q(
+        city,
+        query,
+        shop_keyword=kw,
+        state=state,
+        country=country,
+        exclude_keywords=exclude_terms,
+    )
     city_clean = city.strip()[:255]
     state_clean = (state or "").strip()[:255]
     query_clean = ((query or "").strip() or kw)[:255]
@@ -537,6 +593,7 @@ def fetch_leads_from_serper(
     skipped_existing = 0
     skipped_duplicate_phone = 0
     skipped_no_website = 0
+    skipped_excluded = 0
     places_seen = 0
     created_ids: list[int] = []
     record_pk = search_query_record.pk if search_query_record else None
@@ -578,6 +635,9 @@ def fetch_leads_from_serper(
             continue
         if require_website and not _is_meaningful_online_presence(normalized["website"]):
             skipped_no_website += 1
+            continue
+        if _place_matches_exclude_keywords(normalized, exclude_terms):
+            skipped_excluded += 1
             continue
         places_seen += 1
         pn = normalize_manual_phone(normalized["phone_number"]) or normalized["phone_number"]
@@ -657,6 +717,12 @@ def fetch_leads_from_serper(
             'Uncheck "Website/social only" to import Maps-only rows, or widen the hunt.'
         )
 
+    if exclude_terms and raw_places_count > 0 and places_seen == 0 and not errors:
+        errors.append(
+            f"All {raw_places_count} Serper listing(s) matched exclude keyword(s): "
+            f"{', '.join(exclude_terms[:5])}."
+        )
+
     return FetchLeadsResult(
         created=created,
         skipped_existing=skipped_existing,
@@ -665,4 +731,5 @@ def fetch_leads_from_serper(
         created_ids=created_ids,
         skipped_no_website=skipped_no_website,
         skipped_duplicate_phone=skipped_duplicate_phone,
+        skipped_excluded=skipped_excluded,
     )

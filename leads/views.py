@@ -2543,15 +2543,24 @@ def clinics_export_xlsx(request):
 
 @require_GET
 def export_full_backup_xlsx(request):
-    """Download a full multi-sheet ``.xlsx`` backup of all leads across every folder.
+    """Download a multi-sheet ``.xlsx`` backup (re-importable after deploy).
 
-    Includes leads (with group membership), groups, WhatsApp chats, conversation
-    logs, the campaign config, and script templates — re-importable after deploy.
+    Query params:
+    - ``ids``: optional comma-separated lead primary keys. When set, only those leads
+      (plus their chats, logs, and folder rows) are included. Otherwise all leads
+      across every folder are exported.
     """
+    raw_ids = (request.GET.get("ids") or "").strip()
+    id_list: list[int] | None = None
+    if raw_ids:
+        parsed = [int(x) for x in raw_ids.split(",") if x.strip().isdigit()]
+        if parsed:
+            id_list = parsed
+
     try:
         from leads.backup import build_backup_workbook
 
-        wb = build_backup_workbook()
+        wb = build_backup_workbook(lead_ids=id_list)
     except ImportError:
         return HttpResponse(
             "openpyxl is not installed. Run: pip install openpyxl",
@@ -2562,7 +2571,11 @@ def export_full_backup_xlsx(request):
     buf = BytesIO()
     wb.save(buf)
     buf.seek(0)
-    fname = f"clinic_crm_backup_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
+    stamp = datetime.now().strftime("%Y%m%d_%H%M")
+    if id_list:
+        fname = f"clinic_crm_backup_{len(id_list)}_leads_{stamp}.xlsx"
+    else:
+        fname = f"clinic_crm_backup_{stamp}.xlsx"
     resp = HttpResponse(
         buf.getvalue(),
         content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -2632,6 +2645,9 @@ def hunt_trigger(request):
         require_website = require_website.strip().lower() in ("1", "true", "yes", "on")
     if not isinstance(require_website, bool):
         require_website = bool(require_website)
+    exclude_keywords = body.get("exclude_keywords")
+    if exclude_keywords is None:
+        exclude_keywords = body.get("exclude_keyword")
     if not city:
         return JsonResponse({"detail": "city is required."}, status=400)
     if not state:
@@ -2657,6 +2673,7 @@ def hunt_trigger(request):
             country=country,
             search_query_record=rec,
             require_website=require_website,
+            exclude_keywords=exclude_keywords,
         )
     except ValueError as exc:
         return JsonResponse({"detail": str(exc)}, status=400)
@@ -2675,6 +2692,8 @@ def hunt_trigger(request):
         message += f" Skipped {result.skipped_duplicate_phone} duplicate phone(s)."
     if getattr(result, "skipped_no_website", 0):
         message += f" Skipped {result.skipped_no_website} with no website/social link."
+    if getattr(result, "skipped_excluded", 0):
+        message += f" Skipped {result.skipped_excluded} matching exclude keyword(s)."
     return JsonResponse(
         {
             "ok": True,
@@ -2682,6 +2701,7 @@ def hunt_trigger(request):
             "skipped_existing": result.skipped_existing,
             "skipped_duplicate_phone": result.skipped_duplicate_phone,
             "skipped_no_website": getattr(result, "skipped_no_website", 0),
+            "skipped_excluded": getattr(result, "skipped_excluded", 0),
             "places_seen": result.places_seen,
             "errors": result.errors,
             "message": message,
