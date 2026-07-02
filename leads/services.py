@@ -378,16 +378,16 @@ def _place_maps_url(raw: dict[str, Any]) -> str:
         v = raw.get(key)
         if isinstance(v, str) and v.startswith("http"):
             return v.strip()
-    lat = raw.get("latitude")
-    lng = raw.get("longitude")
-    if lat is not None and lng is not None:
-        return f"https://www.google.com/maps/search/?api=1&query={lat},{lng}"
     title = (raw.get("title") or "").strip()
     addr = (raw.get("address") or "").strip()
     if title or addr:
         from urllib.parse import quote
 
-        return "https://www.google.com/maps/search/?api=1&query=" + quote(f"{title} {addr}")
+        return "https://www.google.com/maps/search/?api=1&query=" + quote(f"{title} {addr}".strip())
+    lat = raw.get("latitude")
+    lng = raw.get("longitude")
+    if lat is not None and lng is not None:
+        return f"https://www.google.com/maps/search/?api=1&query={lat},{lng}"
     return ""
 
 

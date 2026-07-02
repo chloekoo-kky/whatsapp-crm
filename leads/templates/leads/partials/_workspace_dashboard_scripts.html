@@ -10,7 +10,8 @@
         var d = phoneDigitsOnly(s);
         if (!d) return '';
         if (d.indexOf('00') === 0) d = d.slice(2);
-        if (d.indexOf('60') === 0 && d.length >= 11) return '+' + d.slice(0, 15);
+        if (d.indexOf('6060') === 0 && d.length >= 11) d = '60' + d.slice(4);
+        if (d.indexOf('60') === 0 && d.length >= 10) return '+' + d.slice(0, 15);
         if (d.charAt(0) === '0' && d.length >= 9) return '+60' + d.slice(1, 15);
         if (d.length >= 8 && d.length <= 10) return '+60' + d.slice(0, 15);
         if (d.length >= 11) return '+' + d.slice(0, 15);
@@ -1898,6 +1899,142 @@
         }
         refreshLeadFilterTagActiveState();
       });
+
+      const HUNT_KEYWORD_TAGS_KEY = 'clinic_crm_hunt_keyword_tags';
+      const HUNT_KEYWORD_TAG_MAX = 24;
+      const HUNT_KEYWORD_TAG_LEN_MAX = 120;
+
+      function loadHuntKeywordTags() {
+        try {
+          var raw = localStorage.getItem(HUNT_KEYWORD_TAGS_KEY);
+          if (!raw) return [];
+          var parsed = JSON.parse(raw);
+          if (!Array.isArray(parsed)) return [];
+          var out = [];
+          var seen = Object.create(null);
+          parsed.forEach(function (item) {
+            var text = String(item || '').trim().slice(0, HUNT_KEYWORD_TAG_LEN_MAX);
+            if (!text || seen[text]) return;
+            seen[text] = true;
+            out.push(text);
+          });
+          return out.slice(0, HUNT_KEYWORD_TAG_MAX);
+        } catch (e) {
+          return [];
+        }
+      }
+
+      function saveHuntKeywordTags(tags) {
+        try {
+          localStorage.setItem(HUNT_KEYWORD_TAGS_KEY, JSON.stringify(tags.slice(0, HUNT_KEYWORD_TAG_MAX)));
+        } catch (e) { /* ignore */ }
+      }
+
+      function refreshHuntKeywordTagSaveButton() {
+        var saveBtn = document.getElementById('hunt-keyword-tag-save');
+        var input = document.getElementById('hunt-shop-keyword');
+        if (!saveBtn || !input) return;
+        var text = input.value.trim();
+        var tags = loadHuntKeywordTags();
+        saveBtn.disabled = !text || tags.indexOf(text) !== -1;
+      }
+
+      function refreshHuntKeywordTagActiveState() {
+        var input = document.getElementById('hunt-shop-keyword');
+        var current = input ? input.value.trim() : '';
+        document.querySelectorAll('.hunt-keyword-tag').forEach(function (chip) {
+          var label = chip.getAttribute('data-tag') || '';
+          var active = current && label === current;
+          chip.classList.toggle('lead-filter-tag--active', active);
+          var applyBtn = chip.querySelector('.lead-filter-tag-apply');
+          if (applyBtn) applyBtn.setAttribute('aria-pressed', active ? 'true' : 'false');
+        });
+      }
+
+      function renderHuntKeywordTags() {
+        var list = document.getElementById('hunt-keyword-tags-list');
+        if (!list) return;
+        var tags = loadHuntKeywordTags();
+        var input = document.getElementById('hunt-shop-keyword');
+        var current = input ? input.value.trim() : '';
+        list.innerHTML = tags.map(function (tag) {
+          var active = current && tag === current;
+          return (
+            '<span class="lead-filter-tag hunt-keyword-tag' + (active ? ' lead-filter-tag--active' : '') + '" data-tag="' + escapeLeadFilterTagHtml(tag) + '" role="listitem">' +
+              '<button type="button" class="lead-filter-tag-apply" aria-pressed="' + (active ? 'true' : 'false') + '" title="Use keyword: ' + escapeLeadFilterTagHtml(tag) + '">' +
+                escapeLeadFilterTagHtml(tag) +
+              '</button>' +
+              '<button type="button" class="lead-filter-tag-remove" aria-label="Remove keyword tag ' + escapeLeadFilterTagHtml(tag) + '" title="Remove tag">×</button>' +
+            '</span>'
+          );
+        }).join('');
+        refreshHuntKeywordTagSaveButton();
+      }
+
+      function applyHuntKeywordTag(text) {
+        var input = document.getElementById('hunt-shop-keyword');
+        if (!input) return;
+        input.value = text;
+        refreshHuntKeywordTagSaveButton();
+        refreshHuntKeywordTagActiveState();
+        input.focus();
+      }
+
+      function addHuntKeywordTag(text) {
+        var cleaned = String(text || '').trim().slice(0, HUNT_KEYWORD_TAG_LEN_MAX);
+        if (!cleaned) return;
+        var tags = loadHuntKeywordTags();
+        if (tags.indexOf(cleaned) !== -1) return;
+        tags.unshift(cleaned);
+        saveHuntKeywordTags(tags);
+        renderHuntKeywordTags();
+      }
+
+      function removeHuntKeywordTag(text) {
+        var cleaned = String(text || '').trim();
+        if (!cleaned) return;
+        var tags = loadHuntKeywordTags().filter(function (t) { return t !== cleaned; });
+        saveHuntKeywordTags(tags);
+        renderHuntKeywordTags();
+        refreshHuntKeywordTagActiveState();
+      }
+
+      document.getElementById('hunt-keyword-tag-save')?.addEventListener('click', function () {
+        var input = document.getElementById('hunt-shop-keyword');
+        if (!input) return;
+        addHuntKeywordTag(input.value);
+      });
+
+      document.getElementById('hunt-keyword-tags-list')?.addEventListener('click', function (e) {
+        var removeBtn = e.target.closest('.lead-filter-tag-remove');
+        if (removeBtn) {
+          e.preventDefault();
+          e.stopPropagation();
+          var chip = removeBtn.closest('.hunt-keyword-tag');
+          if (!chip) return;
+          removeHuntKeywordTag(chip.getAttribute('data-tag') || '');
+          return;
+        }
+        var applyBtn = e.target.closest('.lead-filter-tag-apply');
+        if (!applyBtn) return;
+        var chip = applyBtn.closest('.hunt-keyword-tag');
+        if (!chip) return;
+        var tag = chip.getAttribute('data-tag') || '';
+        var input = document.getElementById('hunt-shop-keyword');
+        if (input && input.value.trim() === tag) {
+          input.value = '';
+          refreshHuntKeywordTagSaveButton();
+        } else {
+          applyHuntKeywordTag(tag);
+        }
+        refreshHuntKeywordTagActiveState();
+      });
+
+      document.getElementById('hunt-shop-keyword')?.addEventListener('input', function () {
+        refreshHuntKeywordTagSaveButton();
+        refreshHuntKeywordTagActiveState();
+      });
+      renderHuntKeywordTags();
 
       function applyTableFilter(opts) {
         opts = opts || {};

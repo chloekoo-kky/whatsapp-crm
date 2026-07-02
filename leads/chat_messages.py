@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import re
+from datetime import timedelta
 
 from django.db import transaction
+from django.utils import timezone
 
 from leads.models import ChatMessage, Lead, LeadConversationLog
+
+_OUTBOUND_MERGE_WINDOW = timedelta(minutes=15)
 
 _CLIENT_LOG_RE = re.compile(r"^\[WhatsApp · client\]\s*(.*)$", re.DOTALL)
 _AGENT_LOG_RE = re.compile(r"^\[WhatsApp · agent\]\s*(.*)$", re.DOTALL)
@@ -65,6 +69,90 @@ def outbound_message_is_template(msg: ChatMessage) -> bool:
     return msg.body.strip() == expected
 
 
+def _outbound_merge_window_start(created_at):
+    anchor = created_at or timezone.now()
+    return anchor - _OUTBOUND_MERGE_WINDOW
+
+
+def _pick_canonical_outbound_duplicate(a: ChatMessage, b: ChatMessage) -> tuple[ChatMessage, ChatMessage]:
+    """Prefer the row with a Meta wamid, then any id, then the earliest row."""
+
+    def score(msg: ChatMessage) -> tuple[int, float]:
+        mid = (msg.meta_message_id or "").strip()
+        rank = 0
+        if mid.startswith("wamid."):
+            rank += 4
+        elif mid:
+            rank += 2
+        ts = msg.created_at.timestamp() if msg.created_at else 0.0
+        return (rank, -ts)
+
+    if score(a) >= score(b):
+        return a, b
+    return b, a
+
+
+def _find_outbound_merge_candidate(
+    lead: Lead,
+    *,
+    body: str,
+    template_name: str,
+    meta_message_id: str,
+    created_at=None,
+) -> ChatMessage | None:
+    """Match API send rows (YCloud id) with later webhook rows (wamid)."""
+    mid = (meta_message_id or "").strip()
+    snapshot = (body or "").strip()
+    tpl = (template_name or "").strip()
+    if not mid or not snapshot:
+        return None
+
+    qs = ChatMessage.objects.filter(
+        lead=lead,
+        is_outbound=True,
+        body=snapshot,
+        created_at__gte=_outbound_merge_window_start(created_at),
+    )
+    qs = qs.filter(template_name=tpl) if tpl else qs.filter(template_name="")
+
+    for msg in qs.order_by("-created_at", "-id"):
+        existing_mid = (msg.meta_message_id or "").strip()
+        if existing_mid == mid:
+            return None
+        if not existing_mid or existing_mid != mid:
+            return msg
+    return None
+
+
+def _dedupe_duplicate_outbound_rows(lead: Lead) -> int:
+    """Drop duplicate outbound rows created by API send + webhook ID mismatch."""
+    msgs = list(
+        ChatMessage.objects.filter(lead=lead, is_outbound=True).order_by("created_at", "id")
+    )
+    to_delete: set[int] = set()
+    for i, msg in enumerate(msgs):
+        if msg.pk in to_delete:
+            continue
+        for other in msgs[i + 1 :]:
+            if other.pk in to_delete:
+                continue
+            if (msg.template_name or "") != (other.template_name or ""):
+                continue
+            if msg.body.strip() != other.body.strip():
+                continue
+            delta = abs((other.created_at - msg.created_at).total_seconds())
+            if delta > _OUTBOUND_MERGE_WINDOW.total_seconds():
+                continue
+            keep, drop = _pick_canonical_outbound_duplicate(msg, other)
+            to_delete.add(drop.pk)
+            if keep.pk == other.pk:
+                msg = keep
+    if not to_delete:
+        return 0
+    deleted, _ = ChatMessage.objects.filter(pk__in=to_delete).delete()
+    return deleted
+
+
 def record_outbound_chat_message(
     lead: Lead,
     *,
@@ -79,7 +167,7 @@ def record_outbound_chat_message(
     )
 
     if template_name is None:
-        name = whatsapp_template_name()
+        name = "" if body is not None else whatsapp_template_name()
     else:
         name = template_name.strip()
     if body is not None:
@@ -124,6 +212,14 @@ def upsert_outbound_chat_message(
             is_outbound=True,
             meta_message_id=mid,
         ).first()
+        if existing is None:
+            existing = _find_outbound_merge_candidate(
+                lead,
+                body=snapshot,
+                template_name=tpl,
+                meta_message_id=mid,
+                created_at=created_at,
+            )
         if existing is not None:
             updates: dict[str, object] = {}
             if snapshot and existing.body.strip() != snapshot:
@@ -133,6 +229,8 @@ def upsert_outbound_chat_message(
                     updates["template_name"] = tpl
             elif snapshot and existing.template_name:
                 updates["template_name"] = ""
+            if (existing.meta_message_id or "").strip() != mid:
+                updates["meta_message_id"] = mid
             if updates:
                 ChatMessage.objects.filter(pk=existing.pk).update(**updates)
                 for field, value in updates.items():
@@ -284,6 +382,7 @@ def sync_chat_messages_from_logs(lead: Lead) -> None:
 
 def chat_messages_for_lead(lead: Lead) -> list[ChatMessage]:
     sync_chat_messages_from_logs(lead)
+    _dedupe_duplicate_outbound_rows(lead)
     _repair_outbound_template_rows(lead)
     return list(
         ChatMessage.objects.filter(lead=lead).order_by("created_at", "id")
@@ -296,9 +395,11 @@ def refresh_chat_messages_for_lead(lead: Lead) -> dict[str, int]:
     before = ChatMessage.objects.filter(lead=lead).count()
     sync_chat_messages_from_logs(lead)
     after_sync = ChatMessage.objects.filter(lead=lead).count()
+    deduped = _dedupe_duplicate_outbound_rows(lead)
     repaired = _repair_outbound_template_rows(lead)
     return {
         "added": max(0, after_sync - before),
+        "deduped": deduped,
         "repaired": repaired,
         "total": ChatMessage.objects.filter(lead=lead).count(),
     }

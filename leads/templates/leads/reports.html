@@ -32,16 +32,19 @@
       <div class="mx-auto max-w-6xl space-y-6">
         <section class="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm">
           <form method="get" action="{% url 'reports' %}" class="flex flex-wrap items-end gap-4">
+            {% if report_selected_metric %}
+            <input type="hidden" name="metric" value="{{ report_selected_metric }}" />
+            {% endif %}
             <div>
               <label for="report_date" class="text-xs font-semibold text-slate-600">Date</label>
               <div class="mt-1 flex items-center gap-2">
-                <a href="{% url 'reports' %}?date={{ report_date_prev }}"
+                <a href="{% url 'reports' %}?date={{ report_date_prev }}{% if report_selected_metric %}&metric={{ report_selected_metric }}{% endif %}"
                    class="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
                    title="Previous day" aria-label="Previous day">‹</a>
                 <input id="report_date" name="date" type="date" value="{{ report_date_iso }}"
                        class="h-10 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/15"
                        onchange="this.form.submit()" />
-                <a href="{% url 'reports' %}?date={{ report_date_next }}"
+                <a href="{% url 'reports' %}?date={{ report_date_next }}{% if report_selected_metric %}&metric={{ report_selected_metric }}{% endif %}"
                    class="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50{% if report_is_today %} pointer-events-none opacity-40{% endif %}"
                    title="Next day" aria-label="Next day">›</a>
               </div>
@@ -59,27 +62,58 @@
         </section>
 
         <section class="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
-          <div class="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm">
-            <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">First sends</p>
-            <p class="mt-1 text-2xl font-bold text-slate-900">{{ report_summary.first_sends }}</p>
-          </div>
-          <div class="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm">
-            <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Outbound</p>
-            <p class="mt-1 text-2xl font-bold text-slate-900">{{ report_summary.outbound_messages }}</p>
-          </div>
-          <div class="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm">
-            <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Client replies</p>
-            <p class="mt-1 text-2xl font-bold text-emerald-700">{{ report_summary.inbound_replies }}</p>
-          </div>
-          <div class="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm">
-            <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Log entries</p>
-            <p class="mt-1 text-2xl font-bold text-slate-900">{{ report_summary.log_entries }}</p>
-          </div>
-          <div class="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm">
-            <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Delivery failures</p>
-            <p class="mt-1 text-2xl font-bold {% if report_summary.delivery_failures %}text-rose-600{% else %}text-slate-900{% endif %}">{{ report_summary.delivery_failures }}</p>
-          </div>
+          {% for metric_key, metric_label in report_metrics.items %}
+          <a href="{% url 'reports' %}?date={{ report_date_iso }}&metric={{ metric_key }}"
+             class="rounded-2xl border bg-white p-4 shadow-sm transition hover:border-emerald-300 hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40{% if report_selected_metric == metric_key %} border-emerald-400 ring-2 ring-emerald-500/20{% else %} border-slate-200/80{% endif %}"
+             aria-pressed="{% if report_selected_metric == metric_key %}true{% else %}false{% endif %}">
+            <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">{{ metric_label }}</p>
+            <p class="mt-1 text-2xl font-bold {% if metric_key == 'inbound_replies' %}text-emerald-700{% elif metric_key == 'delivery_failures' and report_summary.delivery_failures %}text-rose-600{% else %}text-slate-900{% endif %}">
+              {% if metric_key == 'first_sends' %}{{ report_summary.first_sends }}
+              {% elif metric_key == 'outbound_messages' %}{{ report_summary.outbound_messages }}
+              {% elif metric_key == 'inbound_replies' %}{{ report_summary.inbound_replies }}
+              {% elif metric_key == 'log_entries' %}{{ report_summary.log_entries }}
+              {% elif metric_key == 'delivery_failures' %}{{ report_summary.delivery_failures }}
+              {% endif %}
+            </p>
+            <p class="mt-2 text-[11px] font-medium text-slate-400">Click for state breakdown</p>
+          </a>
+          {% endfor %}
         </section>
+
+        {% if report_selected_metric %}
+        <section class="overflow-hidden rounded-2xl border border-emerald-200/80 bg-white shadow-sm">
+          <div class="flex flex-wrap items-center justify-between gap-3 border-b border-emerald-100 bg-emerald-50/60 px-5 py-3">
+            <div>
+              <h2 class="text-sm font-semibold text-slate-900">{{ report_selected_metric_label }} by state</h2>
+              <p class="mt-0.5 text-xs text-slate-500">Breakdown for {{ report_date|date:"F j, Y" }}</p>
+            </div>
+            <a href="{% url 'reports' %}?date={{ report_date_iso }}"
+               class="text-xs font-semibold text-emerald-700 hover:text-emerald-600">Clear breakdown</a>
+          </div>
+          {% if report_state_breakdown %}
+          <div class="overflow-x-auto">
+            <table class="min-w-full text-left text-sm">
+              <thead class="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                <tr>
+                  <th scope="col" class="px-5 py-3">State</th>
+                  <th scope="col" class="px-5 py-3">Count</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-slate-100">
+                {% for row in report_state_breakdown %}
+                <tr class="hover:bg-slate-50/80">
+                  <td class="px-5 py-3 font-medium text-slate-900">{{ row.state }}</td>
+                  <td class="px-5 py-3 text-slate-700">{{ row.count }}</td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+          {% else %}
+          <p class="px-5 py-8 text-center text-sm text-slate-400">No activity recorded for this metric on this day.</p>
+          {% endif %}
+        </section>
+        {% endif %}
 
         <section class="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm">
           <div class="flex items-center justify-between border-b border-slate-100 px-5 py-3">
@@ -103,7 +137,12 @@
               <tbody class="divide-y divide-slate-100">
                 {% for lead in report_leads %}
                 <tr class="hover:bg-slate-50/80">
-                  <td class="px-5 py-3 font-medium text-slate-900">{{ lead.name }}</td>
+                  <td class="px-5 py-3">
+                    <div class="font-medium text-slate-900">{{ lead.name }}</div>
+                    {% if lead.report_location_display %}
+                    <div class="mt-0.5 text-xs text-slate-500">{{ lead.report_location_display }}</div>
+                    {% endif %}
+                  </td>
                   <td class="px-5 py-3 font-mono text-slate-700">
                     {% if lead.report_phone_display %}
                       {{ lead.report_phone_display }}

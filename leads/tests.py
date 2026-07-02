@@ -8,7 +8,13 @@ from django.db.models import Exists, OuterRef
 
 from leads.models import CategoryRule, ChatMessage, Lead, LeadCategoryType, LeadConversationLog, LeadGroup, WhatsAppScriptTemplate
 from leads.chat_messages import record_inbound_chat_message, record_outbound_chat_message
-from leads.display import lead_whatsapp_active_chat, lead_whatsapp_dispatched
+from leads.display import (
+    lead_google_maps_url,
+    lead_phone_list,
+    lead_whatsapp_active_chat,
+    lead_whatsapp_dispatched,
+    normalize_manual_phone,
+)
 from leads.views import _leads_qs_for_tab, _leads_tab_base_qs
 from leads.whatsapp_service import compose_outbound_message, render_script_template
 from leads.whatsapp_webhook import parse_meta_cloud_webhook
@@ -215,6 +221,37 @@ class LeadDisplayPipelineTests(TestCase):
 
         utc = datetime(2026, 7, 1, 2, 41, tzinfo=dt_timezone.utc)
         self.assertEqual(campaign_datetime(utc), "Jul 1, 2026 · 10:41 AM")
+
+    def test_google_maps_url_uses_name_instead_of_coordinate_source(self):
+        lead = Lead.objects.create(
+            name="U.n.i Klinik Iskandar Puteri",
+            address="97 Jalan Suria 2, Iskandar Puteri, Johor",
+            source_url="https://www.google.com/maps/search/?api=1&query=1.453703,103.599190",
+        )
+        url = lead_google_maps_url(lead)
+        self.assertIn("query=", url)
+        self.assertNotIn("1.453703", url)
+        self.assertIn("U.n.i", url)
+        self.assertIn("Iskandar", url)
+
+    def test_normalize_manual_phone_malaysian_landlines(self):
+        self.assertEqual(normalize_manual_phone("07-585 4964"), "+6075854964")
+        self.assertEqual(normalize_manual_phone("03-1234 5678"), "+60312345678")
+        self.assertEqual(normalize_manual_phone("6075854964"), "+6075854964")
+        self.assertEqual(normalize_manual_phone("+6075854964"), "+6075854964")
+
+    def test_normalize_manual_phone_repairs_double_country_prefix(self):
+        self.assertEqual(normalize_manual_phone("+606075854964"), "+6075854964")
+        self.assertEqual(normalize_manual_phone("606075854964"), "+6075854964")
+
+    def test_lead_phone_list_repairs_stored_double_prefix(self):
+        lead = Lead.objects.create(
+            name="Johor Clinic",
+            address="1 Road",
+            phone_number="+606075854964",
+            phone_numbers=["+606075854964"],
+        )
+        self.assertEqual(lead_phone_list(lead), ["+6075854964"])
 
 
 class ActiveChatTabTests(TestCase):
@@ -726,6 +763,92 @@ class YCloudWebhookTests(TestCase):
                 remarks__contains=DELIVERY_FAILED_MARKER,
             ).exists()
         )
+
+    @override_settings(WHATSAPP_FROM_NUMBER="+60126336429")
+    def test_upsert_merges_api_send_and_webhook_ids_for_same_template(self):
+        from django.utils import timezone
+
+        from leads.chat_messages import chat_messages_for_lead, upsert_outbound_chat_message
+        from leads.models import WhatsAppConfig
+
+        groups = ensure_pipeline_system_groups()
+        lead = Lead.objects.create(
+            name="Merge Template Clinic",
+            address="1 Main St",
+            phone_number="+60123456789",
+            group=groups["uncategorized"],
+            whatsapp_status=Lead.WhatsappStatus.SENT,
+        )
+        preview = "Hi~ are you open today? may I know your business hours?"
+        config = WhatsAppConfig.load()
+        config.outbound_template_name = "say_hi"
+        config.meta_message_templates = [
+            {
+                "name": "say_hi",
+                "status": "APPROVED",
+                "language": "en_US",
+                "body": preview,
+            },
+        ]
+        config.save(update_fields=["outbound_template_name", "meta_message_templates"])
+        send_time = timezone.now() - timezone.timedelta(minutes=7)
+        upsert_outbound_chat_message(
+            lead,
+            template_name="say_hi",
+            body=preview,
+            meta_message_id="ycloud_msg_1",
+            created_at=send_time,
+        )
+        upsert_outbound_chat_message(
+            lead,
+            template_name="say_hi",
+            body=preview,
+            meta_message_id="wamid.TEMPLATE123",
+            created_at=timezone.now(),
+        )
+
+        messages = chat_messages_for_lead(lead)
+        self.assertEqual(len(messages), 1)
+        self.assertEqual(messages[0].template_name, "say_hi")
+        self.assertEqual(messages[0].meta_message_id, "wamid.TEMPLATE123")
+        self.assertEqual(messages[0].body, preview)
+
+    @override_settings(WHATSAPP_FROM_NUMBER="+60126336429")
+    def test_upsert_merges_free_text_api_and_webhook_ids(self):
+        from django.utils import timezone
+
+        from leads.chat_messages import chat_messages_for_lead, upsert_outbound_chat_message
+
+        groups = ensure_pipeline_system_groups()
+        lead = Lead.objects.create(
+            name="Merge Free Text Clinic",
+            address="1 Main St",
+            phone_number="+60123456789",
+            group=groups["uncategorized"],
+            whatsapp_status=Lead.WhatsappStatus.SENT,
+        )
+        body = "We open at 9am tomorrow."
+        send_time = timezone.now() - timezone.timedelta(minutes=3)
+        upsert_outbound_chat_message(
+            lead,
+            body=body,
+            meta_message_id="ycloud_text_1",
+            template_name="",
+            created_at=send_time,
+        )
+        upsert_outbound_chat_message(
+            lead,
+            body=body,
+            meta_message_id="wamid.FREE_TEXT_ECHO",
+            template_name="",
+            created_at=timezone.now(),
+        )
+
+        messages = chat_messages_for_lead(lead)
+        self.assertEqual(len(messages), 1)
+        self.assertEqual(messages[0].body, body)
+        self.assertEqual(messages[0].template_name, "")
+        self.assertEqual(messages[0].meta_message_id, "wamid.FREE_TEXT_ECHO")
 
     @override_settings(WHATSAPP_FROM_NUMBER="+60126336429")
     def test_ycloud_smb_echo_webhook_post_syncs_outbound(self):
@@ -1652,6 +1775,8 @@ class DailyReportTests(TestCase):
             address="1 Main St",
             group=get_or_create_uncategorized_group(),
             phone_number="+60111111111",
+            search_state="Selangor",
+            search_city="Petaling Jaya",
             whatsapp_status=Lead.WhatsappStatus.SENT,
             whatsapp_sent_at=start,
         )
@@ -1745,6 +1870,38 @@ class DailyReportTests(TestCase):
         self.assertIn("Alpha Clinic", html)
         self.assertNotIn("Beta Clinic", html)
         self.assertIn("First sends", html)
+        self.assertIn("Selangor / Petaling Jaya", html)
+        self.assertIn("Click for state breakdown", html)
+
+    def test_reports_page_shows_state_breakdown_for_metric(self):
+        client = Client()
+        response = client.get(
+            reverse("reports"),
+            {"date": self.today.isoformat(), "metric": "first_sends"},
+        )
+        self.assertEqual(response.status_code, 200)
+        html = response.content.decode()
+        self.assertIn("First sends by state", html)
+        self.assertIn("Selangor", html)
+
+    def test_daily_report_location_and_state_breakdown_helpers(self):
+        from leads.views import (
+            _daily_report_leads,
+            _daily_report_location_display,
+            _daily_report_state_breakdown,
+        )
+
+        leads = {lead.name: lead for lead in _daily_report_leads(self.today)}
+        self.assertEqual(
+            _daily_report_location_display(leads["Alpha Clinic"]),
+            "Selangor / Petaling Jaya",
+        )
+        self.assertEqual(
+            leads["Alpha Clinic"].report_location_display,
+            "Selangor / Petaling Jaya",
+        )
+        breakdown = _daily_report_state_breakdown(self.today, "first_sends")
+        self.assertEqual(breakdown, [{"state": "Selangor", "count": 1}])
 
     def test_daily_report_export_xlsx(self):
         client = Client()
@@ -1767,11 +1924,26 @@ class DailyReportTests(TestCase):
         header_idx = next(i for i, row in enumerate(rows) if row[0] == "Name")
         self.assertEqual(
             rows[header_idx],
-            ("Name", "Contact number", "First send today", "Outbound", "Inbound", "Status"),
+            (
+                "Name",
+                "State / area",
+                "Contact number",
+                "First send today",
+                "Outbound",
+                "Inbound",
+                "Status",
+            ),
         )
         names = {row[0] for row in rows[header_idx + 1 :]}
         self.assertIn("Alpha Clinic", names)
         self.assertNotIn("Beta Clinic", names)
+        alpha_row = next(row for row in rows[header_idx + 1 :] if row[0] == "Alpha Clinic")
+        self.assertEqual(alpha_row[1], "Selangor / Petaling Jaya")
+
+        ws_states = wb["By state"]
+        state_rows = list(ws_states.iter_rows(values_only=True))
+        self.assertEqual(state_rows[0], ("Metric", "State", "Count"))
+        self.assertIn(("First sends", "Selangor", 1), state_rows)
 
 
 class CategoryRuleManagementTests(TestCase):

@@ -44,8 +44,29 @@ def clinic_card_title(lead: "Lead") -> str:
     return name
 
 
+def _is_coordinate_maps_search_url(url: str) -> bool:
+    """True when a Maps search URL query is lat,lng only (not a named place)."""
+    from urllib.parse import parse_qs, urlparse
+
+    low = (url or "").strip().lower()
+    if "google.com/maps" not in low and "maps.google.com" not in low:
+        return False
+    query = parse_qs(urlparse(url).query).get("query", [""])[0].strip()
+    if not query:
+        return False
+    parts = query.split(",")
+    if len(parts) != 2:
+        return False
+    try:
+        float(parts[0].strip())
+        float(parts[1].strip())
+    except ValueError:
+        return False
+    return True
+
+
 def lead_google_maps_url(lead: "Lead") -> str:
-    """URL to open this lead in Google Maps (saved Maps link, or search by name + address)."""
+    """URL to open this lead in Google Maps (saved place link, or search by name + address)."""
     src = (getattr(lead, "source_url", None) or "").strip()
     if src:
         low = src.lower()
@@ -57,11 +78,14 @@ def lead_google_maps_url(lead: "Lead") -> str:
                 "goo.gl/maps",
                 "maps.app.goo.gl",
             )
-        ):
+        ) and not _is_coordinate_maps_search_url(src):
             return src[:2000]
     name = (getattr(lead, "name", None) or "").strip()
     addr = (getattr(lead, "address", None) or "").strip()
-    q = f"{name} {addr}".strip() or name
+    if name and addr:
+        q = f"{name} {addr}"
+    else:
+        q = name or addr
     if not q:
         return "https://www.google.com/maps"
     return "https://www.google.com/maps/search/?api=1&query=" + quote(q, safe="")
@@ -77,12 +101,18 @@ def lead_phone_list(lead) -> list[str]:
         out: list[str] = []
         for p in raw:
             s = str(p).strip() if p is not None else ""
-            if s and s not in out:
-                out.append(s[:64])
+            if not s:
+                continue
+            normalized = normalize_manual_phone(s) or s
+            if normalized and normalized not in out:
+                out.append(normalized[:64])
         if out:
             return out
     one = (getattr(lead, "phone_number", None) or "").strip()
-    return [one] if one else []
+    if one:
+        normalized = normalize_manual_phone(one) or one
+        return [normalized[:64]]
+    return []
 
 
 def normalize_manual_phone(phone: str) -> str:
@@ -98,7 +128,10 @@ def normalize_manual_phone(phone: str) -> str:
         return ""
     if digits.startswith("00"):
         digits = digits[2:]
-    if digits.startswith("60") and len(digits) >= 11:
+    # Repair double country prefix from prior normalization (e.g. +60607… → +607…).
+    if digits.startswith("6060") and len(digits) >= 11:
+        digits = "60" + digits[4:]
+    if digits.startswith("60") and len(digits) >= 10:
         return "+" + digits[:15]
     if digits[0] == "0" and len(digits) >= 9:
         return "+60" + digits[1:15]

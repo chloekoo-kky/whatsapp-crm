@@ -870,10 +870,13 @@ def send_free_text_to_lead(lead: Lead, text: str) -> tuple[bool, str, Optional["
 
     meta_message_id = message_id_from_response(data)
     now = timezone.now()
+    agent_remarks = f"[WhatsApp · agent] {body}"
+    if meta_message_id:
+        agent_remarks = f"wa-id:{meta_message_id}\n{agent_remarks}"
     LeadConversationLog.objects.create(
         lead=lead,
         conversation_date=now.date(),
-        remarks=f"[WhatsApp · agent] {body}",
+        remarks=agent_remarks,
     )
     chat_msg = record_outbound_chat_message(
         lead,

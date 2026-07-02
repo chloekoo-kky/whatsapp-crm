@@ -776,6 +776,117 @@ def _resolve_daily_report_date(request) -> date:
     return today
 
 
+def _daily_report_state_label(state: str | None) -> str:
+    label = (state or "").strip()
+    return label or "Unknown"
+
+
+def _daily_report_location_display(lead: Lead) -> str:
+    state = (lead.search_state or "").strip()
+    area = (lead.search_city or "").strip()
+    if state and area:
+        return f"{state} / {area}"
+    return state or area or ""
+
+
+DAILY_REPORT_METRICS: dict[str, str] = {
+    "first_sends": "First sends",
+    "outbound_messages": "Outbound",
+    "inbound_replies": "Client replies",
+    "log_entries": "Log entries",
+    "delivery_failures": "Delivery failures",
+}
+
+
+def _daily_report_state_breakdown(report_date: date, metric: str) -> list[dict[str, object]]:
+    """Count a daily metric grouped by lead search state."""
+    if metric not in DAILY_REPORT_METRICS:
+        return []
+
+    start, end = _daily_report_day_bounds(report_date)
+    counts: dict[str, int] = {}
+
+    if metric == "first_sends":
+        rows = (
+            Lead.objects.filter(
+                whatsapp_sent_at__gte=start,
+                whatsapp_sent_at__lt=end,
+            )
+            .values("search_state")
+            .annotate(c=Count("id"))
+        )
+        for row in rows:
+            label = _daily_report_state_label(row["search_state"])
+            counts[label] = counts.get(label, 0) + int(row["c"] or 0)
+    elif metric == "outbound_messages":
+        rows = (
+            ChatMessage.objects.filter(
+                is_outbound=True,
+                created_at__gte=start,
+                created_at__lt=end,
+            )
+            .values("lead__search_state")
+            .annotate(c=Count("id"))
+        )
+        for row in rows:
+            label = _daily_report_state_label(row["lead__search_state"])
+            counts[label] = counts.get(label, 0) + int(row["c"] or 0)
+    elif metric == "inbound_replies":
+        rows = (
+            ChatMessage.objects.filter(
+                is_outbound=False,
+                created_at__gte=start,
+                created_at__lt=end,
+            )
+            .values("lead__search_state")
+            .annotate(c=Count("id"))
+        )
+        for row in rows:
+            label = _daily_report_state_label(row["lead__search_state"])
+            counts[label] = counts.get(label, 0) + int(row["c"] or 0)
+    elif metric == "log_entries":
+        rows = (
+            LeadConversationLog.objects.filter(conversation_date=report_date)
+            .values("lead__search_state")
+            .annotate(c=Count("id"))
+        )
+        for row in rows:
+            label = _daily_report_state_label(row["lead__search_state"])
+            counts[label] = counts.get(label, 0) + int(row["c"] or 0)
+    elif metric == "delivery_failures":
+        rows = (
+            LeadConversationLog.objects.filter(
+                conversation_date=report_date,
+                remarks__icontains=DELIVERY_FAILED_MARKER,
+            )
+            .values("lead__search_state")
+            .annotate(c=Count("id"))
+        )
+        for row in rows:
+            label = _daily_report_state_label(row["lead__search_state"])
+            counts[label] = counts.get(label, 0) + int(row["c"] or 0)
+
+    return [
+        {"state": state, "count": count}
+        for state, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    ]
+
+
+def _daily_report_all_state_breakdowns(report_date: date) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for metric, label in DAILY_REPORT_METRICS.items():
+        for item in _daily_report_state_breakdown(report_date, metric):
+            rows.append(
+                {
+                    "metric_key": metric,
+                    "metric_label": label,
+                    "state": item["state"],
+                    "count": item["count"],
+                }
+            )
+    return rows
+
+
 def _daily_report_summary(report_date: date) -> dict:
     start, end = _daily_report_day_bounds(report_date)
     first_sends = Lead.objects.filter(
@@ -872,6 +983,7 @@ def _daily_report_leads(report_date: date) -> list[Lead]:
     for lead in leads:
         phones = lead_phone_list(lead)
         lead.report_phone_display = " · ".join(phones) if phones else ""
+        lead.report_location_display = _daily_report_location_display(lead)
         lead.report_outbound_count = outbound_counts.get(lead.pk, 0)
         lead.report_inbound_count = inbound_counts.get(lead.pk, 0)
         lead.report_first_send_today = lead.pk in first_send_ids
@@ -884,6 +996,9 @@ def _daily_report_context(request) -> dict:
     tz = campaign_timezone()
     today = django_timezone.now().astimezone(tz).date()
     report_leads = _daily_report_leads(report_date)
+    selected_metric = (request.GET.get("metric") or "").strip().lower()
+    if selected_metric not in DAILY_REPORT_METRICS:
+        selected_metric = ""
     return {
         "nav_active": "reports",
         "report_date": report_date,
@@ -894,6 +1009,14 @@ def _daily_report_context(request) -> dict:
         "report_summary": _daily_report_summary(report_date),
         "report_leads": report_leads,
         "report_lead_count": len(report_leads),
+        "report_metrics": DAILY_REPORT_METRICS,
+        "report_selected_metric": selected_metric,
+        "report_selected_metric_label": DAILY_REPORT_METRICS.get(selected_metric, ""),
+        "report_state_breakdown": (
+            _daily_report_state_breakdown(report_date, selected_metric)
+            if selected_metric
+            else []
+        ),
         "daily_report_export_url": reverse("daily_report_export_xlsx"),
         "campaign_timezone": str(tz),
     }
@@ -926,6 +1049,7 @@ def daily_report_export_xlsx(request):
 
     summary = _daily_report_summary(report_date)
     report_leads = _daily_report_leads(report_date)
+    state_breakdown_rows = _daily_report_all_state_breakdowns(report_date)
     wb = Workbook()
     ws = wb.active
     ws.title = "Daily report"
@@ -938,11 +1062,22 @@ def daily_report_export_xlsx(request):
     ws.append(["Conversation log entries", summary["log_entries"]])
     ws.append(["Delivery failures", summary["delivery_failures"]])
     ws.append([])
-    ws.append(["Name", "Contact number", "First send today", "Outbound", "Inbound", "Status"])
+    ws.append(
+        [
+            "Name",
+            "State / area",
+            "Contact number",
+            "First send today",
+            "Outbound",
+            "Inbound",
+            "Status",
+        ]
+    )
     for lead in report_leads:
         ws.append(
             [
                 lead.name,
+                lead.report_location_display,
                 lead.report_phone_display,
                 "Yes" if lead.report_first_send_today else "",
                 lead.report_outbound_count,
@@ -950,6 +1085,11 @@ def daily_report_export_xlsx(request):
                 lead.report_status_display,
             ]
         )
+
+    ws_states = wb.create_sheet("By state")
+    ws_states.append(["Metric", "State", "Count"])
+    for row in state_breakdown_rows:
+        ws_states.append([row["metric_label"], row["state"], row["count"]])
 
     buf = BytesIO()
     wb.save(buf)

@@ -75,6 +75,16 @@
                     title="Hunt target; used when Maps query is empty; stored on each lead."
                     placeholder="e.g. medical clinic, fitness center"
                     class="hunt-form-input" />
+                  <div id="hunt-keyword-tags-row" class="mt-1 flex flex-wrap items-center gap-1.5" role="group" aria-label="Saved hunt keywords">
+                    <button type="button" id="hunt-keyword-tag-save" disabled
+                      class="inline-flex shrink-0 items-center gap-1 rounded-lg border border-dashed border-slate-300 bg-slate-50/80 px-2 py-1 text-[11px] font-semibold text-slate-600 transition hover:border-indigo-300 hover:bg-indigo-50/80 hover:text-indigo-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/30 disabled:pointer-events-none disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
+                      title="Save current keyword as a reusable tag"
+                      aria-label="Save current keyword as tag">
+                      <svg class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9.568 3H5.25A2.25 2.25 0 003 5.25v4.318c0 .597.237 1.17.659 1.591l9.581 9.581c.699.699 1.78.872 2.607.33a18.095 18.095 0 005.223-5.223c.542-.827.369-1.908-.33-2.607L11.16 3.66A2.25 2.25 0 009.568 3z"/><path stroke-linecap="round" stroke-linejoin="round" d="M6 6h.008v.008H6V6z"/></svg>
+                      <span>Tag</span>
+                    </button>
+                    <div id="hunt-keyword-tags-list" class="flex flex-wrap items-center gap-1.5"></div>
+                  </div>
                 </div>
                 <div class="grid gap-1">
                   <label for="query" class="text-xs font-semibold text-slate-600">Maps query <span class="font-normal text-slate-400">(optional)</span></label>
