@@ -389,21 +389,5 @@ def chat_messages_for_lead(lead: Lead) -> list[ChatMessage]:
     )
 
 
-@transaction.atomic
-def refresh_chat_messages_for_lead(lead: Lead) -> dict[str, int]:
-    """Re-import WhatsApp conversation logs and relabel free-text outbound as You."""
-    before = ChatMessage.objects.filter(lead=lead).count()
-    sync_chat_messages_from_logs(lead)
-    after_sync = ChatMessage.objects.filter(lead=lead).count()
-    deduped = _dedupe_duplicate_outbound_rows(lead)
-    repaired = _repair_outbound_template_rows(lead)
-    return {
-        "added": max(0, after_sync - before),
-        "deduped": deduped,
-        "repaired": repaired,
-        "total": ChatMessage.objects.filter(lead=lead).count(),
-    }
-
-
 # Backwards-compatible alias
 backfill_chat_messages_for_lead = sync_chat_messages_from_logs

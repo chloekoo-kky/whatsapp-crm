@@ -14,7 +14,6 @@
   {% include "leads/partials/_lead_grid_trash_button.html" with lead_id=lead.id is_trash_view=True %}
   {% else %}
   {% if lead|whatsapp_dispatched %}
-  {% include "leads/partials/_lead_grid_chat_sync_button.html" with lead=lead current_group_id=current_group_id %}
   {% include "leads/partials/_lead_grid_active_chat_button.html" with lead=lead %}
   {% endif %}
   {% if is_uncategorized_view %}

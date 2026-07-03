@@ -962,12 +962,12 @@ class YCloudWebhookTests(TestCase):
         self.assertEqual(free_text[0].template_name, "")
 
     @override_settings(WHATSAPP_FROM_NUMBER="+60126336429")
-    def test_refresh_chat_sync_imports_agent_log_and_relabels_you(self):
+    def test_chat_messages_for_lead_imports_agent_log_and_relabels_you(self):
         from django.utils import timezone
 
         from leads.chat_messages import (
+            chat_messages_for_lead,
             outbound_message_is_template,
-            refresh_chat_messages_for_lead,
         )
         from leads.models import WhatsAppConfig
 
@@ -997,49 +997,13 @@ class YCloudWebhookTests(TestCase):
             remarks="[WhatsApp · agent] We open at 9am — reply from Business app",
         )
 
-        stats = refresh_chat_messages_for_lead(lead)
-        self.assertEqual(stats["added"], 1)
-        self.assertEqual(stats["total"], 1)
+        messages = chat_messages_for_lead(lead)
+        self.assertEqual(len(messages), 1)
 
-        msg = ChatMessage.objects.get(lead=lead, is_outbound=True)
+        msg = messages[0]
         self.assertEqual(msg.body, "We open at 9am — reply from Business app")
         self.assertEqual(msg.template_name, "")
         self.assertFalse(outbound_message_is_template(msg))
-
-    @override_settings(WHATSAPP_FROM_NUMBER="+60126336429")
-    def test_chat_sync_conversations_view(self):
-        from django.utils import timezone
-
-        groups = ensure_pipeline_system_groups()
-        lead = Lead.objects.create(
-            name="Sync View Clinic",
-            address="1 Main St",
-            phone_number="+60123456789",
-            group=groups["uncategorized"],
-            whatsapp_status=Lead.WhatsappStatus.SENT,
-        )
-        LeadConversationLog.objects.create(
-            lead=lead,
-            conversation_date=timezone.now().date(),
-            remarks="[WhatsApp · client] Hello from the clinic",
-        )
-
-        client = Client()
-        response = client.post(
-            f"/leads/ajax/chat/sync/{lead.pk}/",
-            data={"group_id": groups["uncategorized"].pk},
-        )
-        self.assertEqual(response.status_code, 200)
-        self.assertTrue(
-            ChatMessage.objects.filter(
-                lead=lead,
-                is_outbound=False,
-                body="Hello from the clinic",
-            ).exists()
-        )
-        trigger = json.loads(response["HX-Trigger"])
-        self.assertEqual(trigger["chatInboxRefresh"], lead.pk)
-        self.assertEqual(trigger["chatSyncDone"]["added"], 1)
 
     @override_settings(WHATSAPP_FROM_NUMBER="+60126336529")
     def test_ycloud_webhook_post_syncs_inbound(self):
