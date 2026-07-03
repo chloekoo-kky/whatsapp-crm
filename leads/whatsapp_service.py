@@ -482,6 +482,34 @@ DEFAULT_OUTREACH_SCRIPT = (
     "Would you be open to a quick chat?"
 )
 
+DEFAULT_FREE_TEXT_TEMPLATE = (
+    "Hi {{ name }}, thank you for your reply!\n\n"
+    "I'd love to share a bit more about what we offer for practices in {{ area }}."
+)
+
+FREE_TEXT_ACTIVE_CHAT_COUNT = 3
+
+DEFAULT_FREE_TEXT_TEMPLATES = [
+    {
+        "label": "Thank you",
+        "text": DEFAULT_FREE_TEXT_TEMPLATE,
+    },
+    {
+        "label": "Follow up",
+        "text": (
+            "Hi {{ name }}, just following up on my earlier message.\n\n"
+            "Would you have a few minutes to chat about your clinic in {{ area }}?"
+        ),
+    },
+    {
+        "label": "More info",
+        "text": (
+            "Hi {{ name }}, happy to share more details if helpful.\n\n"
+            "What would you like to know about our services in {{ area }}?"
+        ),
+    },
+]
+
 
 def lead_city_area(lead: Lead) -> str:
     city = (lead.search_city or "").strip()
@@ -515,6 +543,71 @@ def render_script_template(template_text: str, lead: Lead) -> str:
     rendered = rendered.replace("{{name}}", lead.name or "")
     rendered = rendered.replace("{{area}}", area)
     return rendered.strip()
+
+
+def free_text_template_text() -> str:
+    templates = free_text_templates_resolved()
+    if templates:
+        return templates[0]["text"]
+    return DEFAULT_FREE_TEXT_TEMPLATE
+
+
+def _normalize_free_text_template_entry(item, index: int) -> dict[str, str] | None:
+    if isinstance(item, str):
+        text = item.strip()
+        if not text:
+            return None
+        return {"label": f"Template {index + 1}", "text": text}
+    if isinstance(item, dict):
+        text = (item.get("text") or item.get("body") or "").strip()
+        if not text:
+            return None
+        label = (item.get("label") or "").strip() or f"Template {index + 1}"
+        return {"label": label[:40], "text": text}
+    return None
+
+
+def free_text_templates_saved() -> list[dict[str, str]]:
+    raw = WhatsAppConfig.load().free_text_templates
+    if not isinstance(raw, list):
+        return []
+    templates: list[dict[str, str]] = []
+    for index, item in enumerate(raw):
+        normalized = _normalize_free_text_template_entry(item, index)
+        if normalized:
+            templates.append(normalized)
+    return templates
+
+
+def free_text_templates_resolved() -> list[dict[str, str]]:
+    saved = free_text_templates_saved()
+    if saved:
+        return saved
+    return list(DEFAULT_FREE_TEXT_TEMPLATES)
+
+
+def free_text_templates_for_manage() -> list[dict[str, str]]:
+    saved = free_text_templates_saved()
+    if saved:
+        return saved
+    return list(DEFAULT_FREE_TEXT_TEMPLATES)
+
+
+def compose_free_text_template(lead: Lead) -> str:
+    templates = compose_free_text_templates_for_lead(lead)
+    return templates[0]["text"] if templates else ""
+
+
+def compose_free_text_templates_for_lead(lead: Lead) -> list[dict[str, str]]:
+    """Top N ordered templates with placeholders filled for Active Chat."""
+    top_templates = free_text_templates_resolved()[:FREE_TEXT_ACTIVE_CHAT_COUNT]
+    return [
+        {
+            "label": template["label"],
+            "text": render_script_template(template["text"], lead),
+        }
+        for template in top_templates
+    ]
 
 
 def _script_template_text(group_name: str) -> str:

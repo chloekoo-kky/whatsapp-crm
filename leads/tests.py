@@ -6,7 +6,7 @@ from django.test import Client, TestCase, override_settings
 from django.urls import reverse
 from django.db.models import Exists, OuterRef
 
-from leads.models import CategoryRule, ChatMessage, Lead, LeadCategoryType, LeadConversationLog, LeadGroup, WhatsAppScriptTemplate
+from leads.models import CategoryRule, ChatMessage, Lead, LeadCategoryType, LeadConversationLog, LeadGroup, WhatsAppConfig, WhatsAppScriptTemplate
 from leads.chat_messages import record_inbound_chat_message, record_outbound_chat_message
 from leads.display import (
     lead_google_maps_url,
@@ -16,7 +16,14 @@ from leads.display import (
     normalize_manual_phone,
 )
 from leads.views import _leads_qs_for_tab, _leads_tab_base_qs
-from leads.whatsapp_service import compose_outbound_message, render_script_template
+from leads.whatsapp_service import (
+    compose_free_text_template,
+    compose_free_text_templates_for_lead,
+    compose_outbound_message,
+    free_text_templates_for_manage,
+    free_text_templates_saved,
+    render_script_template,
+)
 from leads.whatsapp_webhook import parse_meta_cloud_webhook
 from leads.pipeline import (
     QUEUE_GROUP_NAME,
@@ -316,6 +323,104 @@ class WhatsAppScriptTemplateTests(TestCase):
         body = compose_outbound_message(lead)
         self.assertIn("Unknown Shop", body)
         self.assertIn("Johor Bahru", body)
+
+
+class FreeTextTemplateTests(TestCase):
+    def test_compose_free_text_templates_substitutes_placeholders(self):
+        config = WhatsAppConfig.load()
+        config.free_text_templates = [
+            {"label": "Thanks", "text": "Hi {{ name }}, thanks from {{ area }}!"},
+            {"label": "Follow up", "text": "Checking in, {{ name }}."},
+        ]
+        config.save(update_fields=["free_text_templates"])
+        lead = Lead.objects.create(
+            name="Avea Clinic",
+            address="1 Main St",
+            search_city="Petaling Jaya",
+        )
+        templates = compose_free_text_templates_for_lead(lead)
+        self.assertEqual(len(templates), 2)
+        self.assertEqual(templates[0]["label"], "Thanks")
+        self.assertEqual(templates[0]["text"], "Hi Avea Clinic, thanks from Petaling Jaya!")
+        self.assertEqual(templates[1]["text"], "Checking in, Avea Clinic.")
+
+    def test_active_chat_shows_only_top_three_templates(self):
+        config = WhatsAppConfig.load()
+        config.free_text_templates = [
+            {"label": "One", "text": "First {{ name }}"},
+            {"label": "Two", "text": "Second {{ name }}"},
+            {"label": "Three", "text": "Third {{ name }}"},
+            {"label": "Four", "text": "Fourth {{ name }}"},
+            {"label": "Five", "text": "Fifth {{ name }}"},
+        ]
+        config.save(update_fields=["free_text_templates"])
+        lead = Lead.objects.create(name="Clinic", address="1 St", search_city="KL")
+        templates = compose_free_text_templates_for_lead(lead)
+        self.assertEqual(len(templates), 3)
+        self.assertEqual(templates[0]["label"], "One")
+        self.assertEqual(templates[2]["label"], "Three")
+        self.assertEqual(templates[2]["text"], "Third Clinic")
+
+    def test_compose_free_text_template_uses_first_slot(self):
+        lead = Lead.objects.create(name="Clinic", address="1 St", search_city="KL")
+        templates = compose_free_text_templates_for_lead(lead)
+        self.assertEqual(compose_free_text_template(lead), templates[0]["text"])
+
+    def test_free_text_template_page_loads(self):
+        client = Client()
+        response = client.get(reverse("free_text_template"))
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Free text templates", response.content)
+        self.assertIn(b"Add template", response.content)
+        self.assertIn(b"thank you for your reply", response.content)
+
+    def test_save_free_text_template_persists_order(self):
+        client = Client()
+        response = client.post(
+            reverse("save_free_text_template"),
+            data={
+                "template_label": ["Quick thanks", "Follow up", "Archive"],
+                "template_text": [
+                    "Custom reply for {{ name }}.",
+                    "Hi {{ name }}, following up.",
+                    "Stored but not in top 3 for {{ name }}.",
+                ],
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        config = WhatsAppConfig.load()
+        self.assertEqual(len(config.free_text_templates), 3)
+        self.assertEqual(config.free_text_templates[0]["label"], "Quick thanks")
+        self.assertEqual(config.free_text_templates[2]["label"], "Archive")
+
+    def test_chat_inbox_shows_top_three_template_buttons_only(self):
+        groups = ensure_pipeline_system_groups()
+        lead = Lead.objects.create(
+            name="Chat Template Clinic",
+            address="1 Main St",
+            phone_number="+60123456789",
+            search_city="Shah Alam",
+            group=groups["uncategorized"],
+            whatsapp_status=Lead.WhatsappStatus.SENT,
+        )
+        config = WhatsAppConfig.load()
+        config.free_text_templates = [
+            {"label": "Hello", "text": "Hello {{ name }} in {{ area }}"},
+            {"label": "Thanks", "text": "Thanks {{ name }}"},
+            {"label": "Follow up", "text": "Follow up with {{ name }}"},
+            {"label": "Hidden", "text": "Should not appear {{ name }}"},
+        ]
+        config.save(update_fields=["free_text_templates"])
+        client = Client()
+        response = client.get(reverse("chat_inbox", kwargs={"pk": lead.pk}))
+        self.assertEqual(response.status_code, 200)
+        html = response.content.decode()
+        self.assertEqual(html.count('data-template-index="'), 3)
+        self.assertIn("Hello Chat Template Clinic in Shah Alam", html)
+        self.assertIn("Thanks Chat Template Clinic", html)
+        self.assertIn("Follow up with Chat Template Clinic", html)
+        self.assertNotIn("Should not appear Chat Template Clinic", html)
+        self.assertNotIn("manage in sidebar link", html)
 
 
 class WhatsAppWebhookTests(TestCase):

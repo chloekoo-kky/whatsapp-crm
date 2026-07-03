@@ -72,7 +72,10 @@ from leads.whatsapp_service import (
     campaign_metrics,
     clear_pending_batch_memberships,
     campaign_timezone,
+    compose_free_text_templates_for_lead,
     fetch_gateway_status,
+    free_text_templates_for_manage,
+    free_text_templates_saved,
     GATEWAY_GUARD_LOG_PREFIX,
     get_active_config_template_name,
     is_dispatch_blocked_detail,
@@ -1546,6 +1549,45 @@ def category_rule_delete(request, pk: int):
 
 
 @method_decorator(ensure_csrf_cookie, name="dispatch")
+class FreeTextTemplateView(TemplateView):
+    """Manage the default Active Chat free-form reply template."""
+
+    template_name = "leads/free_text_template.html"
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context["nav_active"] = "free_text_template"
+        context["free_text_template_slots"] = free_text_templates_for_manage()
+        context["free_text_active_chat_count"] = 3
+        context["free_text_template_saved"] = bool(free_text_templates_saved())
+        return context
+
+
+@csrf_protect
+@require_POST
+def save_free_text_template(request):
+    """Save ordered Active Chat free-form reply templates."""
+    labels = request.POST.getlist("template_label")
+    texts = request.POST.getlist("template_text")
+    templates: list[dict[str, str]] = []
+    for index, text in enumerate(texts):
+        body = (text or "").strip()
+        if not body:
+            continue
+        label = (labels[index] if index < len(labels) else "").strip()[:40]
+        templates.append(
+            {
+                "label": label or f"Template {len(templates) + 1}",
+                "text": body,
+            }
+        )
+    config = WhatsAppConfig.load()
+    config.free_text_templates = templates
+    config.save(update_fields=["free_text_templates", "updated_at"])
+    return redirect("free_text_template")
+
+
+@method_decorator(ensure_csrf_cookie, name="dispatch")
 class WhatsAppDashboardView(TemplateView):
     """WhatsApp campaign monitor — Meta Cloud API metrics and schedule controls."""
 
@@ -1577,19 +1619,24 @@ def workspace_fragment_whatsapp(request):
 def chat_inbox(request, pk: int):
     """HTMX partial: live chat drawer shell or message list fragment for a lead."""
     lead = get_object_or_404(Lead, pk=pk)
-    phone = primary_phone(lead) or "—"
-    messages = chat_messages_for_lead(lead)
-    context = {
-        "lead": lead,
-        "phone_display": phone,
-        "messages": messages,
-    }
     list_only = (request.GET.get("fragment") or "").strip().lower() == "messages"
-    template_name = (
-        "leads/partials/_chat_inbox_messages.html"
-        if list_only
-        else "leads/partials/_chat_inbox_panel.html"
-    )
+    if list_only:
+        messages = list(
+            ChatMessage.objects.filter(lead=lead).order_by("created_at", "id")
+        )
+        context = {"lead": lead, "messages": messages}
+        template_name = "leads/partials/_chat_inbox_messages.html"
+    else:
+        phone = primary_phone(lead) or "—"
+        messages = chat_messages_for_lead(lead)
+        filled_templates = compose_free_text_templates_for_lead(lead)
+        context = {
+            "lead": lead,
+            "phone_display": phone,
+            "messages": messages,
+            "free_text_templates_filled": filled_templates,
+        }
+        template_name = "leads/partials/_chat_inbox_panel.html"
     html = render_to_string(template_name, context, request=request)
     return HttpResponse(html)
 

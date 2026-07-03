@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Free text templates — Lead CRM</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: { sans: ["Inter", "system-ui", "sans-serif"] },
+        },
+      },
+    };
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  {% include "leads/partials/_workspace_app_styles.html" %}
+</head>
+<body class="flex h-screen min-h-0 overflow-hidden overflow-x-hidden bg-slate-100 font-sans text-slate-900 antialiased">
+  {% include "leads/partials/_app_sidebar.html" with nav_active="free_text_template" %}
+
+  <main class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+    <header class="shrink-0 border-b border-slate-200/80 bg-white px-6 py-4">
+      <h1 class="text-lg font-semibold text-slate-900">Free text templates</h1>
+      <p class="mt-0.5 text-sm text-slate-500">Create as many templates as you need. The top {{ free_text_active_chat_count }} in this list appear as buttons in Active Chat.</p>
+    </header>
+
+    <div class="min-h-0 flex-1 overflow-y-auto p-6">
+      <div class="mx-auto max-w-3xl">
+        <section class="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm">
+          <form method="post" action="{% url 'save_free_text_template' %}" id="free-text-templates-form" class="space-y-5">
+            {% csrf_token %}
+            <div id="free-text-templates-list" class="space-y-4">
+              {% for slot in free_text_template_slots %}
+              <div class="free-text-template-row rounded-xl border border-slate-200/80 bg-slate-50/40 p-4">
+                <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <div class="flex flex-wrap items-center gap-2">
+                    <span class="free-text-template-order inline-flex h-6 min-w-[1.75rem] items-center justify-center rounded-md bg-slate-200/80 px-2 text-[11px] font-bold text-slate-600">{{ forloop.counter }}</span>
+                    <span class="free-text-template-active-badge text-[10px] font-bold uppercase tracking-wide text-sky-700{% if forloop.counter > free_text_active_chat_count %} hidden{% endif %}">Active Chat</span>
+                  </div>
+                  <div class="flex items-center gap-1">
+                    <button type="button" class="template-move-up inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 transition hover:bg-slate-50" title="Move up" aria-label="Move template up">↑</button>
+                    <button type="button" class="template-move-down inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 transition hover:bg-slate-50" title="Move down" aria-label="Move template down">↓</button>
+                    <button type="button" class="template-remove inline-flex h-8 items-center rounded-lg border border-rose-200 bg-rose-50 px-2.5 text-xs font-semibold text-rose-700 transition hover:bg-rose-100" title="Remove template">Remove</button>
+                  </div>
+                </div>
+                <div class="space-y-3">
+                  <div>
+                    <label class="text-xs font-semibold text-slate-600">Button label</label>
+                    <input name="template_label"
+                           type="text"
+                           maxlength="40"
+                           value="{{ slot.label }}"
+                           class="mt-1 h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm shadow-sm outline-none focus:border-sky-300 focus:ring-2 focus:ring-sky-400/20" />
+                  </div>
+                  <div>
+                    <label class="text-xs font-semibold text-slate-600">Message</label>
+                    <textarea name="template_text"
+                              rows="5"
+                              class="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3.5 py-3 text-sm leading-relaxed text-slate-800 shadow-sm outline-none focus:border-sky-300 focus:ring-2 focus:ring-sky-400/20">{{ slot.text }}</textarea>
+                  </div>
+                </div>
+              </div>
+              {% endfor %}
+            </div>
+
+            <button type="button"
+                    id="add-free-text-template"
+                    class="inline-flex h-10 items-center gap-2 rounded-xl border border-dashed border-sky-300 bg-sky-50/60 px-4 text-sm font-semibold text-sky-800 transition hover:border-sky-400 hover:bg-sky-100">
+              + Add template
+            </button>
+
+            <p class="text-xs text-slate-500">
+              Placeholders:
+              <code class="rounded bg-slate-100 px-1 py-0.5 font-mono text-[11px]">{% templatetag openvariable %} name {% templatetag closevariable %}</code>
+              and
+              <code class="rounded bg-slate-100 px-1 py-0.5 font-mono text-[11px]">{% templatetag openvariable %} area {% templatetag closevariable %}</code>
+              are replaced with the lead name and city/area when you insert a template in Active Chat.
+            </p>
+            {% if not free_text_template_saved %}
+            <p class="text-xs text-amber-700">Using built-in defaults until you save your own templates.</p>
+            {% endif %}
+            <div class="flex flex-wrap items-center gap-3">
+              <button type="submit"
+                      class="inline-flex h-10 items-center rounded-xl bg-sky-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-sky-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/40">
+                Save templates
+              </button>
+            </div>
+          </form>
+        </section>
+      </div>
+    </div>
+  </main>
+
+  <template id="free-text-template-row-template">
+    <div class="free-text-template-row rounded-xl border border-slate-200/80 bg-slate-50/40 p-4">
+      <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div class="flex flex-wrap items-center gap-2">
+          <span class="free-text-template-order inline-flex h-6 min-w-[1.75rem] items-center justify-center rounded-md bg-slate-200/80 px-2 text-[11px] font-bold text-slate-600">1</span>
+          <span class="free-text-template-active-badge text-[10px] font-bold uppercase tracking-wide text-sky-700">Active Chat</span>
+        </div>
+        <div class="flex items-center gap-1">
+          <button type="button" class="template-move-up inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 transition hover:bg-slate-50" title="Move up" aria-label="Move template up">↑</button>
+          <button type="button" class="template-move-down inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 transition hover:bg-slate-50" title="Move down" aria-label="Move template down">↓</button>
+          <button type="button" class="template-remove inline-flex h-8 items-center rounded-lg border border-rose-200 bg-rose-50 px-2.5 text-xs font-semibold text-rose-700 transition hover:bg-rose-100" title="Remove template">Remove</button>
+        </div>
+      </div>
+      <div class="space-y-3">
+        <div>
+          <label class="text-xs font-semibold text-slate-600">Button label</label>
+          <input name="template_label" type="text" maxlength="40" value="" class="mt-1 h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm shadow-sm outline-none focus:border-sky-300 focus:ring-2 focus:ring-sky-400/20" />
+        </div>
+        <div>
+          <label class="text-xs font-semibold text-slate-600">Message</label>
+          <textarea name="template_text" rows="5" class="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3.5 py-3 text-sm leading-relaxed text-slate-800 shadow-sm outline-none focus:border-sky-300 focus:ring-2 focus:ring-sky-400/20"></textarea>
+        </div>
+      </div>
+    </div>
+  </template>
+
+  <script>
+    (function () {
+      var list = document.getElementById('free-text-templates-list');
+      var addBtn = document.getElementById('add-free-text-template');
+      var rowTemplate = document.getElementById('free-text-template-row-template');
+      var activeCount = {{ free_text_active_chat_count }};
+
+      function refreshTemplateRows() {
+        if (!list) return;
+        var rows = list.querySelectorAll('.free-text-template-row');
+        rows.forEach(function (row, index) {
+          var order = row.querySelector('.free-text-template-order');
+          var badge = row.querySelector('.free-text-template-active-badge');
+          if (order) order.textContent = String(index + 1);
+          if (badge) badge.classList.toggle('hidden', index >= activeCount);
+          var up = row.querySelector('.template-move-up');
+          var down = row.querySelector('.template-move-down');
+          if (up) up.disabled = index === 0;
+          if (down) down.disabled = index === rows.length - 1;
+        });
+      }
+
+      function addTemplateRow() {
+        if (!list || !rowTemplate) return;
+        list.appendChild(rowTemplate.content.firstElementChild.cloneNode(true));
+        refreshTemplateRows();
+      }
+
+      if (addBtn) {
+        addBtn.addEventListener('click', addTemplateRow);
+      }
+
+      if (list) {
+        list.addEventListener('click', function (evt) {
+          var target = evt.target;
+          if (!(target instanceof HTMLElement)) return;
+          var row = target.closest('.free-text-template-row');
+          if (!row || !list.contains(row)) return;
+
+          if (target.classList.contains('template-remove')) {
+            if (list.querySelectorAll('.free-text-template-row').length <= 1) return;
+            row.remove();
+            refreshTemplateRows();
+            return;
+          }
+
+          if (target.classList.contains('template-move-up')) {
+            var prev = row.previousElementSibling;
+            if (prev) list.insertBefore(row, prev);
+            refreshTemplateRows();
+            return;
+          }
+
+          if (target.classList.contains('template-move-down')) {
+            var next = row.nextElementSibling;
+            if (next) list.insertBefore(next, row);
+            refreshTemplateRows();
+          }
+        });
+      }
+
+      refreshTemplateRows();
+    })();
+  </script>
+</body>
+</html>

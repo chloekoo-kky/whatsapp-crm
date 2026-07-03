@@ -340,6 +340,11 @@ class WhatsAppConfig(models.Model):
         default="",
         help_text="Meta template used by the Send now (⚡) button on group folder cards.",
     )
+    free_text_templates = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="Ordered Active Chat reply templates ({label, text}). Top 3 appear in the chat drawer.",
+    )
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:

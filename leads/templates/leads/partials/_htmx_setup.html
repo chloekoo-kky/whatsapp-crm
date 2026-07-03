@@ -339,6 +339,18 @@
 
   };
 
+  window.__chatInboxNearBottom = function (el, threshold) {
+    if (!el) return true;
+    var gap = typeof threshold === "number" ? threshold : 96;
+    return el.scrollHeight - el.scrollTop - el.clientHeight <= gap;
+  };
+
+  window.__chatInboxStickToBottom = function (el) {
+    if (window.__chatInboxNearBottom(el)) {
+      window.__scrollChatInboxToBottom(el);
+    }
+  };
+
   window.__refreshOpenChatInbox = function (leadId) {
 
     if (leadId == null) return;
@@ -359,8 +371,14 @@
 
     if (!url) return;
 
-    window.htmx.ajax("GET", url, { target: panel, swap: "innerHTML" });
+    window.__pollChatInboxMessages(panel, url);
 
+  };
+
+  window.__pollChatInboxMessages = function (panel, url) {
+    if (!panel || !url || !window.htmx) return;
+    panel.setAttribute("data-chat-poll-swap", "1");
+    window.htmx.ajax("GET", url, { target: panel, swap: "innerHTML" });
   };
 
   document.body.addEventListener("chatInboxRefresh", function (evt) {
@@ -411,9 +429,9 @@
 
       }
 
-      window.htmx.ajax("GET", url, { target: livePanel, swap: "innerHTML" });
+      window.__pollChatInboxMessages(livePanel, url);
 
-    }, 3000);
+    }, 5000);
 
   };
 
@@ -445,7 +463,12 @@
 
     if (target && target.classList && target.classList.contains("chat-inbox-messages")) {
 
-      window.__scrollChatInboxToBottom(target);
+      if (target.getAttribute("data-chat-poll-swap") === "1") {
+        target.removeAttribute("data-chat-poll-swap");
+        window.__chatInboxStickToBottom(target);
+      } else {
+        window.__scrollChatInboxToBottom(target);
+      }
 
       if (typeof window.__refreshLeadChatIndicators === "function") {
         window.__refreshLeadChatIndicators();
