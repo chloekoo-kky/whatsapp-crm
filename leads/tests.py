@@ -2523,6 +2523,7 @@ class GlobalLeadSearchTests(TestCase):
         self.assertTrue(payload["global_search"])
         self.assertEqual(payload["global_search_query"], "Alpha")
         self.assertEqual(payload["global_search_count"], 1)
+        self.assertIsNone(payload["funnel_metrics"])
         self.assertIn("lead-folder-badge", payload["tbody_html"])
         self.assertIn("Uncategorized", payload["tbody_html"])
         self.assertIn("data-folder-tab-id=\"uncategorized\"", payload["tbody_html"])

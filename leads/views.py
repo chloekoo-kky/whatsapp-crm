@@ -434,7 +434,7 @@ def _leads_qs_global_search(q: str, search_record_id: Optional[int]):
     if search_record_id is not None:
         qs = qs.filter(search_query_record_id=int(search_record_id))
     qs = _lead_keyword_search_filter(qs, q)
-    return qs.order_by("name", "id")[:GLOBAL_LEAD_SEARCH_MAX]
+    return qs.order_by("name", "id")
 
 
 def _leads_table_global_search_query(request) -> str:
@@ -2300,8 +2300,17 @@ def get_leads_table(request):
     GET ``q``: optional global keyword search across all non-trash folders (min 2 chars).
     """
     qs, is_global_search = _leads_queryset_for_table(request)
+    if is_global_search:
+        total_matches = qs.count()
+        display_qs = qs[:GLOBAL_LEAD_SEARCH_MAX]
+        result_count = total_matches
+        result_truncated = total_matches > GLOBAL_LEAD_SEARCH_MAX
+    else:
+        display_qs = qs
+        result_count = None
+        result_truncated = False
     clinics_list, multi_location_brands = _dashboard_prepare_clinics(
-        qs, global_search=is_global_search
+        display_qs, global_search=is_global_search
     )
     ctx = {
         "clinics": clinics_list,
@@ -2321,20 +2330,17 @@ def get_leads_table(request):
         request=request,
     )
     search_q = _leads_table_global_search_query(request)
-    result_count = len(clinics_list) if is_global_search else None
     return JsonResponse(
         {
             "ok": True,
             "tbody_html": tbody_html,
             "grid_html": grid_html,
-            "funnel_metrics": _funnel_metrics(qs),
+            "funnel_metrics": None if is_global_search else _funnel_metrics(qs),
             "group_counts": _lead_group_counts(),
             "global_search": is_global_search,
             "global_search_query": search_q if is_global_search else "",
             "global_search_count": result_count,
-            "global_search_truncated": bool(
-                is_global_search and result_count == GLOBAL_LEAD_SEARCH_MAX
-            ),
+            "global_search_truncated": result_truncated if is_global_search else False,
         },
         json_dumps_params={"ensure_ascii": False},
     )
