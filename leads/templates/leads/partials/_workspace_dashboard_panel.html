@@ -168,7 +168,7 @@
                 title="Clear filter"
                 aria-label="Clear lead filter">× <span class="font-medium">clear</span></button>
             </div>
-            <div class="flex min-w-0 shrink-0 flex-wrap items-center gap-2">
+            <div class="leads-toolbar-actions hidden min-w-0 shrink-0 flex-wrap items-center gap-2 lg:flex">
               <button type="button" id="bulk-manual-open" disabled
                 class="inline-flex min-h-[2.5rem] shrink-0 items-center rounded-xl border border-indigo-200 bg-indigo-50/90 px-3.5 py-2 text-xs font-semibold text-indigo-950 shadow-sm transition hover:border-indigo-300 hover:bg-indigo-100/90 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/35 disabled:pointer-events-none disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400 disabled:opacity-70"
                 title="Set category and mark selected leads as processed (no AI). Select at least one lead first."
@@ -219,7 +219,7 @@
               </button>
             </div>
           </div>
-          <div id="lead-filter-tags-row" class="flex flex-wrap items-center gap-1.5" role="group" aria-label="Saved filter tags">
+          <div id="lead-filter-tags-row" class="hidden flex-wrap items-center gap-1.5 lg:flex" role="group" aria-label="Saved filter tags">
             <button type="button" id="lead-filter-tag-save" disabled
               class="inline-flex shrink-0 items-center gap-1 rounded-lg border border-dashed border-slate-300 bg-slate-50/80 px-2 py-1 text-[11px] font-semibold text-slate-600 transition hover:border-indigo-300 hover:bg-indigo-50/80 hover:text-indigo-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/30 disabled:pointer-events-none disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
               title="Save current filter text as a reusable tag"
@@ -229,8 +229,32 @@
             </button>
             <div id="lead-filter-tags-list" class="flex flex-wrap items-center gap-1.5"></div>
           </div>
-          <div class="-mx-4 border-b border-slate-200 px-4 sm:-mx-5 sm:px-5">
-            <div id="lead-group-tabs" class="flex flex-wrap items-end gap-0.5" role="tablist" aria-label="Lead groups">
+          <div class="lead-group-header">
+            <button type="button" id="lead-group-drawer-toggle"
+              class="mb-2 flex w-full items-center gap-2.5 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-left shadow-sm transition hover:border-indigo-200 hover:bg-indigo-50/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/35 lg:hidden"
+              aria-expanded="false" aria-controls="lead-group-drawer-panel">
+              <svg class="h-5 w-5 shrink-0 text-indigo-600" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z"/></svg>
+              <span class="min-w-0 flex-1">
+                <span class="block text-[10px] font-bold uppercase tracking-wide text-slate-400">Folder</span>
+                <span id="lead-group-mobile-label" class="block truncate text-sm font-semibold text-slate-900">{% if active_group_pk is None %}Uncategorized{% elif active_group_pk == queue_group.pk %}🚀Queue{% elif active_group_pk == trash_group.pk %}{{ trash_group.name }}{% elif active_group_pk == whatsapp_chats_group.pk %}💬 Active Chat{% else %}{% for g in lead_groups %}{% if active_group_pk == g.pk %}{{ g.name }}{% endif %}{% endfor %}{% endif %}</span>
+              </span>
+              <span id="lead-group-mobile-count" class="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-bold tabular-nums text-slate-600">{% if active_group_pk is None %}{{ uncategorized_lead_count }}{% elif active_group_pk == queue_group.pk %}{{ queue_lead_count }}{% elif active_group_pk == trash_group.pk %}{{ trash_lead_count }}{% elif active_group_pk == whatsapp_chats_group.pk %}{{ active_chat_count }}{% else %}{% for g in lead_groups %}{% if active_group_pk == g.pk %}{{ g.total_leads }}{% endif %}{% endfor %}{% endif %}</span>
+              <svg class="h-4 w-4 shrink-0 text-slate-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5"/></svg>
+            </button>
+
+            <div id="lead-group-drawer" class="lead-group-drawer lg:contents">
+              <div id="lead-group-drawer-backdrop" class="lead-group-drawer-backdrop fixed inset-0 z-[62] bg-slate-900/40 backdrop-blur-[2px] lg:hidden" aria-hidden="true"></div>
+              <div id="lead-group-drawer-panel" class="lead-group-drawer-panel fixed inset-y-0 left-0 z-[63] flex w-[min(18rem,88vw)] -translate-x-full flex-col border-r border-slate-200 bg-white shadow-xl transition-transform duration-200 ease-out lg:static lg:z-auto lg:w-auto lg:translate-x-0 lg:border-0 lg:bg-transparent lg:shadow-none">
+                <div class="flex shrink-0 items-center justify-between border-b border-slate-100 px-4 py-3 lg:hidden">
+                  <h3 class="text-sm font-semibold text-slate-900">Folders</h3>
+                  <button type="button" id="lead-group-drawer-close"
+                    class="inline-flex h-9 w-9 items-center justify-center rounded-lg text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/35"
+                    aria-label="Close folders">
+                    <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+                  </button>
+                </div>
+                <div class="-mx-4 border-b border-slate-200 px-2 py-2 sm:-mx-5 sm:px-3 lg:mx-0 lg:border-b lg:px-5 lg:py-0">
+                  <div id="lead-group-tabs" class="flex max-h-[min(70vh,28rem)] flex-col gap-0.5 overflow-y-auto overscroll-y-contain lg:max-h-none lg:flex-row lg:flex-wrap lg:items-end lg:gap-0.5 lg:overflow-visible" role="tablist" aria-label="Lead groups">
               <button type="button" role="tab" class="lead-group-tab rounded-t-md{% if active_group_pk is None %} lead-group-tab--active{% endif %}" data-group-id="uncategorized" aria-selected="{% if active_group_pk is None %}true{% else %}false{% endif %}"><span class="relative inline-flex">Uncategorized<span class="lead-group-count absolute -right-3.5 -top-2.5 inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-slate-200 px-1.5 py-0.5 text-[11px] font-bold leading-none text-slate-600 ring-1 ring-white" title="{{ uncategorized_lead_count }} lead(s) in this group">{{ uncategorized_lead_count }}</span></span></button>
               <button type="button" role="tab" class="lead-group-tab rounded-t-md{% if active_group_pk == queue_group.pk %} lead-group-tab--active{% endif %}" data-group-id="{{ queue_group.pk }}" aria-selected="{% if active_group_pk == queue_group.pk %}true{% else %}false{% endif %}"><span class="relative inline-flex">🚀Queue<span class="lead-group-count absolute -right-3.5 -top-2.5 inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-slate-200 px-1.5 py-0.5 text-[11px] font-bold leading-none text-slate-600 ring-1 ring-white" title="{{ queue_lead_count }} lead(s) in this group">{{ queue_lead_count }}</span></span></button>
               <button type="button" role="tab" class="lead-group-tab rounded-t-md{% if active_group_pk == trash_group.pk %} lead-group-tab--active{% endif %}" data-group-id="{{ trash_group.pk }}" aria-selected="{% if active_group_pk == trash_group.pk %}true{% else %}false{% endif %}"><span class="relative inline-flex">{{ trash_group.name }}<span class="lead-group-count absolute -right-3.5 -top-2.5 inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-slate-200 px-1.5 py-0.5 text-[11px] font-bold leading-none text-slate-600 ring-1 ring-white" title="{{ trash_lead_count }} lead(s) in this group">{{ trash_lead_count }}</span></span></button>
@@ -238,10 +262,13 @@
               {% for g in lead_groups %}
               <button type="button" role="tab" class="lead-group-tab lead-group-tab--draggable rounded-t-md{% if active_group_pk == g.pk %} lead-group-tab--active{% endif %}" draggable="true" data-group-id="{{ g.pk }}" aria-selected="{% if active_group_pk == g.pk %}true{% else %}false{% endif %}"><span class="relative inline-flex">{{ g.name }}<span class="lead-group-count absolute -right-3.5 -top-2.5 inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-slate-200 px-1.5 py-0.5 text-[11px] font-bold leading-none text-slate-600 ring-1 ring-white" title="{{ g.total_leads }} lead(s) in this group">{{ g.total_leads }}</span></span></button>
               {% endfor %}
-              <button type="button" id="lead-group-new-btn" class="lead-group-tab lead-group-tab--new ml-0.5 rounded-t-md font-semibold" title="Create a new group">+ New group</button>
+              <button type="button" id="lead-group-new-btn" class="lead-group-tab lead-group-tab--new ml-0.5 rounded-t-md font-semibold lg:rounded-t-md" title="Create a new group">+ New group</button>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
-          <div id="leads-controls-bar" class="sticky top-0 z-20 -mx-4 flex flex-wrap items-center gap-2 border-t border-slate-100 bg-white/95 px-4 py-2.5 backdrop-blur-sm supports-[backdrop-filter]:bg-white/85 sm:-mx-5 sm:px-5">
+          <div id="leads-controls-bar" class="sticky top-0 z-20 -mx-4 hidden flex-wrap items-center gap-2 border-t border-slate-100 bg-white/95 px-4 py-2.5 backdrop-blur-sm supports-[backdrop-filter]:bg-white/85 sm:-mx-5 sm:px-5 lg:flex">
             <label class="inline-flex min-h-[2.5rem] cursor-pointer select-none items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-sm transition hover:border-indigo-200/90 hover:bg-slate-50/80 focus-within:outline-none focus-within:ring-2 focus-within:ring-indigo-500/30" title="Select all leads visible on this page">
               <input type="checkbox" id="select-all-clinics" class="h-4 w-4 shrink-0 rounded border-slate-300 text-indigo-600 focus:ring-2 focus:ring-indigo-500/35" aria-label="Select all leads on this page" />
               <span class="text-xs font-semibold text-slate-700">Select all</span>

@@ -2487,6 +2487,30 @@
           btn.classList.toggle('lead-group-tab--active', active);
           btn.setAttribute('aria-selected', active ? 'true' : 'false');
         });
+        syncLeadGroupMobileLabel(want);
+      }
+
+      function syncLeadGroupMobileLabel(groupId) {
+        var want = normalizeLeadGroupTabId(groupId);
+        var btn = document.querySelector('#lead-group-tabs .lead-group-tab[data-group-id="' + want + '"]');
+        var label = document.getElementById('lead-group-mobile-label');
+        var countEl = document.getElementById('lead-group-mobile-count');
+        if (!btn || !label) return;
+        var clone = btn.cloneNode(true);
+        clone.querySelectorAll('.lead-group-count, #active-chat-count-badge').forEach(function (el) {
+          el.remove();
+        });
+        label.textContent = (clone.textContent || '').trim() || 'Uncategorized';
+        if (!countEl) return;
+        var countBadge = btn.querySelector('.lead-group-count, #active-chat-count-badge');
+        if (countBadge) {
+          var n = (countBadge.textContent || '').trim();
+          countEl.textContent = n;
+          countEl.classList.toggle('hidden', !n);
+        } else {
+          countEl.textContent = '';
+          countEl.classList.add('hidden');
+        }
       }
 
       function syncLeadsAfterGroupFragmentSwap() {
