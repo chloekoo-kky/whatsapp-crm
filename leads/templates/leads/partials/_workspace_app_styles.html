@@ -475,4 +475,85 @@
   .lead-card-container.lead-page-hidden {
     display: none !important;
   }
+
+  /* —— Mobile layout —— */
+  body.mobile-nav-open #app-sidebar {
+    transform: translateX(0);
+  }
+  body.mobile-nav-open {
+    overflow: hidden;
+  }
+
+  @media (max-width: 1023px) {
+    /* Force card grid on small screens — table is unreadable */
+    html.cv-list #clinics-view-list {
+      display: none !important;
+    }
+    html.cv-list #clinics-view-grid {
+      display: block !important;
+    }
+    .leads-view-mode-toggle {
+      display: none;
+    }
+
+    .dashboard-scraping-col {
+      max-height: none;
+    }
+    .dashboard-scraping-col.scraping-panel--collapsed {
+      max-height: 3.25rem;
+      overflow: hidden;
+    }
+    .dashboard-scraping-col.scraping-panel--collapsed .scraping-panel-body {
+      visibility: hidden;
+    }
+    .dashboard-scraping-col:not(.scraping-panel--collapsed) #scraping-panel-mobile-toggle svg {
+      transform: rotate(180deg);
+    }
+
+    #leads-controls-bar .leads-controls-secondary {
+      width: 100%;
+      justify-content: flex-start;
+    }
+    #leads-controls-bar .leads-controls-secondary .min-w-\[11\.5rem\] {
+      min-width: 0;
+      max-width: none;
+      flex: 1 1 100%;
+    }
+
+    .bulk-action-dock {
+      left: 0.75rem !important;
+      right: 0.75rem !important;
+      bottom: 1rem !important;
+      transform: translateY(0) !important;
+    }
+    .bulk-action-dock.bulk-action-dock--visible {
+      transform: translateY(0) !important;
+    }
+    .bulk-action-dock > div {
+      flex-wrap: wrap;
+      justify-content: center;
+      max-width: 100%;
+    }
+
+    #chat-modal-container .chat-inbox-panel {
+      max-width: 100% !important;
+      width: 100% !important;
+    }
+  }
+
+  @media (min-width: 1024px) {
+    .dashboard-scraping-col.scraping-panel--collapsed {
+      max-height: none;
+      overflow: visible;
+    }
+    .dashboard-scraping-col.scraping-panel--collapsed .scraping-panel-body {
+      visibility: visible;
+    }
+  }
+
+  @media (max-width: 1279px) {
+    .dashboard-scraping-col:not(.scraping-panel--collapsed) {
+      max-height: min(40vh, 22rem);
+    }
+  }
 </style>

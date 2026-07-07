@@ -1,0 +1,13 @@
+<header id="mobile-topbar" class="flex h-14 shrink-0 items-center gap-3 border-b border-slate-200/90 bg-white px-4 shadow-sm lg:hidden">
+  <button type="button" id="mobile-nav-toggle"
+    class="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/40"
+    aria-expanded="false" aria-controls="app-sidebar" aria-label="Open navigation menu">
+    <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5"/></svg>
+  </button>
+  <div class="min-w-0 flex-1">
+    <p id="mobile-topbar-title" class="truncate text-sm font-semibold text-slate-900">{{ mobile_page_title|default:"Lead CRM" }}</p>
+    {% if mobile_page_subtitle %}
+    <p id="mobile-topbar-subtitle" class="truncate text-[11px] text-slate-500">{{ mobile_page_subtitle }}</p>
+    {% endif %}
+  </div>
+</header>

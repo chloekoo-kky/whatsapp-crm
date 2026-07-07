@@ -20,16 +20,17 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
   {% include "leads/partials/_workspace_app_styles.html" %}
 </head>
-<body class="flex h-screen min-h-0 overflow-hidden overflow-x-hidden bg-slate-100 font-sans text-slate-900 antialiased">
+<body class="flex h-[100dvh] min-h-0 flex-col overflow-hidden overflow-x-hidden bg-slate-100 font-sans text-slate-900 antialiased lg:flex-row">
+  {% include "leads/partials/_mobile_topbar.html" with mobile_page_title="Categories" mobile_page_subtitle="Types and import rules" %}
   {% include "leads/partials/_app_sidebar.html" with nav_active="categories" %}
 
   <main class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-    <header class="shrink-0 border-b border-slate-200/80 bg-white px-6 py-4">
+    <header class="hidden shrink-0 border-b border-slate-200/80 bg-white px-4 py-4 sm:px-6 lg:block">
       <h1 class="text-lg font-semibold text-slate-900">Categories</h1>
       <p class="mt-0.5 text-sm text-slate-500">Manage category types and auto-assignment rules for imported leads.</p>
     </header>
 
-    <div class="min-h-0 flex-1 overflow-y-auto p-6">
+    <div class="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
       <div class="mx-auto max-w-4xl">
         {% include "leads/partials/_category_rules_manage.html" %}
       </div>
@@ -151,5 +152,6 @@
       });
     })();
   </script>
+  {% include "leads/partials/_mobile_nav.js.html" %}
 </body>
 </html>

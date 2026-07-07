@@ -1,61 +1,128 @@
 {% with nav=nav_active|default:"dashboard" %}
-<aside class="flex w-[15.5rem] shrink-0 flex-col border-r border-slate-800/50 bg-[#1a1f2b]" aria-label="Main navigation">
+
+<div id="app-sidebar-shell" class="shrink-0">
+
+  <div id="app-sidebar-backdrop" class="fixed inset-0 z-[55] hidden bg-slate-900/50 backdrop-blur-[2px] lg:hidden" aria-hidden="true"></div>
+
+  <aside id="app-sidebar" class="app-sidebar fixed inset-y-0 left-0 z-[60] flex w-[min(15.5rem,85vw)] shrink-0 -translate-x-full flex-col border-r border-slate-800/50 bg-[#1a1f2b] transition-transform duration-200 ease-out lg:relative lg:z-auto lg:w-[15.5rem] lg:translate-x-0" aria-label="Main navigation">
+
   <div class="px-4 pt-5 pb-4">
+
     <a href="{% url 'dashboard' %}" class="block text-lg font-bold tracking-tight text-white">Lead CRM</a>
+
     <p class="mt-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">Business leads</p>
+
   </div>
-  <nav class="flex flex-1 flex-col gap-6 px-2 pb-6" aria-label="Primary">
+
+  <nav class="flex flex-1 flex-col gap-6 overflow-y-auto overscroll-y-contain px-2 pb-6" aria-label="Primary">
+
     <div>
+
       <p class="mb-2 px-3 text-[10px] font-bold uppercase tracking-wider text-slate-500">Workspace</p>
+
       <ul class="space-y-0.5">
+
         <li>
+
           <a href="{% url 'dashboard' %}" data-workspace-nav="dashboard" class="manage-nav-item {% if nav == 'dashboard' %}manage-nav-item--active{% endif %}" title="Dashboard">
+
             <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25A2.25 2.25 0 0113.5 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25v-2.25z"/></svg>
+
             Leads
+
           </a>
+
         </li>
+
         <li>
+
           <a href="{% url 'whatsapp_dashboard' %}" data-workspace-nav="whatsapp" class="manage-nav-item {% if nav == 'whatsapp' %}manage-nav-item--active{% endif %}" title="WhatsApp Cloud API queue monitor and campaign controls">
+
             <svg class="h-5 w-5" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.435 9.884-9.881 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z"/></svg>
+
             <span class="min-w-0 flex-1">WhatsApp CRM</span>
+
             <span id="wa-sidebar-pending-badge"
+
               hx-get="{% url 'whatsapp_pending_count' %}"
+
               hx-trigger="load"
+
               hx-swap="innerHTML"
+
               class="shrink-0"></span>
+
           </a>
+
         </li>
+
         <li>
+
           <a href="{% url 'reports' %}" class="manage-nav-item {% if nav == 'reports' %}manage-nav-item--active{% endif %}" title="Daily outreach reports">
+
             <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5m0 0V9.375A3.375 3.375 0 0013.5 6.375h-1.5a3.375 3.375 0 00-3.375 3.375V10.5m14.625 0a3.375 3.375 0 00-3.375-3.375H3.375A3.375 3.375 0 001.875 10.5v8.25A3.375 3.375 0 004.875 22.125h14.25a3.375 3.375 0 003.375-3.375V14.25"/><path stroke-linecap="round" stroke-linejoin="round" d="M6 10.5h9m-9 4.5h6M7.5 18H18M10.5 3.75h3m-1.5-1.5v3"/></svg>
+
             Reports
+
           </a>
+
         </li>
+
       </ul>
+
     </div>
+
     <div>
+
       <p class="mb-2 px-3 text-[10px] font-bold uppercase tracking-wider text-slate-500">Manage</p>
+
       <ul class="space-y-0.5">
+
         <li>
+
           <a href="{% url 'category_rules' %}" class="manage-nav-item {% if nav == 'categories' %}manage-nav-item--active{% endif %}" title="Category types and import rules">
+
             <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9.568 3H5.25A2.25 2.25 0 003 5.25v4.318c0 .597.237 1.17.659 1.591l9.581 9.581c.699.699 1.78.872 2.607.33a18.095 18.095 0 005.223-5.223c.542-.827.369-1.908-.33-2.607L11.16 3.66A2.25 2.25 0 009.568 3z"/><path stroke-linecap="round" stroke-linejoin="round" d="M6 6h.008v.008H6V6z"/></svg>
+
             Categories
+
           </a>
+
         </li>
+
         <li>
+
           <a href="{% url 'free_text_template' %}" class="manage-nav-item {% if nav == 'free_text_template' %}manage-nav-item--active{% endif %}" title="Up to three Active Chat free-form reply templates">
+
             <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 01.865-.501 48.172 48.172 0 003.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0012 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018z"/></svg>
+
             Free text templates
+
           </a>
+
         </li>
+
         <li>
+
           <a href="/admin/" class="manage-nav-item">
+
             <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378.138-.75.43-.88l1.004-.828c.424-.35.534-.954.26-1.43L4.028 8.66a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281z"/><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+
             Admin — leads &amp; rules
+
           </a>
+
         </li>
+
       </ul>
+
     </div>
+
   </nav>
-</aside>
+
+  </aside>
+
+</div>
+
 {% endwith %}
+

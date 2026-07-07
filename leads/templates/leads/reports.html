@@ -32,17 +32,18 @@
     }
   </style>
 </head>
-<body class="flex h-screen min-h-0 overflow-hidden overflow-x-hidden bg-slate-100 font-sans text-slate-900 antialiased">
+<body class="flex h-[100dvh] min-h-0 flex-col overflow-hidden overflow-x-hidden bg-slate-100 font-sans text-slate-900 antialiased lg:flex-row">
+  {% include "leads/partials/_mobile_topbar.html" with mobile_page_title="Reports" mobile_page_subtitle="Daily outreach activity" %}
   {% include "leads/partials/_app_sidebar.html" with nav_active="reports" %}
 
   <main class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-    <header class="shrink-0 border-b border-slate-200/80 bg-white px-6 py-4">
+    <header class="hidden shrink-0 border-b border-slate-200/80 bg-white px-4 py-4 sm:px-6 lg:block">
       <h1 class="text-lg font-semibold text-slate-900">Daily reports</h1>
       <p class="mt-0.5 text-sm text-slate-500">Outreach activity by calendar day — first sends, messages, and replies.</p>
     </header>
 
     <div class="relative flex min-h-0 min-w-0 flex-1 overflow-hidden">
-      <div class="min-h-0 flex-1 overflow-y-auto p-6">
+      <div class="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
         <div class="mx-auto max-w-6xl space-y-6">
           <section class="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm">
             <form method="get" action="{% url 'reports' %}" class="flex flex-wrap items-end gap-4">
@@ -313,5 +314,6 @@
       }
     })();
   </script>
+  {% include "leads/partials/_mobile_nav.js.html" %}
 </body>
 </html>

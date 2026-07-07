@@ -40,6 +40,14 @@
 
     };
 
+    var MOBILE_TITLES = {
+
+      dashboard: "Leads",
+
+      whatsapp: "WhatsApp CRM",
+
+    };
+
 
 
     function workspaceViewFromPath(pathname) {
@@ -54,7 +62,7 @@
 
     function setSidebarActive(view) {
 
-      var nav = document.querySelector('aside[aria-label="Main navigation"]');
+      var nav = document.getElementById("app-sidebar");
 
       if (!nav) return;
 
@@ -107,6 +115,12 @@
       var title = TITLES[view];
 
       if (title) document.title = title;
+
+      var mobileTitle = document.getElementById("mobile-topbar-title");
+
+      if (mobileTitle && MOBILE_TITLES[view]) mobileTitle.textContent = MOBILE_TITLES[view];
+
+      if (typeof window.closeMobileNav === "function") window.closeMobileNav();
 
     }
 

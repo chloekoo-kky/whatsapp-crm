@@ -19,16 +19,17 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
   {% include "leads/partials/_workspace_app_styles.html" %}
 </head>
-<body class="flex h-screen min-h-0 overflow-hidden overflow-x-hidden bg-slate-100 font-sans text-slate-900 antialiased">
+<body class="flex h-[100dvh] min-h-0 flex-col overflow-hidden overflow-x-hidden bg-slate-100 font-sans text-slate-900 antialiased lg:flex-row">
+  {% include "leads/partials/_mobile_topbar.html" with mobile_page_title="Free text templates" mobile_page_subtitle="Active Chat quick replies" %}
   {% include "leads/partials/_app_sidebar.html" with nav_active="free_text_template" %}
 
   <main class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-    <header class="shrink-0 border-b border-slate-200/80 bg-white px-6 py-4">
+    <header class="hidden shrink-0 border-b border-slate-200/80 bg-white px-4 py-4 sm:px-6 lg:block">
       <h1 class="text-lg font-semibold text-slate-900">Free text templates</h1>
       <p class="mt-0.5 text-sm text-slate-500">Create as many templates as you need. The top {{ free_text_active_chat_count }} in this list appear as buttons in Active Chat.</p>
     </header>
 
-    <div class="min-h-0 flex-1 overflow-y-auto p-6">
+    <div class="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
       <div class="mx-auto max-w-3xl">
         <section class="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm">
           <form method="post" action="{% url 'save_free_text_template' %}" id="free-text-templates-form" class="space-y-5">
@@ -185,5 +186,6 @@
       refreshTemplateRows();
     })();
   </script>
+  {% include "leads/partials/_mobile_nav.js.html" %}
 </body>
 </html>

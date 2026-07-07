@@ -1,8 +1,19 @@
 <div id="workspace-panel-dashboard" class="dashboard-workspace"{% if not workspace_fragment %} data-loaded="1"{% endif %}{% if workspace_fragment %} hidden{% endif %}>
 
-    <aside id="scraping-panel" class="dashboard-scraping-col" aria-label="Scraping and import">
-      <div class="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-y-contain px-4 py-4 xl:px-5">
-        <div class="shrink-0">
+    <aside id="scraping-panel" class="dashboard-scraping-col scraping-panel--collapsed" aria-label="Scraping and import">
+      <div class="scraping-panel-header flex shrink-0 items-center justify-between gap-2 border-b border-slate-200/80 bg-white px-4 py-2.5 lg:hidden">
+        <div class="min-w-0">
+          <h2 class="text-sm font-semibold tracking-tight text-slate-800">Scraping</h2>
+          <p class="text-[10px] text-slate-500">Serper lead import</p>
+        </div>
+        <button type="button" id="scraping-panel-mobile-toggle"
+          class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/35"
+          aria-expanded="false" aria-controls="scraping-panel" aria-label="Expand scraping panel">
+          <svg class="h-4 w-4 transition-transform duration-200" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5"/></svg>
+        </button>
+      </div>
+      <div class="scraping-panel-body flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-y-contain px-4 py-4 xl:px-5">
+        <div class="hidden shrink-0 lg:block">
           <div class="flex flex-wrap items-center gap-x-2 gap-y-0.5">
             <h2 class="text-sm font-semibold tracking-tight text-slate-800">Scraping</h2>
             <span class="rounded-md bg-slate-100 px-1.5 py-px text-[10px] font-semibold uppercase tracking-wider text-slate-500">Serper</span>
@@ -259,12 +270,12 @@
                 <option value="created-asc">Created · oldest</option>
               </select>
             </label>
-            <div class="ml-auto flex flex-wrap items-center justify-end gap-2">
+            <div class="ml-auto flex flex-wrap items-center justify-end gap-2 leads-controls-secondary">
               {% include "leads/partials/_leads_pagination_controls.html" %}
-              <div class="min-w-[11.5rem] max-w-xs shrink-0">
+              <div class="hidden min-w-[11.5rem] max-w-xs shrink-0 lg:block">
                 {% include "leads/partials/_hunt_option_toggle.html" with toggle_id="chat-indicator-poll-toggle" toggle_name="chat_indicator_poll" toggle_label="Live chat badges" toggle_desc_id="chat-indicator-poll-desc" toggle_desc="When on, poll about every 15 seconds for reply updates on lead cards (only in folders with sent WhatsApp). When off, badges refresh when you switch tabs or send messages." toggle_checked=True toggle_title="Periodic chat-indicator polling for the current folder" %}
               </div>
-              <div class="flex min-h-[2.5rem] items-center gap-0.5 rounded-xl border border-slate-200 bg-slate-50 p-1 shadow-inner" role="group" aria-label="Table layout">
+              <div class="leads-view-mode-toggle flex min-h-[2.5rem] items-center gap-0.5 rounded-xl border border-slate-200 bg-slate-50 p-1 shadow-inner" role="group" aria-label="Table layout">
                 <button type="button" class="view-mode-btn rounded-lg px-3 py-2 text-xs font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/35" data-view-mode="list" aria-pressed="true">List</button>
                 <button type="button" class="view-mode-btn min-w-[3.25rem] rounded-lg px-3 py-2 text-xs font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/35" data-view-mode="grid" aria-pressed="false">Grid</button>
               </div>

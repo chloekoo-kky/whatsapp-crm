@@ -1,0 +1,63 @@
+<script>
+  (function () {
+    var toggle = document.getElementById("mobile-nav-toggle");
+    var backdrop = document.getElementById("app-sidebar-backdrop");
+    if (!toggle) return;
+
+    function isMobileNav() {
+      return window.matchMedia("(max-width: 1023px)").matches;
+    }
+
+    function setOpen(open) {
+      document.body.classList.toggle("mobile-nav-open", open);
+      toggle.setAttribute("aria-expanded", open ? "true" : "false");
+      toggle.setAttribute("aria-label", open ? "Close navigation menu" : "Open navigation menu");
+      if (backdrop) {
+        backdrop.classList.toggle("hidden", !open);
+        backdrop.setAttribute("aria-hidden", open ? "false" : "true");
+      }
+    }
+
+    function close() {
+      setOpen(false);
+    }
+
+    toggle.addEventListener("click", function () {
+      setOpen(!document.body.classList.contains("mobile-nav-open"));
+    });
+
+    if (backdrop) {
+      backdrop.addEventListener("click", close);
+    }
+
+    var sidebar = document.getElementById("app-sidebar");
+    if (sidebar) {
+      sidebar.querySelectorAll("a").forEach(function (link) {
+        link.addEventListener("click", function () {
+          if (isMobileNav()) close();
+        });
+      });
+    }
+
+    window.addEventListener("resize", function () {
+      if (!isMobileNav()) close();
+    });
+
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape") close();
+    });
+
+    var scrapingToggle = document.getElementById("scraping-panel-mobile-toggle");
+    var scrapingPanel = document.getElementById("scraping-panel");
+    if (scrapingToggle && scrapingPanel) {
+      scrapingToggle.addEventListener("click", function () {
+        scrapingPanel.classList.toggle("scraping-panel--collapsed");
+        var collapsed = scrapingPanel.classList.contains("scraping-panel--collapsed");
+        scrapingToggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
+        scrapingToggle.setAttribute("aria-label", collapsed ? "Expand scraping panel" : "Collapse scraping panel");
+      });
+    }
+
+    window.closeMobileNav = close;
+  })();
+</script>
