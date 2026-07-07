@@ -251,9 +251,15 @@ def _dashboard_enrich_clinics(qs):
     return clinics_list, multi_location_brands
 
 
-def _dashboard_prepare_clinics(qs):
+def _dashboard_prepare_clinics(qs, *, global_search: bool = False):
     """Enrich dashboard lead rows with display-only annotations."""
-    return _dashboard_enrich_clinics(qs)
+    clinics_list, multi_location_brands = _dashboard_enrich_clinics(qs)
+    if global_search:
+        for lead in clinics_list:
+            tab_id, folder_name = _lead_dashboard_folder_meta(lead)
+            lead.dashboard_folder_tab_id = tab_id
+            lead.dashboard_folder_name = folder_name
+    return clinics_list, multi_location_brands
 
 
 def _leads_tab_base_qs():
@@ -390,14 +396,62 @@ def _active_folder_context(request) -> dict:
     }
 
 
-def _leads_queryset_for_table(request):
-    """Apply optional hunt filter and lead group tab (uncategorized = group is null)."""
+GLOBAL_LEAD_SEARCH_MIN_LEN = 2
+GLOBAL_LEAD_SEARCH_MAX = 200
+
+
+def _lead_keyword_search_filter(qs, q: str):
+    """Substring match across the same fields exposed in dashboard ``data-search``."""
+    qq = (q or "").strip()
+    if not qq:
+        return qs
+    return qs.filter(
+        Q(name__icontains=qq)
+        | Q(address__icontains=qq)
+        | Q(phone_number__icontains=qq)
+        | Q(website__icontains=qq)
+        | Q(shop_keyword__icontains=qq)
+        | Q(category__icontains=qq)
+        | Q(search_state__icontains=qq)
+        | Q(search_city__icontains=qq)
+        | Q(search_query__icontains=qq)
+    )
+
+
+def _lead_dashboard_folder_meta(lead: Lead) -> tuple[str, str]:
+    """Dashboard tab id and label for a lead's storage folder."""
+    uncategorized = get_or_create_uncategorized_group()
+    grp = lead.group
+    if grp is None or grp.pk == uncategorized.pk:
+        return "uncategorized", UNCATEGORIZED_GROUP_NAME
+    return str(grp.pk), grp.name
+
+
+def _leads_qs_global_search(q: str, search_record_id: Optional[int]):
+    """Search all non-trash folders for dashboard global search."""
+    trash_group = get_or_create_trash_group()
+    qs = _leads_tab_base_qs().select_related("group").exclude(group_id=trash_group.pk)
+    if search_record_id is not None:
+        qs = qs.filter(search_query_record_id=int(search_record_id))
+    qs = _lead_keyword_search_filter(qs, q)
+    return qs.order_by("name", "id")[:GLOBAL_LEAD_SEARCH_MAX]
+
+
+def _leads_table_global_search_query(request) -> str:
+    return (request.GET.get("q") or "").strip()
+
+
+def _leads_queryset_for_table(request) -> tuple:
+    """Return ``(queryset, is_global_search)`` for dashboard table fragments."""
     srid = request.GET.get("search_record")
     srid_int = int(srid) if srid and str(srid).isdigit() else None
+    q = _leads_table_global_search_query(request)
+    if len(q) >= GLOBAL_LEAD_SEARCH_MIN_LEN:
+        return _leads_qs_global_search(q, srid_int), True
     gid_raw = (request.GET.get("group_id") or "").strip().lower()
     if gid_raw.isdigit():
-        return _leads_qs_for_tab(gid_raw, srid_int)
-    return _leads_qs_for_tab("uncategorized", srid_int)
+        return _leads_qs_for_tab(gid_raw, srid_int), False
+    return _leads_qs_for_tab("uncategorized", srid_int), False
 
 
 @method_decorator(ensure_csrf_cookie, name="dispatch")
@@ -2216,7 +2270,13 @@ def whatsapp_force_send(request, pk: int):
 @require_GET
 def get_lead_chat_indicators(request):
     """JSON map of chat pulse / dispatched flags for the active leads tab (dashboard polling)."""
-    qs = _leads_queryset_for_table(request)
+    srid = request.GET.get("search_record")
+    srid_int = int(srid) if srid and str(srid).isdigit() else None
+    gid_raw = (request.GET.get("group_id") or "").strip().lower()
+    if gid_raw.isdigit():
+        qs = _leads_qs_for_tab(gid_raw, srid_int)
+    else:
+        qs = _leads_qs_for_tab("uncategorized", srid_int)
     whatsapp_chats_group = get_or_create_whatsapp_chats_group()
     active_chat_count = _leads_qs_for_tab(str(whatsapp_chats_group.pk), None).count()
     return JsonResponse(
@@ -2237,12 +2297,17 @@ def get_leads_table(request):
     Return HTML fragments for the leads list/grid for AJAX tab switching.
     GET ``group_id``: numeric LeadGroup pk, or ``uncategorized`` (default) for ungrouped leads.
     GET ``search_record``: optional hunt filter (same as dashboard).
+    GET ``q``: optional global keyword search across all non-trash folders (min 2 chars).
     """
-    qs = _leads_queryset_for_table(request)
-    clinics_list, multi_location_brands = _dashboard_prepare_clinics(qs)
+    qs, is_global_search = _leads_queryset_for_table(request)
+    clinics_list, multi_location_brands = _dashboard_prepare_clinics(
+        qs, global_search=is_global_search
+    )
     ctx = {
         "clinics": clinics_list,
         "multi_location_brands": multi_location_brands,
+        "show_folder_badge": is_global_search,
+        "is_global_search": is_global_search,
         **_active_folder_context(request),
     }
     tbody_html = render_to_string(
@@ -2255,6 +2320,8 @@ def get_leads_table(request):
         ctx,
         request=request,
     )
+    search_q = _leads_table_global_search_query(request)
+    result_count = len(clinics_list) if is_global_search else None
     return JsonResponse(
         {
             "ok": True,
@@ -2262,6 +2329,12 @@ def get_leads_table(request):
             "grid_html": grid_html,
             "funnel_metrics": _funnel_metrics(qs),
             "group_counts": _lead_group_counts(),
+            "global_search": is_global_search,
+            "global_search_query": search_q if is_global_search else "",
+            "global_search_count": result_count,
+            "global_search_truncated": bool(
+                is_global_search and result_count == GLOBAL_LEAD_SEARCH_MAX
+            ),
         },
         json_dumps_params={"ensure_ascii": False},
     )

@@ -1,6 +1,6 @@
 {# Single grid cell — used in grid body and OOB refresh after Send now. #}
 {% load clinic_display %}
 <div id="lead-grid-cell-{{ c.id }}" class="lead-card-container leads-funnel-grid__cell group/cell relative min-w-0{% if oob %} lead-card-container--oob{% endif %}" data-whatsapp-status="{{ c.whatsapp_status }}" data-awaiting-client-reply="{% if c|whatsapp_active_chat %}1{% else %}0{% endif %}" data-whatsapp-dispatched="{% if c|whatsapp_dispatched %}1{% else %}0{% endif %}"{% if oob %} hx-swap-oob="true"{% endif %}>
-  {% include "leads/partials/_lead_grid_card.html" with c=c is_trash_view=is_trash_view|default:False is_uncategorized_view=is_uncategorized_view|default:False is_whatsapp_chats_view=is_whatsapp_chats_view|default:False is_queue_view=is_queue_view|default:False current_group_id=current_group_id %}
+  {% include "leads/partials/_lead_grid_card.html" with c=c show_folder_badge=show_folder_badge|default:False is_trash_view=is_trash_view|default:False is_uncategorized_view=is_uncategorized_view|default:False is_whatsapp_chats_view=is_whatsapp_chats_view|default:False is_queue_view=is_queue_view|default:False current_group_id=current_group_id %}
   <p id="lead-junk-error-{{ c.id }}" class="mt-1 px-1 text-[10px] font-medium text-rose-700 empty:hidden" role="alert"></p>
 </div>

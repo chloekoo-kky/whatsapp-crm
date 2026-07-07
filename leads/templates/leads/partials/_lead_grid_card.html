@@ -16,7 +16,9 @@
   <div hidden class="whatsapp-draft-store">{{ c.whatsapp_draft }}</div>
   <div class="min-w-0 flex-1 pb-2">
     <div class="clinic-type-row mb-2 flex items-center justify-between gap-2">
-      <div class="flex min-w-0 flex-1 items-start gap-1">
+      <div class="flex min-w-0 flex-1 flex-col items-start gap-1">
+        {% include "leads/partials/_lead_folder_badge.html" with c=c show_folder_badge=show_folder_badge|default:False %}
+        <div class="flex min-w-0 w-full items-start gap-1">
         <button type="button"
           class="lead-vip-star-btn -ml-1 mt-0.5 inline-flex shrink-0 rounded-lg p-1 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/50 {% if c.is_very_important %}text-amber-500 hover:bg-amber-50/90 hover:text-amber-600{% else %}text-slate-300 hover:bg-amber-50/80 hover:text-amber-500{% endif %}"
           data-clinic-id="{{ c.id }}"
@@ -29,6 +31,7 @@
         </button>
         <div class="clinic-type-cell min-w-0 flex-1">
           {{ c.category|category_badge }}
+        </div>
         </div>
       </div>
       <div class="flex shrink-0 items-center gap-0.5">

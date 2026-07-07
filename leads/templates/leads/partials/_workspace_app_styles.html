@@ -51,6 +51,27 @@
   article.clinic-card.clinic-row--updated {
     animation: clinic-card-updated 1.15s ease-out;
   }
+  @keyframes clinic-row-search-highlight {
+    0% { background-color: rgba(199, 210, 254, 0.72); }
+    100% { background-color: transparent; }
+  }
+  @keyframes clinic-card-search-highlight {
+    0% {
+      box-shadow:
+        0 0 0 3px rgb(99 102 241 / 0.55),
+        0 8px 24px -6px rgb(99 102 241 / 0.22);
+    }
+    100% {
+      box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.06);
+    }
+  }
+  tr.clinic-row--search-highlight td {
+    animation: clinic-row-search-highlight 2.8s ease-out;
+    box-shadow: inset 0 0 0 2px rgb(99 102 241 / 0.45);
+  }
+  article.clinic-row--search-highlight {
+    animation: clinic-card-search-highlight 2.8s ease-out;
+  }
   /*
     List vs grid: HTML defaults to list visible. Without this, users with a saved grid
     preference see the table until the script at the bottom runs (layout flicker).

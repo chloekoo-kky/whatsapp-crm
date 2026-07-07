@@ -1,5 +1,5 @@
 {% for c in clinics %}
-  {% include "leads/partials/_lead_table_row.html" with c=c %}
+  {% include "leads/partials/_lead_table_row.html" with c=c show_folder_badge=show_folder_badge|default:False %}
 {% empty %}
-<tr><td colspan="5" class="px-4 py-12 text-center text-sm text-slate-500">No leads yet. Run a hunt to import from Serper.</td></tr>
+<tr><td colspan="5" class="px-4 py-12 text-center text-sm text-slate-500">{% if show_folder_badge %}No leads match your search across all folders.{% else %}No leads yet. Run a hunt to import from Serper.{% endif %}</td></tr>
 {% endfor %}

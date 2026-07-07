@@ -2478,3 +2478,76 @@ class BackupExportTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", response["Content-Type"])
         self.assertIn(f"clinic_crm_backup_1_leads_", response["Content-Disposition"])
+
+
+class GlobalLeadSearchTests(TestCase):
+    def setUp(self):
+        from leads.models import LeadGroup
+
+        self.client = Client()
+        self.uncategorized = get_or_create_uncategorized_group()
+        self.custom_group = LeadGroup.objects.create(name="Selangor Prospects", sort_order=10)
+        self.hidden_in_uncategorized = Lead.objects.create(
+            name="Alpha Dental",
+            address="1 Jalan Alpha",
+            group=self.uncategorized,
+            phone_number="+60111111111",
+            search_city="Petaling Jaya",
+        )
+        self.hidden_in_custom = Lead.objects.create(
+            name="Beta Physio",
+            address="2 Jalan Beta",
+            group=self.custom_group,
+            phone_number="+60222222222",
+            search_city="Shah Alam",
+        )
+
+    def test_global_search_finds_leads_across_folders(self):
+        from django.test import RequestFactory
+
+        from leads.views import _leads_queryset_for_table
+
+        request = RequestFactory().get("/", {"q": "Beta"})
+        qs, is_global = _leads_queryset_for_table(request)
+        self.assertTrue(is_global)
+        names = list(qs.values_list("name", flat=True))
+        self.assertEqual(names, ["Beta Physio"])
+
+    def test_global_search_ajax_includes_folder_badges(self):
+        response = self.client.get(
+            reverse("get_leads_table"),
+            {"q": "Alpha"},
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["global_search"])
+        self.assertEqual(payload["global_search_query"], "Alpha")
+        self.assertEqual(payload["global_search_count"], 1)
+        self.assertIn("lead-folder-badge", payload["tbody_html"])
+        self.assertIn("Uncategorized", payload["tbody_html"])
+        self.assertIn("data-folder-tab-id=\"uncategorized\"", payload["tbody_html"])
+
+    def test_global_search_excludes_trash(self):
+        from leads.pipeline import get_or_create_trash_group
+
+        trash = get_or_create_trash_group()
+        Lead.objects.create(
+            name="Trash Alpha",
+            address="99 Dump Rd",
+            group=trash,
+        )
+        response = self.client.get(reverse("get_leads_table"), {"q": "Trash Alpha"})
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["global_search_count"], 0)
+        self.assertNotIn("Trash Alpha", payload["tbody_html"])
+
+    def test_tab_query_ignores_short_q_param(self):
+        from django.test import RequestFactory
+
+        from leads.views import _leads_queryset_for_table
+
+        request = RequestFactory().get("/", {"q": "A", "group_id": str(self.custom_group.pk)})
+        qs, is_global = _leads_queryset_for_table(request)
+        self.assertFalse(is_global)
+        self.assertEqual(list(qs.values_list("name", flat=True)), ["Beta Physio"])

@@ -16,6 +16,7 @@
     <input type="checkbox" class="clinic-select-cb relative top-0.5 h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" value="{{ c.id }}" title="Select row" aria-label="Select {{ c.name }}" />
   </td>
   <td class="min-w-0 align-top px-2 py-3.5 sm:px-4">
+    {% include "leads/partials/_lead_folder_badge.html" with c=c show_folder_badge=show_folder_badge|default:False %}
     <div class="clinic-type-cell mb-1.5 space-y-1">
       {{ c.category|category_badge }}
     </div>

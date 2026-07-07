@@ -1,6 +1,6 @@
 {# Folder context (is_trash_view, is_uncategorized_view, is_queue_view, current_group_id) from dashboard / get_leads_table. #}
 {% for c in clinics %}
-  {% include "leads/partials/_lead_grid_cell.html" with c=c is_trash_view=is_trash_view|default:False is_uncategorized_view=is_uncategorized_view|default:False is_whatsapp_chats_view=is_whatsapp_chats_view|default:False is_queue_view=is_queue_view|default:False current_group_id=current_group_id %}
+  {% include "leads/partials/_lead_grid_cell.html" with c=c show_folder_badge=show_folder_badge|default:False is_trash_view=is_trash_view|default:False is_uncategorized_view=is_uncategorized_view|default:False is_whatsapp_chats_view=is_whatsapp_chats_view|default:False is_queue_view=is_queue_view|default:False current_group_id=current_group_id %}
 {% empty %}
-<p class="col-span-full py-12 text-center text-sm text-slate-500 md:col-span-2 lg:col-span-3">No leads yet. Run a hunt to import from Serper.</p>
+<p class="col-span-full py-12 text-center text-sm text-slate-500 md:col-span-2 lg:col-span-3">{% if show_folder_badge %}No leads match your search across all folders.{% else %}No leads yet. Run a hunt to import from Serper.{% endif %}</p>
 {% endfor %}

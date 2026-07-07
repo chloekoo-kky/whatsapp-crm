@@ -2159,7 +2159,7 @@
           const isVip = row.getAttribute('data-very-important') === '1';
           const hasSent = row.getAttribute('data-whatsapp-dispatched') === '1';
           let hide = false;
-          if (q && !hay.includes(q)) hide = true;
+          if (!opts.skipKeyword && !globalSearchActive && q && !hay.includes(q)) hide = true;
           if (vipOnly && !isVip) hide = true;
           if (sentOnly && !hasSent) hide = true;
           row.classList.toggle('hidden', hide);
@@ -2199,21 +2199,222 @@
         });
       }
 
-      const searchInput = document.getElementById('table-search');
-      if (searchInput) {
-        searchInput.addEventListener('input', function () {
-          applyTableFilter({ resetPage: true });
-          refreshLeadFilterTagActiveState();
-        });
+      var GLOBAL_SEARCH_MIN_LEN = 2;
+      var globalSearchActive = false;
+      var globalSearchQuery = '';
+      var tabBeforeGlobalSearch = 'uncategorized';
+      var globalSearchDebounceTimer = null;
+      var globalSearchRequestId = 0;
+      var pendingHighlightLeadId = null;
+
+      function getLeadGroupTabLabel(tabId) {
+        var want = normalizeLeadGroupTabId(tabId);
+        var btn = document.querySelector('#lead-group-tabs .lead-group-tab[data-group-id="' + want + '"]');
+        if (!btn) return want === 'uncategorized' ? 'Uncategorized' : 'folder';
+        var labelWrap = btn.querySelector('.relative');
+        if (labelWrap) {
+          var clone = labelWrap.cloneNode(true);
+          clone.querySelectorAll('.lead-group-count').forEach(function (el) { el.remove(); });
+          var text = (clone.textContent || '').trim();
+          if (text) return text;
+        }
+        return (btn.textContent || '').trim() || want;
       }
-      document.getElementById('table-search-clear')?.addEventListener('click', function () {
-        var si = document.getElementById('table-search');
-        if (si) {
-          si.value = '';
-          si.focus();
+
+      function updateGlobalSearchBanner(meta) {
+        meta = meta || {};
+        var banner = document.getElementById('global-search-banner');
+        var textEl = document.getElementById('global-search-banner-text');
+        if (!banner || !textEl) return;
+        if (!globalSearchActive) {
+          banner.classList.add('hidden');
+          textEl.textContent = '';
+          return;
+        }
+        var parts = ['Searching all folders for "' + globalSearchQuery + '"'];
+        if (meta.count != null) {
+          parts.push(String(meta.count) + ' result' + (meta.count === 1 ? '' : 's'));
+        }
+        if (meta.truncated) parts.push('(first 200 shown)');
+        parts.push('· Back to ' + getLeadGroupTabLabel(tabBeforeGlobalSearch));
+        textEl.textContent = parts.join(' ');
+        banner.classList.remove('hidden');
+      }
+
+      function applyLeadsTableFragment(data) {
+        var tb = document.getElementById('clinics-table-body');
+        var gridInner = document.getElementById('clinics-grid-inner');
+        if (tb) tb.innerHTML = data.tbody_html;
+        if (gridInner) gridInner.innerHTML = data.grid_html;
+        if (data.funnel_metrics) updateFunnelMetricsStrip(data.funnel_metrics);
+        if (data.group_counts) updateLeadGroupTabCounts(data.group_counts);
+        if (window.htmx) {
+          if (tb) window.htmx.process(tb);
+        }
+        if (typeof window.__ensureGridHtmxBound === 'function') window.__ensureGridHtmxBound();
+      }
+
+      function syncLeadsAfterGlobalSearchSwap() {
+        currentLeadPage = 1;
+        initClinicViewModeFromStorage();
+        applyLeadSort();
+        refreshSelectAllState();
+        refreshSelectionVisuals();
+        refreshSetCategoryButtonState();
+        refreshBulkAssignGroupButtonState();
+        applyTableFilter({ resetPage: false, skipKeyword: true });
+        refreshTableSearchClearVisibility();
+        refreshFilteredLeadCount();
+        refreshGridCardsDraggable();
+        if (typeof window.__syncLeadChatIndicatorPolling === 'function') {
+          window.__syncLeadChatIndicatorPolling();
+        }
+      }
+
+      async function runGlobalLeadSearch(q) {
+        var reqId = ++globalSearchRequestId;
+        if (!globalSearchActive) tabBeforeGlobalSearch = currentLeadGroupTabId;
+        if (leadGroupTabBusy) return;
+        leadGroupTabBusy = true;
+        try {
+          var data = await fetchLeadsTableFragment(null, { globalSearch: true, q: q });
+          if (reqId !== globalSearchRequestId) return;
+          if (!data.ok) throw new Error((data.detail && String(data.detail)) || 'Bad response');
+          applyLeadsTableFragment(data);
+          globalSearchActive = true;
+          globalSearchQuery = q;
+          updateGlobalSearchBanner({
+            count: data.global_search_count,
+            truncated: data.global_search_truncated,
+          });
+          syncLeadsAfterGlobalSearchSwap();
+        } catch (err) {
+          console.error(err);
+        } finally {
+          leadGroupTabBusy = false;
+        }
+      }
+
+      async function exitGlobalSearchMode(opts) {
+        opts = opts || {};
+        globalSearchRequestId += 1;
+        clearTimeout(globalSearchDebounceTimer);
+        var wasActive = globalSearchActive;
+        globalSearchActive = false;
+        globalSearchQuery = '';
+        updateGlobalSearchBanner();
+        if (opts.clearInput) {
+          var si = document.getElementById('table-search');
+          if (si) si.value = '';
+        }
+        refreshTableSearchClearVisibility();
+        refreshLeadFilterTagActiveState();
+        if (wasActive && !opts.skipTabRestore) {
+          await switchLeadGroupTab(tabBeforeGlobalSearch || currentLeadGroupTabId, {
+            force: true,
+            skipHistory: true,
+            skipGlobalSearchExit: true,
+          });
+        } else if (!wasActive && !opts.clearInput) {
+          applyTableFilter({ resetPage: true });
+        }
+      }
+
+      function handleLeadSearchInput() {
+        var searchInput = document.getElementById('table-search');
+        var raw = searchInput ? searchInput.value.trim() : '';
+        refreshTableSearchClearVisibility();
+        if (raw.length >= GLOBAL_SEARCH_MIN_LEN) {
+          clearTimeout(globalSearchDebounceTimer);
+          globalSearchDebounceTimer = window.setTimeout(function () {
+            runGlobalLeadSearch(raw);
+          }, 300);
+          return;
+        }
+        if (globalSearchActive) {
+          exitGlobalSearchMode({ clearInput: false });
+          return;
         }
         applyTableFilter({ resetPage: true });
         refreshLeadFilterTagActiveState();
+      }
+
+      function highlightLeadRow(leadId) {
+        var sel = '.clinic-row[data-clinic-id="' + leadId + '"]';
+        document.querySelectorAll(sel).forEach(function (row) {
+          row.classList.remove('lead-page-hidden');
+          var cell = row.closest('.lead-card-container');
+          if (cell) cell.classList.remove('lead-page-hidden');
+          row.classList.add('clinic-row--search-highlight');
+          if (typeof row.scrollIntoView === 'function') {
+            row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+          }
+        });
+        window.setTimeout(function () {
+          document.querySelectorAll(sel).forEach(function (row) {
+            row.classList.remove('clinic-row--search-highlight');
+          });
+        }, 3000);
+      }
+
+      function revealAndHighlightLead(leadId) {
+        var id = String(leadId);
+        var rows = Array.from(document.querySelectorAll('.clinic-row:not(.hidden)'));
+        var targetIdx = -1;
+        for (var i = 0; i < rows.length; i += 1) {
+          if (rows[i].getAttribute('data-clinic-id') === id) {
+            targetIdx = i;
+            break;
+          }
+        }
+        if (targetIdx === -1) {
+          highlightLeadRow(id);
+          return;
+        }
+        var perPage = readLeadsPerPage();
+        var page = Math.floor(targetIdx / perPage) + 1;
+        goToLeadPage(page);
+        window.requestAnimationFrame(function () {
+          highlightLeadRow(id);
+        });
+      }
+
+      async function jumpToLeadInFolder(tabId, leadId) {
+        pendingHighlightLeadId = String(leadId);
+        globalSearchRequestId += 1;
+        clearTimeout(globalSearchDebounceTimer);
+        globalSearchActive = false;
+        globalSearchQuery = '';
+        updateGlobalSearchBanner();
+        var si = document.getElementById('table-search');
+        if (si) si.value = '';
+        refreshTableSearchClearVisibility();
+        await switchLeadGroupTab(tabId, {
+          force: true,
+          historyMode: 'push',
+          skipGlobalSearchExit: true,
+        });
+      }
+
+      const searchInput = document.getElementById('table-search');
+      if (searchInput) {
+        searchInput.addEventListener('input', handleLeadSearchInput);
+      }
+      document.getElementById('table-search-clear')?.addEventListener('click', function () {
+        exitGlobalSearchMode({ clearInput: true });
+      });
+      document.getElementById('global-search-banner-exit')?.addEventListener('click', function () {
+        exitGlobalSearchMode({ clearInput: true });
+      });
+      document.getElementById('clinics-panel')?.addEventListener('click', function (e) {
+        var badge = e.target.closest('.lead-folder-badge');
+        if (!badge) return;
+        e.preventDefault();
+        e.stopPropagation();
+        var tabId = badge.getAttribute('data-folder-tab-id');
+        var leadId = badge.getAttribute('data-clinic-id');
+        if (!tabId || !leadId) return;
+        jumpToLeadInFolder(tabId, leadId);
       });
       refreshTableSearchClearVisibility();
       renderLeadFilterTags();
@@ -2304,6 +2505,13 @@
         if (typeof window.__ensureGridHtmxBound === "function") window.__ensureGridHtmxBound();
         if (typeof window.__syncLeadChatIndicatorPolling === "function") {
           window.__syncLeadChatIndicatorPolling();
+        }
+        if (pendingHighlightLeadId) {
+          var lid = pendingHighlightLeadId;
+          pendingHighlightLeadId = null;
+          window.requestAnimationFrame(function () {
+            revealAndHighlightLead(lid);
+          });
         }
       }
 
@@ -2523,10 +2731,15 @@
         });
       })();
 
-      async function fetchLeadsTableFragment(groupId) {
+      async function fetchLeadsTableFragment(groupId, opts) {
+        opts = opts || {};
         var u = new URL(getLeadsTableUrl, window.location.origin);
-        var gid = normalizeLeadGroupTabId(groupId);
-        u.searchParams.set('group_id', gid === 'uncategorized' ? 'uncategorized' : String(gid));
+        if (opts.globalSearch && opts.q) {
+          u.searchParams.set('q', String(opts.q));
+        } else {
+          var gid = normalizeLeadGroupTabId(groupId);
+          u.searchParams.set('group_id', gid === 'uncategorized' ? 'uncategorized' : String(gid));
+        }
         if (activeSearchRecordId != null) u.searchParams.set('search_record', String(activeSearchRecordId));
         var res = await fetch(u.toString(), { headers: { Accept: 'application/json' }, credentials: 'same-origin' });
         if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -2536,8 +2749,18 @@
       var leadGroupTabBusy = false;
       async function switchLeadGroupTab(groupId, opts) {
         opts = opts || {};
+        if (globalSearchActive && !opts.skipGlobalSearchExit) {
+          globalSearchRequestId += 1;
+          clearTimeout(globalSearchDebounceTimer);
+          globalSearchActive = false;
+          globalSearchQuery = '';
+          updateGlobalSearchBanner();
+          var searchClear = document.getElementById('table-search');
+          if (searchClear) searchClear.value = '';
+          refreshTableSearchClearVisibility();
+        }
         var want = normalizeLeadGroupTabId(groupId);
-        if (!opts.force && want === normalizeLeadGroupTabId(currentLeadGroupTabId)) {
+        if (!opts.force && want === normalizeLeadGroupTabId(currentLeadGroupTabId) && !globalSearchActive) {
           return;
         }
         if (leadGroupTabBusy) return;
@@ -2545,12 +2768,7 @@
         try {
           var data = await fetchLeadsTableFragment(want);
           if (!data.ok) throw new Error((data.detail && String(data.detail)) || 'Bad response');
-          var tb = document.getElementById('clinics-table-body');
-          var gridInner = document.getElementById('clinics-grid-inner');
-          if (tb) tb.innerHTML = data.tbody_html;
-          if (gridInner) gridInner.innerHTML = data.grid_html;
-          if (data.funnel_metrics) updateFunnelMetricsStrip(data.funnel_metrics);
-          if (data.group_counts) updateLeadGroupTabCounts(data.group_counts);
+          applyLeadsTableFragment(data);
           setLeadGroupTabActive(want);
           if (!opts.skipHistory) {
             replaceDashboardUrlForCurrentTab(opts.historyMode || (opts.fromPopstate ? 'replace' : 'push'));
