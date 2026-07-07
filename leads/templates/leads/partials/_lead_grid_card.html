@@ -121,6 +121,10 @@
     {% endif %}
     {% endwith %}
   </div>
-  {% include "leads/partials/_lead_grid_bottom_actions.html" with lead=c is_trash_view=is_trash_view|default:False is_uncategorized_view=is_uncategorized_view|default:False is_whatsapp_chats_view=is_whatsapp_chats_view|default:False is_queue_view=is_queue_view|default:False current_group_id=current_group_id %}
+  {% if show_folder_badge %}
+  {% include "leads/partials/_lead_grid_bottom_actions.html" with lead=c is_trash_view=c.dashboard_action_is_trash_view is_uncategorized_view=c.dashboard_action_is_uncategorized_view is_whatsapp_chats_view=c.dashboard_action_is_whatsapp_chats_view is_queue_view=c.dashboard_action_is_queue_view current_group_id=c.dashboard_action_current_group_id force_send_template_name=force_send_template_name %}
+  {% else %}
+  {% include "leads/partials/_lead_grid_bottom_actions.html" with lead=c is_trash_view=is_trash_view|default:False is_uncategorized_view=is_uncategorized_view|default:False is_whatsapp_chats_view=is_whatsapp_chats_view|default:False is_queue_view=is_queue_view|default:False current_group_id=current_group_id force_send_template_name=force_send_template_name %}
+  {% endif %}
 </article>
 {% endwith %}

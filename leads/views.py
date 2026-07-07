@@ -256,9 +256,7 @@ def _dashboard_prepare_clinics(qs, *, global_search: bool = False):
     clinics_list, multi_location_brands = _dashboard_enrich_clinics(qs)
     if global_search:
         for lead in clinics_list:
-            tab_id, folder_name = _lead_dashboard_folder_meta(lead)
-            lead.dashboard_folder_tab_id = tab_id
-            lead.dashboard_folder_name = folder_name
+            _attach_global_search_lead_context(lead)
     return clinics_list, multi_location_brands
 
 
@@ -368,10 +366,8 @@ def _lead_grid_action_context(request, lead: Lead) -> dict:
     ).strip().lower()
     if gid_raw.isdigit():
         ctx = _active_folder_context(request)
-    elif lead.group_id:
-        ctx = _folder_context_for_group(lead.group)
     else:
-        ctx = _active_folder_context(request)
+        ctx = _folder_context_for_lead(lead)
     return {"lead": lead, **ctx}
 
 
@@ -425,6 +421,28 @@ def _lead_dashboard_folder_meta(lead: Lead) -> tuple[str, str]:
     if grp is None or grp.pk == uncategorized.pk:
         return "uncategorized", UNCATEGORIZED_GROUP_NAME
     return str(grp.pk), grp.name
+
+
+def _folder_context_for_lead(lead: Lead) -> dict:
+    """Folder tab context for a lead's stored group (grid card actions)."""
+    uncategorized = get_or_create_uncategorized_group()
+    grp = lead.group
+    if grp is None or grp.pk == uncategorized.pk:
+        return _folder_context_for_group(uncategorized)
+    return _folder_context_for_group(grp)
+
+
+def _attach_global_search_lead_context(lead: Lead) -> None:
+    """Annotate a lead row for global search folder badge + per-folder actions."""
+    tab_id, folder_name = _lead_dashboard_folder_meta(lead)
+    folder_ctx = _folder_context_for_lead(lead)
+    lead.dashboard_folder_tab_id = tab_id
+    lead.dashboard_folder_name = folder_name
+    lead.dashboard_action_is_trash_view = folder_ctx["is_trash_view"]
+    lead.dashboard_action_is_uncategorized_view = folder_ctx["is_uncategorized_view"]
+    lead.dashboard_action_is_queue_view = folder_ctx["is_queue_view"]
+    lead.dashboard_action_is_whatsapp_chats_view = folder_ctx["is_whatsapp_chats_view"]
+    lead.dashboard_action_current_group_id = folder_ctx["current_group_id"]
 
 
 def _leads_qs_global_search(q: str, search_record_id: Optional[int]):

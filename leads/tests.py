@@ -2528,6 +2528,17 @@ class GlobalLeadSearchTests(TestCase):
         self.assertIn("Uncategorized", payload["tbody_html"])
         self.assertIn("data-folder-tab-id=\"uncategorized\"", payload["tbody_html"])
 
+    def test_global_search_custom_group_shows_folder_actions(self):
+        response = self.client.get(
+            reverse("get_leads_table"),
+            {"q": "Beta"},
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertIn("Selangor Prospects", payload["grid_html"])
+        self.assertIn("lead-force-send-btn", payload["grid_html"])
+        self.assertNotIn("delete_lead_permanently", payload["grid_html"])
+
     def test_global_search_excludes_trash(self):
         from leads.pipeline import get_or_create_trash_group
 
