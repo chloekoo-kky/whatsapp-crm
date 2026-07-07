@@ -1927,6 +1927,121 @@ class DailyReportTests(TestCase):
         leads = {lead.name: lead for lead in _daily_report_leads(self.today)}
         self.assertEqual(leads["Failed But Active"].report_status_display, "Active")
 
+    def test_reports_first_send_without_reply_shows_first_message_sent(self):
+        from leads.views import _daily_report_leads
+
+        leads = {lead.name: lead for lead in _daily_report_leads(self.today)}
+        self.assertEqual(leads["Alpha Clinic"].report_status_display, "First Message Sent")
+
+    def test_reports_same_day_reply_shows_active(self):
+        from datetime import datetime, time, timedelta
+
+        from django.utils import timezone
+
+        from leads.views import _daily_report_leads
+
+        start = timezone.make_aware(datetime.combine(self.today, time.min), self.tz)
+        same_day = Lead.objects.create(
+            name="Same Day Reply",
+            address="3 Main St",
+            group=get_or_create_uncategorized_group(),
+            phone_number="+60333333333",
+            whatsapp_status=Lead.WhatsappStatus.SENT,
+            whatsapp_sent_at=start,
+        )
+        ChatMessage.objects.create(
+            lead=same_day,
+            body="Hi",
+            is_outbound=True,
+            template_name="say_hi",
+            created_at=start,
+        )
+        ChatMessage.objects.create(
+            lead=same_day,
+            body="Auto reply",
+            is_outbound=False,
+            created_at=start + timedelta(hours=1),
+        )
+        leads = {lead.name: lead for lead in _daily_report_leads(self.today)}
+        self.assertEqual(leads["Same Day Reply"].report_status_display, "Active")
+
+    def test_reports_follow_up_outbound_without_inbound_shows_active(self):
+        from datetime import datetime, time, timedelta
+
+        from django.utils import timezone
+
+        from leads.views import _daily_report_leads
+
+        yesterday = self.today - timedelta(days=1)
+        first_send = timezone.make_aware(
+            datetime.combine(yesterday, time.min), self.tz
+        )
+        follow_up = Lead.objects.create(
+            name="Follow Up Only",
+            address="4 Main St",
+            group=get_or_create_uncategorized_group(),
+            phone_number="+60444444444",
+            whatsapp_status=Lead.WhatsappStatus.SENT,
+            whatsapp_sent_at=first_send,
+        )
+        ChatMessage.objects.create(
+            lead=follow_up,
+            body="Hi",
+            is_outbound=True,
+            template_name="say_hi",
+            created_at=first_send,
+        )
+        today_start = timezone.make_aware(
+            datetime.combine(self.today, time.min), self.tz
+        )
+        ChatMessage.objects.create(
+            lead=follow_up,
+            body="Checking in",
+            is_outbound=True,
+            template_name="say_hi",
+            created_at=today_start,
+        )
+        leads = {lead.name: lead for lead in _daily_report_leads(self.today)}
+        self.assertEqual(leads["Follow Up Only"].report_status_display, "Active")
+
+    def test_reports_delayed_inbound_shows_high_potential(self):
+        from datetime import datetime, time, timedelta
+
+        from django.utils import timezone
+
+        from leads.views import _daily_report_leads
+
+        yesterday = self.today - timedelta(days=1)
+        first_send = timezone.make_aware(
+            datetime.combine(yesterday, time.min), self.tz
+        )
+        delayed = Lead.objects.create(
+            name="Delayed Reply",
+            address="5 Main St",
+            group=get_or_create_uncategorized_group(),
+            phone_number="+60555555555",
+            whatsapp_status=Lead.WhatsappStatus.SENT,
+            whatsapp_sent_at=first_send,
+        )
+        ChatMessage.objects.create(
+            lead=delayed,
+            body="Hi",
+            is_outbound=True,
+            template_name="say_hi",
+            created_at=first_send,
+        )
+        today_start = timezone.make_aware(
+            datetime.combine(self.today, time.min), self.tz
+        )
+        ChatMessage.objects.create(
+            lead=delayed,
+            body="Yes, interested",
+            is_outbound=False,
+            created_at=today_start,
+        )
+        leads = {lead.name: lead for lead in _daily_report_leads(self.today)}
+        self.assertEqual(leads["Delayed Reply"].report_status_display, "High Potential")
+
     def test_reports_page_shows_daily_dashboard(self):
         client = Client()
         response = client.get(

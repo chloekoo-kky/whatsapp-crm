@@ -148,7 +148,15 @@
                     </td>
                     <td class="px-5 py-3 text-slate-700">{{ lead.report_outbound_count }}</td>
                     <td class="px-5 py-3 text-slate-700">{{ lead.report_inbound_count }}</td>
-                    <td class="px-5 py-3 text-slate-700">{{ lead.report_status_display }}</td>
+                    <td class="px-5 py-3 text-slate-700">
+                      {% if lead.report_status_display == "High Potential" %}
+                        <span class="rounded bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-800" title="Client replied on a later day — worth a closer follow-up">{{ lead.report_status_display }}</span>
+                      {% elif lead.report_status_display == "Active" %}
+                        <span class="rounded bg-sky-50 px-2 py-0.5 text-xs font-semibold text-sky-700">{{ lead.report_status_display }}</span>
+                      {% else %}
+                        {{ lead.report_status_display }}
+                      {% endif %}
+                    </td>
                   </tr>
                   {% endfor %}
                 </tbody>

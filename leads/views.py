@@ -922,11 +922,51 @@ def _daily_report_summary(report_date: date) -> dict:
     }
 
 
+def _delayed_inbound_lead_ids(
+    leads: list[Lead],
+    start: datetime,
+    end: datetime,
+) -> set[int]:
+    """Lead IDs with at least one inbound in the period on a day after their first send."""
+    tz = campaign_timezone()
+    first_send_dates: dict[int, date] = {}
+    for lead in leads:
+        if lead.whatsapp_sent_at:
+            first_send_dates[lead.pk] = lead.whatsapp_sent_at.astimezone(tz).date()
+    if not first_send_dates:
+        return set()
+
+    delayed: set[int] = set()
+    rows = ChatMessage.objects.filter(
+        lead_id__in=first_send_dates.keys(),
+        is_outbound=False,
+        created_at__gte=start,
+        created_at__lt=end,
+    ).values_list("lead_id", "created_at")
+    for lead_id, created_at in rows:
+        if lead_id in delayed:
+            continue
+        first_send_date = first_send_dates.get(lead_id)
+        if first_send_date and created_at.astimezone(tz).date() != first_send_date:
+            delayed.add(lead_id)
+    return delayed
+
+
 def _daily_report_lead_status_display(lead: Lead) -> str:
-    """Report row status — client replies override a stale Failed dispatch state."""
+    """Report row status — reply timing and follow-up outreach override stored dispatch state."""
     inbound = getattr(lead, "report_inbound_count", 0) or 0
     if inbound >= 1:
+        if getattr(lead, "report_has_delayed_inbound", False):
+            return "High Potential"
         return "Active"
+
+    if getattr(lead, "report_first_send_today", False):
+        return lead.get_whatsapp_status_display()
+
+    outbound = getattr(lead, "report_outbound_count", 0) or 0
+    if outbound >= 1:
+        return "Active"
+
     return lead.get_whatsapp_status_display()
 
 
@@ -1148,6 +1188,7 @@ def _report_leads_for_period(start: datetime, end: datetime) -> list[Lead]:
     if not active_lead_ids:
         return []
     leads = list(Lead.objects.filter(pk__in=active_lead_ids).order_by("name", "pk"))
+    delayed_inbound_ids = _delayed_inbound_lead_ids(leads, start, end)
     for lead in leads:
         phones = lead_phone_list(lead)
         lead.report_phone_display = " · ".join(phones) if phones else ""
@@ -1155,6 +1196,7 @@ def _report_leads_for_period(start: datetime, end: datetime) -> list[Lead]:
         lead.report_outbound_count = outbound_counts.get(lead.pk, 0)
         lead.report_inbound_count = inbound_counts.get(lead.pk, 0)
         lead.report_first_send_today = lead.pk in first_send_ids
+        lead.report_has_delayed_inbound = lead.pk in delayed_inbound_ids
         lead.report_status_display = _daily_report_lead_status_display(lead)
     return leads
 
