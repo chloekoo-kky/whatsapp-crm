@@ -51,7 +51,7 @@ class Command(BaseCommand):
             action="append",
             dest="exclude_keywords",
             default=[],
-            help="Skip listings whose name/address contains this term (repeatable). Also sent to Serper as -term.",
+            help="Skip listings whose name/address contains this term (repeatable). Applied locally after Serper import.",
         )
 
     def handle(self, *args, **options) -> None:

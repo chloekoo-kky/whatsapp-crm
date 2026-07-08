@@ -2388,7 +2388,7 @@ class SerperHuntPaginationTests(TestCase):
 
 
 class SerperExcludeKeywordTests(TestCase):
-    def test_build_search_q_appends_exclude_suffix(self):
+    def test_build_search_q_does_not_append_exclude_suffix(self):
         from leads.services import _build_search_q
 
         q = _build_search_q(
@@ -2399,9 +2399,17 @@ class SerperExcludeKeywordTests(TestCase):
             country="Malaysia",
             exclude_keywords=["dental", "24 jam"],
         )
-        self.assertIn("klinik Iskandar Puteri Johor Malaysia", q)
-        self.assertIn("-dental", q)
-        self.assertIn('-"24 jam"', q)
+        self.assertEqual(q, "klinik Iskandar Puteri Johor Malaysia")
+        self.assertNotIn("-dental", q)
+
+    def test_strip_serper_query_operators(self):
+        from leads.services import _strip_serper_query_operators
+
+        raw = 'klinik Johor Bahru Johor Malaysia -dental -"24 jam"'
+        self.assertEqual(
+            _strip_serper_query_operators(raw),
+            "klinik Johor Bahru Johor Malaysia",
+        )
 
     @override_settings(SERPER_API_KEY="test-key", HUNT_MAX_LIMIT=100)
     @patch("leads.services.requests.post")
@@ -2428,7 +2436,7 @@ class SerperExcludeKeywordTests(TestCase):
         )
 
         payload = mock_post.call_args[1]["json"]
-        self.assertIn("-dental", payload["q"])
+        self.assertNotIn("-dental", payload["q"])
         self.assertEqual(result.skipped_excluded, 1)
         self.assertEqual(result.places_seen, 1)
         self.assertEqual(result.created, 1)

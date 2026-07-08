@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -25,6 +26,8 @@ logger = logging.getLogger(__name__)
 SERPER_MAPS_URL = "https://google.serper.dev/maps"
 SERPER_MAPS_PAGE_SIZE = 20
 SERPER_MAPS_DEFAULT_ZOOM = "13z"
+# Serper free-tier rejects Google operators like -exclude in Maps queries.
+_SERPER_QUERY_OPERATOR_RE = re.compile(r'\s+-"[^"]*"|\s+-[^\s]+')
 
 
 def _hunt_max_results() -> int:
@@ -123,14 +126,33 @@ def _normalize_exclude_keywords(raw) -> list[str]:
     return out[:12]
 
 
-def _format_exclude_query_suffix(exclude_keywords: list[str]) -> str:
-    parts: list[str] = []
-    for term in exclude_keywords:
-        if " " in term:
-            parts.append(f'-"{term}"')
-        else:
-            parts.append(f"-{term}")
-    return " ".join(parts)
+def _strip_serper_query_operators(search_q: str) -> str:
+    """Remove Google operators Serper free accounts reject (e.g. ``-dental``, ``-"24 jam"``)."""
+    stripped = _SERPER_QUERY_OPERATOR_RE.sub("", search_q or "")
+    return " ".join(stripped.split())
+
+
+def _format_serper_http_error(exc: requests.HTTPError, *, page: int) -> str:
+    detail = ""
+    if exc.response is not None:
+        try:
+            body = exc.response.json()
+            if isinstance(body, dict):
+                detail = str(body.get("message") or body.get("error") or "").strip()
+            if not detail:
+                detail = (exc.response.text or "")[:500].strip()
+        except Exception:
+            detail = (exc.response.text or "")[:500].strip()
+    msg = f"Serper HTTP error (page {page}): {exc}"
+    if detail:
+        msg += f" {detail}"
+    if "query pattern not allowed" in (detail or msg).lower():
+        msg += (
+            " Serper free-tier accounts cannot use advanced query operators (e.g. -exclude). "
+            "Exclude keywords are applied locally after import. Avoid minus signs in the Maps query field, "
+            "or upgrade your Serper plan at serper.dev."
+        )
+    return msg.strip()
 
 
 def _place_matches_exclude_keywords(normalized: dict[str, Any], exclude_keywords: list[str]) -> bool:
@@ -170,11 +192,7 @@ def _build_search_q(
         parts.append(st)
     if ctry:
         parts.append(ctry)
-    base = " ".join(parts).strip()
-    suffix = _format_exclude_query_suffix(exclude_keywords or [])
-    if suffix:
-        return f"{base} {suffix}".strip()
-    return base
+    return " ".join(parts).strip()
 
 
 def _extract_serper_maps_places(data: dict[str, Any]) -> list[Any]:
@@ -315,13 +333,7 @@ def _request_serper_maps_places(
         parsed = resp.json()
         data = parsed if isinstance(parsed, dict) else {}
     except requests.HTTPError as exc:
-        detail = ""
-        if exc.response is not None:
-            try:
-                detail = exc.response.text[:500]
-            except Exception:
-                detail = str(exc.response)
-        errors.append(f"Serper HTTP error (page {page}): {exc} {detail}".strip())
+        errors.append(_format_serper_http_error(exc, page=page))
         return [], errors, data
     except requests.RequestException as exc:
         errors.append(f"Serper request failed (page {page}): {exc}")
@@ -361,6 +373,10 @@ def _collect_serper_maps_places(
     state: str = "",
 ) -> tuple[list[Any], list[str]]:
     """Paginate Serper Maps until ``target`` unique listings or no more pages."""
+    safe_q = _strip_serper_query_operators(search_q)
+    if safe_q != search_q:
+        logger.info("Serper query sanitized for API: %r -> %r", search_q, safe_q)
+    search_q = safe_q or search_q
     max_pages = max(1, (target + SERPER_MAPS_PAGE_SIZE - 1) // SERPER_MAPS_PAGE_SIZE)
     all_places: list[Any] = []
     seen_keys: set[str] = set()
@@ -563,8 +579,8 @@ def fetch_leads_from_serper(
     When ``require_website`` is true, skip listings whose Maps payload has no non-Maps website
     or social profile URL (Facebook, Instagram, etc.).
 
-    ``exclude_keywords`` are appended to the Serper query as ``-term`` and also used to skip
-    listings whose name or address contains any excluded phrase.
+    ``exclude_keywords`` are used to skip listings whose name or address contains any excluded
+    phrase (not sent to Serper — free-tier accounts reject ``-term`` query operators).
     """
     kw = (shop_keyword or "").strip()
     if not kw:

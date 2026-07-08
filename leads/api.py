@@ -200,7 +200,7 @@ class HuntIn(Schema):
 
         default=None,
 
-        description="Skip listings whose name/address contains any of these terms; also appended to Serper query as -term.",
+        description="Skip listings whose name/address contains any of these terms (applied locally after Serper import).",
 
     )
 
