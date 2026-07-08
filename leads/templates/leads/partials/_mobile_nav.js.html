@@ -60,24 +60,37 @@
     var groupClose = document.getElementById("lead-group-drawer-close");
     var groupBackdrop = document.getElementById("lead-group-drawer-backdrop");
     var groupDrawer = document.getElementById("lead-group-drawer");
+    var groupAnchor = document.getElementById("lead-group-drawer-anchor");
 
     function isMobileLayout() {
       return window.matchMedia("(max-width: 1023px)").matches;
     }
 
+    function mountLeadGroupDrawer() {
+      if (!groupDrawer) return;
+      if (isMobileLayout()) {
+        if (groupDrawer.parentElement !== document.body) {
+          document.body.appendChild(groupDrawer);
+        }
+        groupDrawer.style.zIndex = "85";
+      } else if (groupAnchor && groupDrawer.parentElement !== groupAnchor) {
+        groupAnchor.appendChild(groupDrawer);
+        groupDrawer.style.zIndex = "";
+        closeLeadGroupDrawer();
+      }
+    }
+
     function setLeadGroupDrawerOpen(open) {
-      if (!isMobileLayout()) return;
+      if (!isMobileLayout() || !groupDrawer) return;
+      mountLeadGroupDrawer();
       document.body.classList.toggle("lead-group-drawer-open", open);
+      groupDrawer.classList.toggle("lead-group-drawer--open", open);
+      groupDrawer.classList.toggle("hidden", !open);
+      groupDrawer.setAttribute("aria-hidden", open ? "false" : "true");
       if (groupToggle) {
         groupToggle.setAttribute("aria-expanded", open ? "true" : "false");
       }
-      if (groupDrawer) {
-        groupDrawer.classList.toggle("lead-group-drawer--open", open);
-        groupDrawer.classList.toggle("hidden", !open);
-        groupDrawer.setAttribute("aria-hidden", open ? "false" : "true");
-      }
       if (groupBackdrop) {
-        groupBackdrop.classList.toggle("hidden", !open);
         groupBackdrop.setAttribute("aria-hidden", open ? "false" : "true");
       }
     }
@@ -85,6 +98,8 @@
     function closeLeadGroupDrawer() {
       setLeadGroupDrawerOpen(false);
     }
+
+    mountLeadGroupDrawer();
 
     if (groupToggle) {
       groupToggle.addEventListener("click", function () {
@@ -105,6 +120,7 @@
     }
 
     window.addEventListener("resize", function () {
+      mountLeadGroupDrawer();
       if (!isMobileLayout()) closeLeadGroupDrawer();
     });
 
@@ -115,5 +131,6 @@
     });
 
     window.closeLeadGroupDrawer = closeLeadGroupDrawer;
+    window.mountLeadGroupDrawer = mountLeadGroupDrawer;
   })();
 </script>

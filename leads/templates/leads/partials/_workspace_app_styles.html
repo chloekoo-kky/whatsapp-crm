@@ -542,24 +542,39 @@
       display: none !important;
     }
 
+    .lead-group-drawer {
+      display: none;
+    }
     .lead-group-drawer.lead-group-drawer--open {
       display: block !important;
-      position: fixed;
-      inset: 0;
-      z-index: 80;
-      pointer-events: none;
-    }
-    .lead-group-drawer.lead-group-drawer--open .lead-group-drawer-backdrop,
-    .lead-group-drawer.lead-group-drawer--open .lead-group-drawer-panel {
-      pointer-events: auto;
     }
     .lead-group-drawer-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 1;
+      background-color: rgb(15 23 42 / 0.58);
       opacity: 0;
       pointer-events: none;
-      transition: opacity 200ms ease;
+      transition: opacity 220ms ease;
     }
     body.lead-group-drawer-open .lead-group-drawer-backdrop {
       opacity: 1;
+      pointer-events: auto;
+    }
+    .lead-group-drawer-panel {
+      position: fixed;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      z-index: 2;
+      display: flex;
+      width: min(18rem, 88vw);
+      flex-direction: column;
+      border-right: 1px solid rgb(226 232 240);
+      background-color: rgb(255 255 255) !important;
+      box-shadow: 8px 0 32px -8px rgb(15 23 42 / 0.28);
+      transform: translateX(-105%);
+      transition: transform 220ms ease;
       pointer-events: auto;
     }
     body.lead-group-drawer-open .lead-group-drawer-panel {
@@ -568,8 +583,10 @@
     body.lead-group-drawer-open {
       overflow: hidden;
     }
-    .lead-group-drawer-panel {
-      background-color: rgb(255 255 255) !important;
+    .lead-group-tabs-shell {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow-y: auto;
     }
     #lead-group-tabs {
       background-color: rgb(255 255 255);
@@ -638,6 +655,21 @@
     #app-sidebar nav {
       flex: 1 1 auto;
       min-height: 0;
+    }
+    #lead-group-drawer {
+      display: contents !important;
+    }
+    #lead-group-drawer-backdrop,
+    .lead-group-drawer-mobile-header {
+      display: none !important;
+    }
+    #lead-group-drawer-panel {
+      position: static;
+      width: auto;
+      transform: none !important;
+      border: 0;
+      background: transparent !important;
+      box-shadow: none;
     }
   }
 

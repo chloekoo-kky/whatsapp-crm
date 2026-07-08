@@ -218,7 +218,7 @@
             </button>
             <div id="lead-filter-tags-list" class="flex flex-wrap items-center gap-1.5"></div>
           </div>
-          <div class="lead-group-header relative z-30">
+          <div id="lead-group-drawer-anchor" class="lead-group-header">
             <button type="button" id="lead-group-drawer-toggle"
               class="mb-2 flex w-full items-center gap-2.5 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-left shadow-sm transition hover:border-indigo-200 hover:bg-indigo-50/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/35 lg:hidden"
               aria-expanded="false" aria-controls="lead-group-drawer-panel">
@@ -231,18 +231,18 @@
               <svg class="h-4 w-4 shrink-0 text-slate-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5"/></svg>
             </button>
 
-            <div id="lead-group-drawer" class="lead-group-drawer hidden lg:contents">
-              <div id="lead-group-drawer-backdrop" class="lead-group-drawer-backdrop fixed inset-0 z-[80] hidden bg-slate-900/55 lg:hidden" aria-hidden="true"></div>
-              <div id="lead-group-drawer-panel" class="lead-group-drawer-panel fixed inset-y-0 left-0 z-[81] flex w-[min(18rem,88vw)] -translate-x-full flex-col border-r border-slate-200 bg-white shadow-2xl transition-transform duration-200 ease-out lg:static lg:z-auto lg:w-auto lg:translate-x-0 lg:border-0 lg:bg-transparent lg:shadow-none">
-                <div class="flex shrink-0 items-center justify-between border-b border-slate-100 px-4 py-3 lg:hidden">
-                  <h3 class="text-sm font-semibold text-slate-900">Folders</h3>
+            <div id="lead-group-drawer" class="lead-group-drawer hidden lg:contents" aria-hidden="true">
+              <div id="lead-group-drawer-backdrop" class="lead-group-drawer-backdrop" aria-hidden="true"></div>
+              <div id="lead-group-drawer-panel" class="lead-group-drawer-panel" role="dialog" aria-modal="true" aria-labelledby="lead-group-drawer-title">
+                <div class="lead-group-drawer-mobile-header flex shrink-0 items-center justify-between border-b border-slate-100 px-4 py-3 lg:hidden">
+                  <h3 id="lead-group-drawer-title" class="text-sm font-semibold text-slate-900">Folders</h3>
                   <button type="button" id="lead-group-drawer-close"
                     class="inline-flex h-9 w-9 items-center justify-center rounded-lg text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/35"
                     aria-label="Close folders">
                     <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
                   </button>
                 </div>
-                <div class="-mx-4 border-b border-slate-200 px-2 py-2 sm:-mx-5 sm:px-3 lg:mx-0 lg:border-b lg:px-5 lg:py-0">
+                <div class="lead-group-tabs-shell -mx-4 border-b border-slate-200 px-2 py-2 sm:-mx-5 sm:px-3 lg:mx-0 lg:border-b lg:px-5 lg:py-0">
                   <div id="lead-group-tabs" class="flex max-h-[min(70vh,28rem)] flex-col gap-0.5 overflow-y-auto overscroll-y-contain lg:max-h-none lg:flex-row lg:flex-wrap lg:items-end lg:gap-0.5 lg:overflow-visible" role="tablist" aria-label="Lead groups">
               <button type="button" role="tab" class="lead-group-tab rounded-t-md{% if active_group_pk is None %} lead-group-tab--active{% endif %}" data-group-id="uncategorized" aria-selected="{% if active_group_pk is None %}true{% else %}false{% endif %}"><span class="relative inline-flex">Uncategorized<span class="lead-group-count absolute -right-3.5 -top-2.5 inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-slate-200 px-1.5 py-0.5 text-[11px] font-bold leading-none text-slate-600 ring-1 ring-white" title="{{ uncategorized_lead_count }} lead(s) in this group">{{ uncategorized_lead_count }}</span></span></button>
               <button type="button" role="tab" class="lead-group-tab rounded-t-md{% if active_group_pk == queue_group.pk %} lead-group-tab--active{% endif %}" data-group-id="{{ queue_group.pk }}" aria-selected="{% if active_group_pk == queue_group.pk %}true{% else %}false{% endif %}"><span class="relative inline-flex">🚀Queue<span class="lead-group-count absolute -right-3.5 -top-2.5 inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-slate-200 px-1.5 py-0.5 text-[11px] font-bold leading-none text-slate-600 ring-1 ring-white" title="{{ queue_lead_count }} lead(s) in this group">{{ queue_lead_count }}</span></span></button>
