@@ -411,12 +411,14 @@
   }
   .lead-card-bottom-actions .htmx-indicator,
   .lead-card-trash-btn .htmx-indicator,
-  .lead-card-active-chat-btn .htmx-indicator {
+  .lead-card-active-chat-btn .htmx-indicator,
+  .lead-force-send-btn .htmx-indicator {
     display: none;
   }
   .lead-card-bottom-actions .htmx-request .htmx-indicator,
   .lead-card-trash-btn.htmx-request .htmx-indicator,
-  .lead-card-active-chat-btn.htmx-request .htmx-indicator {
+  .lead-card-active-chat-btn.htmx-request .htmx-indicator,
+  .lead-force-send-btn.htmx-request .htmx-indicator {
     display: inline-block;
   }
   .lead-card-bottom-actions .htmx-request > span[aria-hidden="true"],
@@ -424,6 +426,7 @@
   .lead-card-trash-btn.htmx-request .lead-card-trash-icon,
   .lead-card-trash-btn.htmx-request > span[aria-hidden="true"],
   .lead-card-active-chat-btn.htmx-request .lead-card-active-chat-icon,
+  .lead-force-send-btn.htmx-request > span[aria-hidden="true"],
   .lead-dequeue-btn.is-busy .lead-dequeue-icon {
     opacity: 0.25;
   }
@@ -507,19 +510,27 @@
     .lead-card-bottom-actions {
       display: none !important;
     }
-    .lead-card-bottom-actions.lead-card-bottom-actions--has-chat {
+    .lead-card-bottom-actions.lead-card-bottom-actions--has-chat,
+    .lead-card-bottom-actions.lead-card-bottom-actions--has-send {
       display: flex !important;
       justify-content: flex-end;
+      gap: 0.5rem;
       border-top-color: rgb(236 253 245);
       background: linear-gradient(to right, rgb(240 253 244 / 0.65), rgb(255 255 255));
       margin: 0 -1rem -1rem;
       padding: 0.75rem 1rem;
       border-radius: 0 0 1rem 1rem;
     }
-    .lead-card-bottom-actions.lead-card-bottom-actions--has-chat > :not(.lead-card-active-chat-btn) {
+    .lead-card-bottom-actions.lead-card-bottom-actions--has-send:not(.lead-card-bottom-actions--has-chat) {
+      border-top-color: rgb(254 243 199);
+      background: linear-gradient(to right, rgb(255 251 235 / 0.75), rgb(255 255 255));
+    }
+    .lead-card-bottom-actions.lead-card-bottom-actions--has-chat > *,
+    .lead-card-bottom-actions.lead-card-bottom-actions--has-send > * {
       display: none !important;
     }
-    .lead-card-bottom-actions .lead-card-active-chat-btn {
+    .lead-card-bottom-actions .lead-card-active-chat-btn,
+    .lead-card-bottom-actions .lead-force-send-btn {
       display: inline-flex !important;
       height: 2.5rem;
       width: auto;
@@ -531,6 +542,9 @@
     }
     .lead-card-bottom-actions .lead-card-active-chat-btn::after {
       content: "Reply";
+    }
+    .lead-card-bottom-actions .lead-force-send-btn::after {
+      content: "Send now";
     }
     .clinic-card-header-actions {
       display: none !important;
