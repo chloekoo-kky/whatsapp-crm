@@ -72,9 +72,12 @@
         groupToggle.setAttribute("aria-expanded", open ? "true" : "false");
       }
       if (groupDrawer) {
+        groupDrawer.classList.toggle("lead-group-drawer--open", open);
+        groupDrawer.classList.toggle("hidden", !open);
         groupDrawer.setAttribute("aria-hidden", open ? "false" : "true");
       }
       if (groupBackdrop) {
+        groupBackdrop.classList.toggle("hidden", !open);
         groupBackdrop.setAttribute("aria-hidden", open ? "false" : "true");
       }
     }
@@ -112,16 +115,5 @@
     });
 
     window.closeLeadGroupDrawer = closeLeadGroupDrawer;
-
-    var scrapingToggle = document.getElementById("scraping-panel-mobile-toggle");
-    var scrapingPanel = document.getElementById("scraping-panel");
-    if (scrapingToggle && scrapingPanel) {
-      scrapingToggle.addEventListener("click", function () {
-        scrapingPanel.classList.toggle("scraping-panel--collapsed");
-        var collapsed = scrapingPanel.classList.contains("scraping-panel--collapsed");
-        scrapingToggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
-        scrapingToggle.setAttribute("aria-label", collapsed ? "Expand scraping panel" : "Collapse scraping panel");
-      });
-    }
   })();
 </script>

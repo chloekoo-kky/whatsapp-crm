@@ -4,17 +4,17 @@
 
   <div id="app-sidebar-backdrop" class="fixed inset-0 z-[55] hidden bg-slate-900/50 backdrop-blur-[2px] lg:hidden" aria-hidden="true"></div>
 
-  <aside id="app-sidebar" class="app-sidebar fixed inset-y-0 left-0 z-[60] flex w-[min(15.5rem,85vw)] shrink-0 -translate-x-full flex-col border-r border-slate-800/50 bg-[#1a1f2b] transition-transform duration-200 ease-out lg:relative lg:z-auto lg:w-[15.5rem] lg:translate-x-0" aria-label="Main navigation">
+  <aside id="app-sidebar" class="app-sidebar fixed inset-y-0 left-0 z-[60] flex w-[min(15.5rem,85vw)] shrink-0 -translate-x-full flex-col border-r border-slate-700/40 bg-gradient-to-b from-[#1e2433] via-[#1a1f2b] to-[#151922] shadow-[inset_-1px_0_0_0_rgba(255,255,255,0.04)] transition-transform duration-200 ease-out lg:relative lg:z-auto lg:w-[16rem] lg:translate-x-0" aria-label="Main navigation">
 
-  <div class="px-4 pt-5 pb-4">
+  <div class="border-b border-white/5 px-5 pt-6 pb-5">
 
-    <a href="{% url 'dashboard' %}" class="block text-lg font-bold tracking-tight text-white">Lead CRM</a>
+    <a href="{% url 'dashboard' %}" class="block text-[1.05rem] font-bold tracking-tight text-white">Lead CRM</a>
 
-    <p class="mt-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">Business leads</p>
+    <p class="mt-1.5 text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-500">Business leads</p>
 
   </div>
 
-  <nav class="flex flex-1 flex-col gap-6 overflow-y-auto overscroll-y-contain px-2 pb-6" aria-label="Primary">
+  <nav class="flex flex-1 flex-col gap-7 overflow-y-auto overscroll-y-contain px-3 pb-6 pt-5" aria-label="Primary">
 
     <div>
 
