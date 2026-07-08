@@ -622,8 +622,22 @@
   }
 
   @media (min-width: 1024px) {
+    #app-sidebar-shell {
+      display: flex;
+      height: 100%;
+      min-height: 0;
+      align-self: stretch;
+      flex-shrink: 0;
+    }
     #app-sidebar {
+      height: 100%;
+      min-height: 0;
       box-shadow: 4px 0 24px -12px rgb(15 23 42 / 0.35);
+      background: linear-gradient(180deg, rgb(30 36 51) 0%, rgb(26 31 43) 42%, rgb(21 25 34) 100%);
+    }
+    #app-sidebar nav {
+      flex: 1 1 auto;
+      min-height: 0;
     }
   }
 

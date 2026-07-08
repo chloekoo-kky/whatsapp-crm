@@ -1,5 +1,5 @@
+{% load clinic_display %}
 <div id="lead-bottom-actions-{{ lead.id }}" class="lead-card-bottom-actions flex w-full items-center justify-end gap-2 border-t border-gray-100 pt-3{% if is_trash_view or is_whatsapp_chats_view %} lead-card-bottom-actions--single-action{% endif %}{% if lead|whatsapp_dispatched %} lead-card-bottom-actions--has-chat{% endif %}">
-  {% load clinic_display %}
 
   {% if not is_trash_view and not is_uncategorized_view and not is_whatsapp_chats_view %}
   {% if not is_queue_view %}
