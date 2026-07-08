@@ -2810,6 +2810,10 @@
         }
       }
 
+      window.__refreshCurrentLeadFolder = function () {
+        return switchLeadGroupTab(currentLeadGroupTabId, { force: true, skipHistory: true });
+      };
+
       document.getElementById('lead-group-tabs')?.addEventListener('click', function (e) {
         var tab = e.target.closest('.lead-group-tab[data-group-id]');
         if (!tab || tab.id === 'lead-group-new-btn') return;
@@ -3841,6 +3845,8 @@
         if (typeof window.__syncLeadChatIndicatorPolling === 'function') {
           window.__syncLeadChatIndicatorPolling();
         }
+        if (typeof window.mountLeadGroupDrawer === 'function') window.mountLeadGroupDrawer();
+        if (typeof window.__bindLeadsPullToRefresh === 'function') window.__bindLeadsPullToRefresh();
       };
       window.__dashboardOnWorkspaceShown();
 

@@ -570,6 +570,7 @@
       display: flex;
       width: min(18rem, 88vw);
       flex-direction: column;
+      overflow: hidden;
       border-right: 1px solid rgb(226 232 240);
       background-color: rgb(255 255 255) !important;
       box-shadow: 8px 0 32px -8px rgb(15 23 42 / 0.28);
@@ -582,11 +583,6 @@
     }
     body.lead-group-drawer-open {
       overflow: hidden;
-    }
-    .lead-group-tabs-shell {
-      flex: 1 1 auto;
-      min-height: 0;
-      overflow-y: auto;
     }
     #lead-group-tabs {
       background-color: rgb(255 255 255);
@@ -635,6 +631,40 @@
     #chat-modal-container .chat-inbox-panel {
       max-width: 100% !important;
       width: 100% !important;
+    }
+
+    .leads-ptr-indicator {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 0;
+      z-index: 5;
+      display: flex;
+      height: 0;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      overflow: visible;
+      color: rgb(100 116 139);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 150ms ease;
+    }
+    .leads-ptr-content {
+      transition: transform 180ms ease;
+    }
+    .leads-scroll-container.leads-ptr--pulling .leads-ptr-content {
+      transition: none;
+    }
+    .leads-scroll-container.leads-ptr--ready .leads-ptr-indicator,
+    .leads-scroll-container.leads-ptr--refreshing .leads-ptr-indicator {
+      color: rgb(79 70 229);
+    }
+    .leads-scroll-container.leads-ptr--refreshing .leads-ptr-icon {
+      animation: leads-ptr-spin 700ms linear infinite;
+    }
+    @keyframes leads-ptr-spin {
+      to { transform: rotate(360deg); }
     }
   }
 

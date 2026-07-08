@@ -242,8 +242,7 @@
                     <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
                   </button>
                 </div>
-                <div class="lead-group-tabs-shell -mx-4 border-b border-slate-200 px-2 py-2 sm:-mx-5 sm:px-3 lg:mx-0 lg:border-b lg:px-5 lg:py-0">
-                  <div id="lead-group-tabs" class="flex max-h-[min(70vh,28rem)] flex-col gap-0.5 overflow-y-auto overscroll-y-contain lg:max-h-none lg:flex-row lg:flex-wrap lg:items-end lg:gap-0.5 lg:overflow-visible" role="tablist" aria-label="Lead groups">
+                <div id="lead-group-tabs" class="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto overscroll-y-contain px-2 py-2 lg:flex-none lg:max-h-none lg:flex-row lg:flex-wrap lg:items-end lg:gap-0.5 lg:overflow-visible lg:border-b lg:border-slate-200 lg:px-5 lg:py-0" role="tablist" aria-label="Lead groups">
               <button type="button" role="tab" class="lead-group-tab rounded-t-md{% if active_group_pk is None %} lead-group-tab--active{% endif %}" data-group-id="uncategorized" aria-selected="{% if active_group_pk is None %}true{% else %}false{% endif %}"><span class="relative inline-flex">Uncategorized<span class="lead-group-count absolute -right-3.5 -top-2.5 inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-slate-200 px-1.5 py-0.5 text-[11px] font-bold leading-none text-slate-600 ring-1 ring-white" title="{{ uncategorized_lead_count }} lead(s) in this group">{{ uncategorized_lead_count }}</span></span></button>
               <button type="button" role="tab" class="lead-group-tab rounded-t-md{% if active_group_pk == queue_group.pk %} lead-group-tab--active{% endif %}" data-group-id="{{ queue_group.pk }}" aria-selected="{% if active_group_pk == queue_group.pk %}true{% else %}false{% endif %}"><span class="relative inline-flex">🚀Queue<span class="lead-group-count absolute -right-3.5 -top-2.5 inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-slate-200 px-1.5 py-0.5 text-[11px] font-bold leading-none text-slate-600 ring-1 ring-white" title="{{ queue_lead_count }} lead(s) in this group">{{ queue_lead_count }}</span></span></button>
               <button type="button" role="tab" class="lead-group-tab rounded-t-md{% if active_group_pk == trash_group.pk %} lead-group-tab--active{% endif %}" data-group-id="{{ trash_group.pk }}" aria-selected="{% if active_group_pk == trash_group.pk %}true{% else %}false{% endif %}"><span class="relative inline-flex">{{ trash_group.name }}<span class="lead-group-count absolute -right-3.5 -top-2.5 inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-slate-200 px-1.5 py-0.5 text-[11px] font-bold leading-none text-slate-600 ring-1 ring-white" title="{{ trash_lead_count }} lead(s) in this group">{{ trash_lead_count }}</span></span></button>
@@ -252,7 +251,6 @@
               <button type="button" role="tab" class="lead-group-tab lead-group-tab--draggable rounded-t-md{% if active_group_pk == g.pk %} lead-group-tab--active{% endif %}" draggable="true" data-group-id="{{ g.pk }}" aria-selected="{% if active_group_pk == g.pk %}true{% else %}false{% endif %}"><span class="relative inline-flex">{{ g.name }}<span class="lead-group-count absolute -right-3.5 -top-2.5 inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-slate-200 px-1.5 py-0.5 text-[11px] font-bold leading-none text-slate-600 ring-1 ring-white" title="{{ g.total_leads }} lead(s) in this group">{{ g.total_leads }}</span></span></button>
               {% endfor %}
               <button type="button" id="lead-group-new-btn" class="lead-group-tab lead-group-tab--new ml-0.5 rounded-t-md font-semibold lg:rounded-t-md" title="Create a new group">+ New group</button>
-                  </div>
                 </div>
               </div>
             </div>
@@ -318,7 +316,12 @@
         <p id="export-xlsx-status" class="mt-2 hidden text-right text-[11px] text-red-600" role="status"></p>
       </header>
 
-      <div class="min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-4 py-4 sm:px-5 sm:py-5">
+      <div id="leads-scroll-container" class="leads-scroll-container relative min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-4 py-4 sm:px-5 sm:py-5">
+        <div id="leads-ptr-indicator" class="leads-ptr-indicator lg:hidden" aria-hidden="true">
+          <svg class="leads-ptr-icon h-5 w-5 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99"/></svg>
+          <span class="leads-ptr-text text-xs font-medium">Pull to refresh</span>
+        </div>
+        <div id="leads-ptr-content" class="leads-ptr-content">
     <section id="clinics-panel" class="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm">
       <div id="leads-fragment-root">
       <div id="clinics-view-list" class="overflow-x-auto rounded-b-xl">
@@ -351,6 +354,7 @@
       </div>
       </div>
     </section>
+        </div>
       </div>
     </main>
   </div>
