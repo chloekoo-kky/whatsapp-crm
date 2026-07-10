@@ -3315,32 +3315,6 @@
           }
           return;
         }
-        var waMeCopyBtn = e.target.closest('.wa-me-link-copy-btn');
-        if (waMeCopyBtn && this.contains(waMeCopyBtn)) {
-          e.preventDefault();
-          e.stopPropagation();
-          var waMeText = (waMeCopyBtn.getAttribute('data-wa-me-copy') || '').trim();
-          if (!waMeText) return;
-          function waMeCopiedOk() {
-            var prevTitle = waMeCopyBtn.getAttribute('title') || '';
-            waMeCopyBtn.setAttribute('title', 'Copied!');
-            waMeCopyBtn.classList.add('ring-2', 'ring-emerald-400/60');
-            setTimeout(function () {
-              waMeCopyBtn.setAttribute('title', prevTitle || 'Copy WhatsApp link');
-              waMeCopyBtn.classList.remove('ring-2', 'ring-emerald-400/60');
-            }, 1600);
-          }
-          if (navigator.clipboard && navigator.clipboard.writeText) {
-            navigator.clipboard.writeText(waMeText).then(waMeCopiedOk).catch(function () {
-              window.prompt('Copy:', waMeText);
-              waMeCopiedOk();
-            });
-          } else {
-            window.prompt('Copy:', waMeText);
-            waMeCopiedOk();
-          }
-          return;
-        }
         var waBtn = e.target.closest('.whatsapp-copy-btn');
         if (waBtn && this.contains(waBtn)) {
           e.preventDefault();
