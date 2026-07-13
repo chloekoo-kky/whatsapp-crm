@@ -6,7 +6,7 @@ from django.test import Client, TestCase, override_settings
 from django.urls import reverse
 from django.db.models import Exists, OuterRef
 
-from leads.models import CategoryRule, ChatMessage, Lead, LeadCategoryType, LeadConversationLog, LeadGroup, WhatsAppConfig, WhatsAppScriptTemplate
+from leads.models import CategoryRule, ChatMessage, Lead, LeadCategoryType, LeadConversationLog, LeadGroup, SearchQueryRecord, WhatsAppConfig, WhatsAppScriptTemplate
 from leads.chat_messages import record_inbound_chat_message, record_outbound_chat_message
 from leads.display import (
     lead_google_maps_url,
@@ -2571,3 +2571,45 @@ class GlobalLeadSearchTests(TestCase):
         qs, is_global = _leads_queryset_for_table(request)
         self.assertFalse(is_global)
         self.assertEqual(list(qs.values_list("name", flat=True)), ["Beta Physio"])
+
+
+class ApiStatusSidebarTests(TestCase):
+    @override_settings(SERPER_API_KEY="test-serper", YCLOUD_API_KEY="", WHATSAPP_FROM_NUMBER="")
+    def test_sidebar_partial_shows_provider_status_and_usage(self):
+        SearchQueryRecord.objects.create(
+            keyword="Clinic",
+            maps_search_query="clinic",
+            search_city="KL",
+            search_state="Selangor",
+        )
+        Lead.objects.create(
+            name="Sent Lead",
+            address="1 St",
+            phone_number="+60123456789",
+            whatsapp_status=Lead.WhatsappStatus.SENT,
+        )
+        Lead.objects.create(
+            name="Pending Lead",
+            address="2 St",
+            phone_number="+60198765432",
+            whatsapp_status=Lead.WhatsappStatus.PENDING,
+        )
+
+        response = Client().get(reverse("api_status_sidebar"))
+        self.assertEqual(response.status_code, 200)
+        html = response.content.decode()
+        self.assertIn("YCloud WhatsApp", html)
+        self.assertIn("Not configured", html)
+        self.assertIn("Serper Maps", html)
+        self.assertIn("Ready", html)
+        self.assertIn("1 hunts", html)
+        self.assertIn("1 sent", html)
+        self.assertIn("1 pending", html)
+
+    @override_settings(SERPER_API_KEY="", YCLOUD_API_KEY="ycloud-key", WHATSAPP_FROM_NUMBER="+60120000000")
+    def test_sidebar_partial_ycloud_connected(self):
+        response = Client().get(reverse("api_status_sidebar"))
+        self.assertEqual(response.status_code, 200)
+        html = response.content.decode()
+        self.assertIn("Connected", html)
+        self.assertIn("Not configured", html)  # Serper still unconfigured

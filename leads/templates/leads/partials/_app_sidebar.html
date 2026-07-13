@@ -59,6 +59,13 @@
         </ul>
       </div>
     </nav>
+    <div id="api-status-sidebar-panel"
+      class="shrink-0 border-t border-white/5 py-3"
+      hx-get="{% url 'api_status_sidebar' %}"
+      hx-trigger="load, every 60s, apiStatusRefresh from:body, waSidebarBadgeRefresh from:body"
+      hx-swap="innerHTML">
+      <p class="px-5 py-2 text-[10px] text-slate-600">Loading API status…</p>
+    </div>
   </aside>
 </div>
 {% endwith %}

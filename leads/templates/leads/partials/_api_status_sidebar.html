@@ -1,0 +1,45 @@
+<div class="space-y-3 px-2" aria-label="API status and usage">
+  <div class="flex items-center justify-between gap-2 px-1">
+    <p class="text-[10px] font-bold uppercase tracking-wider text-slate-500">API status</p>
+    <span class="text-[10px] tabular-nums text-slate-600" title="Last refreshed">{{ refreshed_at }}</span>
+  </div>
+
+  <div class="rounded-lg border border-white/5 bg-white/[0.03] p-2.5">
+    <div class="flex items-start gap-2">
+      <span class="mt-1.5 h-2 w-2 shrink-0 rounded-full {% if ycloud.configured %}bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.55)]{% else %}bg-amber-400/90{% endif %}" aria-hidden="true"></span>
+      <div class="min-w-0 flex-1">
+        <div class="flex items-center justify-between gap-2">
+          <p class="truncate text-[11px] font-semibold text-slate-200">YCloud WhatsApp</p>
+          <span class="shrink-0 text-[10px] font-medium {% if ycloud.configured %}text-emerald-400{% else %}text-amber-300/90{% endif %}">{{ ycloud.status_label }}</span>
+        </div>
+        <p class="mt-1 text-[10px] leading-snug text-slate-500">
+          <span class="tabular-nums text-slate-400">{{ ycloud.sent_total }}</span> sent
+          <span class="text-slate-600">·</span>
+          <span class="tabular-nums text-slate-400">{{ ycloud.sent_today }}</span> today
+          <span class="text-slate-600">·</span>
+          <span class="tabular-nums text-slate-400">{{ ycloud.pending }}</span> pending
+        </p>
+        {% if ycloud.error and not ycloud.configured %}
+        <p class="mt-1 text-[10px] leading-snug text-amber-300/80">{{ ycloud.error }}</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="rounded-lg border border-white/5 bg-white/[0.03] p-2.5">
+    <div class="flex items-start gap-2">
+      <span class="mt-1.5 h-2 w-2 shrink-0 rounded-full {% if serper.configured %}bg-sky-400 shadow-[0_0_6px_rgba(56,189,248,0.45)]{% else %}bg-amber-400/90{% endif %}" aria-hidden="true"></span>
+      <div class="min-w-0 flex-1">
+        <div class="flex items-center justify-between gap-2">
+          <p class="truncate text-[11px] font-semibold text-slate-200">Serper Maps</p>
+          <span class="shrink-0 text-[10px] font-medium {% if serper.configured %}text-sky-300{% else %}text-amber-300/90{% endif %}">{{ serper.status_label }}</span>
+        </div>
+        <p class="mt-1 text-[10px] leading-snug text-slate-500">
+          <span class="tabular-nums text-slate-400">{{ serper.hunts_total }}</span> hunts
+          <span class="text-slate-600">·</span>
+          <span class="tabular-nums text-slate-400">{{ serper.hunts_today }}</span> today
+        </p>
+      </div>
+    </div>
+  </div>
+</div>

@@ -1,6 +1,7 @@
 from django.urls import path
 
 from leads.views import (
+    api_status_sidebar,
     LeadDashboardView,
     ReportsView,
     CategoryRulesView,
@@ -99,6 +100,11 @@ urlpatterns = [
         "leads/ajax/whatsapp/pending-count/",
         whatsapp_pending_count,
         name="whatsapp_pending_count",
+    ),
+    path(
+        "leads/ajax/api-status/sidebar/",
+        api_status_sidebar,
+        name="api_status_sidebar",
     ),
     path(
         "leads/ajax/whatsapp/activity-log/",

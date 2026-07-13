@@ -3882,6 +3882,7 @@
           activeSearchRecordId = null;
           replaceDashboardUrlForCurrentTab('replace');
           await switchLeadGroupTab(currentLeadGroupTabId, { force: true, skipHistory: true });
+          document.body.dispatchEvent(new CustomEvent('apiStatusRefresh'));
         } catch (err) {
           huntStatus.classList.add('text-red-600');
           huntStatus.textContent = 'Network error: ' + err;

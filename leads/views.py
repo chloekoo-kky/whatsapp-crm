@@ -31,6 +31,7 @@ from django.views.decorators.csrf import csrf_exempt, csrf_protect, ensure_csrf_
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 from django.views.generic import ListView, TemplateView
 
+from leads.api_status_service import get_api_sidebar_context
 from leads.display import (
     AUTOMATOR_LOG_MARKER,
     category_badge_html,
@@ -1782,6 +1783,17 @@ def send_free_text(request, pk: int):
 
 
 @require_GET
+def api_status_sidebar(request):
+    """HTMX partial: sidebar footer with external API status and local usage."""
+    html = render_to_string(
+        "leads/partials/_api_status_sidebar.html",
+        get_api_sidebar_context(),
+        request=request,
+    )
+    return HttpResponse(html)
+
+
+@require_GET
 def whatsapp_pending_count(request):
     """HTMX partial: sidebar badge with pending queue count."""
     trash_group = get_or_create_trash_group()
@@ -1876,7 +1888,7 @@ def clear_live_activity_logs(request):
     )
     response = HttpResponse(list_html + panel_oob + counters_oob)
     response["HX-Trigger"] = json.dumps(
-        {"waActivityLogCleared": True, "waSidebarBadgeRefresh": True}
+        {"waActivityLogCleared": True, "waSidebarBadgeRefresh": True, "apiStatusRefresh": True}
     )
     return response
 
