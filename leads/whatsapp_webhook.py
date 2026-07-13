@@ -19,6 +19,7 @@ from django.utils.dateparse import parse_datetime
 
 from leads.chat_messages import (
     inbound_chat_message_exists,
+    mark_outbound_delivery_failed,
     outbound_chat_message_exists,
     record_inbound_chat_message,
     upsert_outbound_chat_message,
@@ -570,6 +571,13 @@ def sync_webhook_delivery_failure(failure: ParsedWebhookDeliveryFailure) -> bool
         LeadConversationLog.objects.filter(pk=log.pk).update(created_at=failure.timestamp)
 
     mark_failed(lead, failure.error_message)
+    # Hide the misleading "sent" bubble for the message that failed to deliver.
+    mark_outbound_delivery_failed(
+        lead,
+        message_id=failure.message_id,
+        template_name=failure.template_name,
+        failed_at=failure.timestamp,
+    )
     return True
 
 

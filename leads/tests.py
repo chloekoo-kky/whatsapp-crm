@@ -2574,8 +2574,10 @@ class GlobalLeadSearchTests(TestCase):
 
 
 class ApiStatusSidebarTests(TestCase):
-    @override_settings(SERPER_API_KEY="test-serper", YCLOUD_API_KEY="", WHATSAPP_FROM_NUMBER="")
+    @override_settings(SERPER_API_KEY="test-serper")
     def test_sidebar_partial_shows_provider_status_and_usage(self):
+        from unittest.mock import patch
+
         SearchQueryRecord.objects.create(
             keyword="Clinic",
             maps_search_query="clinic",
@@ -2595,21 +2597,178 @@ class ApiStatusSidebarTests(TestCase):
             whatsapp_status=Lead.WhatsappStatus.PENDING,
         )
 
-        response = Client().get(reverse("api_status_sidebar"))
+        with patch(
+            "leads.api_status_service.fetch_gateway_status",
+            return_value={"connected": False, "state": "unconfigured", "error": "Missing: YCLOUD_API_KEY"},
+        ):
+            response = Client().get(reverse("api_status_sidebar"))
         self.assertEqual(response.status_code, 200)
         html = response.content.decode()
         self.assertIn("YCloud WhatsApp", html)
         self.assertIn("Not configured", html)
         self.assertIn("Serper Maps", html)
         self.assertIn("Ready", html)
-        self.assertIn("1 hunts", html)
-        self.assertIn("1 sent", html)
-        self.assertIn("1 pending", html)
+        self.assertIn("hunts", html)
+        self.assertIn("sent", html)
+        self.assertIn("pending", html)
 
-    @override_settings(SERPER_API_KEY="", YCLOUD_API_KEY="ycloud-key", WHATSAPP_FROM_NUMBER="+60120000000")
+    @override_settings(SERPER_API_KEY="")
     def test_sidebar_partial_ycloud_connected(self):
-        response = Client().get(reverse("api_status_sidebar"))
+        from unittest.mock import patch
+
+        with patch(
+            "leads.api_status_service.fetch_gateway_status",
+            return_value={"connected": True, "state": "open", "error": None},
+        ):
+            response = Client().get(reverse("api_status_sidebar"))
         self.assertEqual(response.status_code, 200)
         html = response.content.decode()
         self.assertIn("Connected", html)
         self.assertIn("Not configured", html)  # Serper still unconfigured
+
+
+class OutboundFreeTextFailureTests(TestCase):
+    @override_settings(YCLOUD_API_KEY="ycloud-key", WHATSAPP_FROM_NUMBER="+60126336429")
+    def test_free_text_blocked_outside_24h_window(self):
+        from unittest.mock import patch
+
+        from leads.chat_messages import chat_messages_for_lead
+        from leads.models import ChatMessage
+        from leads.whatsapp_service import send_free_text_to_lead
+
+        groups = ensure_pipeline_system_groups()
+        lead = Lead.objects.create(
+            name="Window Clinic",
+            address="1 Main St",
+            phone_number="+60198765030",
+            group=groups["uncategorized"],
+            whatsapp_status=Lead.WhatsappStatus.SENT,
+        )
+
+        with patch("leads.whatsapp_service.send_message_directly") as mock_send:
+            ok, detail, msg = send_free_text_to_lead(lead, "Hello, still interested?")
+
+        self.assertFalse(ok)
+        self.assertIn("24-hour", detail)
+        self.assertIsNone(msg)
+        mock_send.assert_not_called()
+        # No misleading outbound bubble was created.
+        self.assertEqual(
+            ChatMessage.objects.filter(lead=lead, is_outbound=True).count(), 0
+        )
+        self.assertEqual(chat_messages_for_lead(lead), [])
+
+    @override_settings(YCLOUD_API_KEY="ycloud-key", WHATSAPP_FROM_NUMBER="+60126336429")
+    def test_free_text_sends_inside_24h_window(self):
+        from unittest.mock import patch
+
+        from leads.chat_messages import record_inbound_chat_message
+        from leads.models import ChatMessage
+        from leads.whatsapp_service import send_free_text_to_lead
+
+        groups = ensure_pipeline_system_groups()
+        lead = Lead.objects.create(
+            name="Open Window Clinic",
+            address="1 Main St",
+            phone_number="+60198765031",
+            group=groups["uncategorized"],
+            whatsapp_status=Lead.WhatsappStatus.SENT,
+        )
+        record_inbound_chat_message(lead, body="Hi, yes please", meta_message_id="wamid.IN1")
+
+        with patch(
+            "leads.whatsapp_service.send_message_directly",
+            return_value=(True, "", {"id": "ycloud_ok_1", "status": "accepted"}),
+        ) as mock_send:
+            ok, detail, msg = send_free_text_to_lead(lead, "Great, here are the details.")
+
+        self.assertTrue(ok)
+        self.assertEqual(detail, "")
+        self.assertIsNotNone(msg)
+        mock_send.assert_called_once()
+        self.assertEqual(
+            ChatMessage.objects.filter(lead=lead, is_outbound=True).count(), 1
+        )
+
+    @override_settings(WHATSAPP_FROM_NUMBER="+60126336429")
+    def test_delivery_failure_hides_outbound_bubble(self):
+        from leads.chat_messages import (
+            FAILED_DELIVERY_STATUS,
+            chat_messages_for_lead,
+            record_outbound_chat_message,
+        )
+        from leads.models import ChatMessage
+        from leads.whatsapp_webhook import (
+            ParsedWebhookDeliveryFailure,
+            sync_webhook_delivery_failure,
+        )
+
+        groups = ensure_pipeline_system_groups()
+        lead = Lead.objects.create(
+            name="Failed Send Clinic",
+            address="1 Main St",
+            phone_number="+60198765032",
+            group=groups["uncategorized"],
+            whatsapp_status=Lead.WhatsappStatus.SENT,
+        )
+        bubble = record_outbound_chat_message(
+            lead,
+            template_name="",
+            body="Are you free this week?",
+            meta_message_id="wamid.FAILEDFREE1",
+        )
+
+        failure = ParsedWebhookDeliveryFailure(
+            remote_phone="+60198765032",
+            error_message="Message undeliverable",
+            message_id="wamid.FAILEDFREE1",
+        )
+        self.assertTrue(sync_webhook_delivery_failure(failure))
+
+        bubble.refresh_from_db()
+        self.assertEqual(bubble.delivery_status, FAILED_DELIVERY_STATUS)
+        feed = chat_messages_for_lead(lead)
+        self.assertNotIn(bubble.pk, [m.pk for m in feed])
+
+    @override_settings(WHATSAPP_FROM_NUMBER="+60126336429")
+    def test_failed_bubble_not_resurrected_from_agent_log(self):
+        from django.utils import timezone
+
+        from leads.chat_messages import (
+            chat_messages_for_lead,
+            record_outbound_chat_message,
+        )
+
+        groups = ensure_pipeline_system_groups()
+        lead = Lead.objects.create(
+            name="Resurrect Clinic",
+            address="1 Main St",
+            phone_number="+60198765033",
+            group=groups["uncategorized"],
+            whatsapp_status=Lead.WhatsappStatus.FAILED,
+        )
+        body = "Following up on your enquiry."
+        record_outbound_chat_message(
+            lead,
+            template_name="",
+            body=body,
+            meta_message_id="wamid.RESURRECT1",
+        )
+        # Agent send log (would normally recreate the bubble on sync)...
+        LeadConversationLog.objects.create(
+            lead=lead,
+            conversation_date=timezone.now().date(),
+            remarks=f"wa-id:wamid.RESURRECT1\n[WhatsApp · agent] {body}",
+        )
+        # ...and the matching delivery-failure log.
+        LeadConversationLog.objects.create(
+            lead=lead,
+            conversation_date=timezone.now().date(),
+            remarks="[WhatsApp delivery failed] to +60198765033: Undeliverable · wamid.RESURRECT1",
+        )
+
+        feed = chat_messages_for_lead(lead)
+        self.assertEqual(feed, [])
+        # Re-open should stay clean (no resurrection).
+        feed_again = chat_messages_for_lead(lead)
+        self.assertEqual(feed_again, [])

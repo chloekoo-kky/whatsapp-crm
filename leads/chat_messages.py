@@ -6,15 +6,26 @@ import re
 from datetime import timedelta
 
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from leads.models import ChatMessage, Lead, LeadConversationLog
 
 _OUTBOUND_MERGE_WINDOW = timedelta(minutes=15)
 
+# Meta only delivers free-form (non-template) replies within 24h of the client's
+# last inbound message. Sends outside this window are rejected downstream.
+CUSTOMER_SERVICE_WINDOW = timedelta(hours=24)
+
+# Kept in sync with leads.whatsapp_webhook.DELIVERY_FAILED_MARKER (avoid import cycle).
+DELIVERY_FAILED_MARKER = "[WhatsApp delivery failed]"
+FAILED_DELIVERY_STATUS = "failed"
+
 _CLIENT_LOG_RE = re.compile(r"^\[WhatsApp · client\]\s*(.*)$", re.DOTALL)
 _AGENT_LOG_RE = re.compile(r"^\[WhatsApp · agent\]\s*(.*)$", re.DOTALL)
 _WA_ID_PREFIX = "wa-id:"
+_FAILED_LOG_ID_RE = re.compile(r"·\s*([^\s·]+)\s*$")
+_FAILED_LOG_TEMPLATE_RE = re.compile(r"^\[WhatsApp delivery failed\]\s*\(([^)]+)\)")
 
 
 def _meta_id_from_remarks(remarks: str) -> str:
@@ -380,12 +391,97 @@ def sync_chat_messages_from_logs(lead: Lead) -> None:
             ChatMessage.objects.filter(pk=msg.pk).update(created_at=log.created_at)
 
 
+def last_inbound_message_at(lead: Lead):
+    """Timestamp of the client's most recent inbound WhatsApp message, if any."""
+    msg = (
+        ChatMessage.objects.filter(lead=lead, is_outbound=False)
+        .order_by("-created_at")
+        .first()
+    )
+    return msg.created_at if msg else None
+
+
+def within_customer_service_window(lead: Lead, *, now=None) -> bool:
+    """True when a free-form reply is still allowed (client messaged within 24h)."""
+    last_in = last_inbound_message_at(lead)
+    if last_in is None:
+        return False
+    now = now or timezone.now()
+    return (now - last_in) <= CUSTOMER_SERVICE_WINDOW
+
+
+def mark_outbound_delivery_failed(
+    lead: Lead,
+    *,
+    message_id: str = "",
+    template_name: str = "",
+    failed_at=None,
+    allow_time_fallback: bool = True,
+) -> int:
+    """Flag the outbound bubble for a send WhatsApp could not deliver.
+
+    Failed rows are kept (not deleted) so re-syncing agent logs won't recreate
+    them, but they are hidden from the chat feed. Matches by message id first,
+    then falls back to the most recent matching outbound row in the merge window.
+    """
+    mid = (message_id or "").strip()
+    if mid:
+        matched = ChatMessage.objects.filter(
+            lead=lead, is_outbound=True
+        ).filter(Q(meta_message_id=mid) | Q(meta_message_id__startswith=mid))
+        updated = matched.exclude(delivery_status=FAILED_DELIVERY_STATUS).update(
+            delivery_status=FAILED_DELIVERY_STATUS
+        )
+        if matched.exists():
+            return updated
+    if not allow_time_fallback:
+        return 0
+    anchor = failed_at or timezone.now()
+    qs = ChatMessage.objects.filter(
+        lead=lead,
+        is_outbound=True,
+        created_at__gte=anchor - _OUTBOUND_MERGE_WINDOW,
+        created_at__lte=anchor,
+    ).exclude(delivery_status=FAILED_DELIVERY_STATUS)
+    tpl = (template_name or "").strip()
+    qs = qs.filter(template_name=tpl) if tpl else qs.filter(template_name="")
+    candidate = qs.order_by("-created_at", "-id").first()
+    if candidate is None:
+        return 0
+    candidate.delivery_status = FAILED_DELIVERY_STATUS
+    candidate.save(update_fields=["delivery_status"])
+    return 1
+
+
+def _repair_failed_outbound_rows(lead: Lead) -> int:
+    """Flag outbound bubbles that already have a delivery-failure log (id match)."""
+    repaired = 0
+    logs = LeadConversationLog.objects.filter(
+        lead=lead, remarks__contains=DELIVERY_FAILED_MARKER
+    ).order_by("created_at", "id")
+    for log in logs:
+        remarks = (log.remarks or "").strip()
+        id_match = _FAILED_LOG_ID_RE.search(remarks)
+        message_id = id_match.group(1).strip() if id_match else ""
+        if not message_id:
+            continue
+        repaired += mark_outbound_delivery_failed(
+            lead,
+            message_id=message_id,
+            allow_time_fallback=False,
+        )
+    return repaired
+
+
 def chat_messages_for_lead(lead: Lead) -> list[ChatMessage]:
     sync_chat_messages_from_logs(lead)
     _dedupe_duplicate_outbound_rows(lead)
     _repair_outbound_template_rows(lead)
+    _repair_failed_outbound_rows(lead)
     return list(
-        ChatMessage.objects.filter(lead=lead).order_by("created_at", "id")
+        ChatMessage.objects.filter(lead=lead)
+        .exclude(is_outbound=True, delivery_status=FAILED_DELIVERY_STATUS)
+        .order_by("created_at", "id")
     )
 
 

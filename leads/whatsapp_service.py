@@ -15,7 +15,11 @@ from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 
-from leads.chat_messages import record_outbound_chat_message, upsert_outbound_chat_message
+from leads.chat_messages import (
+    record_outbound_chat_message,
+    upsert_outbound_chat_message,
+    within_customer_service_window,
+)
 from leads.display import lead_phone_list, whatsapp_me_url
 from leads.models import (
     Lead,
@@ -953,6 +957,15 @@ def send_free_text_to_lead(lead: Lead, text: str) -> tuple[bool, str, Optional["
     to_number = e164_recipient(primary_phone(lead))
     if not to_number:
         return False, "No valid phone number on lead.", None
+
+    if not within_customer_service_window(lead):
+        detail = (
+            "Outside WhatsApp's 24-hour reply window. Free-form replies are only "
+            "delivered within 24h of the client's last message — the client must "
+            "message you again, or send an approved template instead."
+        )
+        record_whatsapp_activity_warning(detail, lead=lead)
+        return False, detail, None
 
     payload = build_meta_free_text_payload(lead, body)
     ok, detail, data = send_message_directly(payload)

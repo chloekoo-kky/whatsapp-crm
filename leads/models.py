@@ -515,6 +515,12 @@ class ChatMessage(models.Model):
         db_index=True,
         help_text="WhatsApp message id from Meta webhooks (dedupe inbound).",
     )
+    delivery_status = models.CharField(
+        max_length=16,
+        blank=True,
+        default="",
+        help_text="Outbound delivery state; 'failed' rows are hidden from the chat feed.",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
