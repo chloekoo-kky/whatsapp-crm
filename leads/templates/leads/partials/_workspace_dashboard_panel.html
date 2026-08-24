@@ -1,4 +1,5 @@
 <div id="workspace-panel-dashboard" class="dashboard-workspace"{% if not workspace_fragment %} data-loaded="1"{% endif %}{% if workspace_fragment %} hidden{% endif %}>
+{{ dashboard_js_config|json_script:"dashboard-js-config" }}
 
     <aside id="scraping-panel" class="dashboard-scraping-col hidden min-h-0 shrink-0 flex-col border-b border-slate-200/90 bg-white xl:flex" aria-label="Scraping and import">
       <div class="scraping-panel-body flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-y-contain px-4 py-4 xl:px-5">
@@ -295,22 +296,8 @@
               </div>
             </div>
           </div>
-          <script>
-            (function () {
-              var grid = document.documentElement.classList.contains('cv-grid');
-              document.querySelectorAll('.view-mode-btn').forEach(function (btn) {
-                var mode = btn.getAttribute('data-view-mode') || '';
-                var active = (mode === 'grid') === grid;
-                btn.setAttribute('aria-pressed', active ? 'true' : 'false');
-                btn.classList.toggle('bg-white', active);
-                btn.classList.toggle('text-indigo-700', active);
-                btn.classList.toggle('shadow-sm', active);
-                btn.classList.toggle('ring-1', active);
-                btn.classList.toggle('ring-slate-200/80', active);
-                btn.classList.toggle('text-slate-600', !active);
-              });
-            })();
-          </script>
+          {% load static %}
+          <script src="{% static 'leads/js/dashboard-view-mode-buttons.js' %}"></script>
           <p id="clinic-save-status" class="hidden rounded-lg bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-900 ring-1 ring-emerald-200/90" role="status" aria-live="polite"></p>
         </div>
         <p id="export-xlsx-status" class="mt-2 hidden text-right text-[11px] text-red-600" role="status"></p>

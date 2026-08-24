@@ -472,6 +472,47 @@ def _leads_queryset_for_table(request) -> tuple:
     return _leads_qs_for_tab("uncategorized", srid_int), False
 
 
+def _workspace_nav_js_config() -> dict:
+    return {
+        "dashboard": reverse("workspace_fragment_dashboard"),
+        "whatsapp": reverse("workspace_fragment_whatsapp"),
+    }
+
+
+def _dashboard_js_config(context: dict) -> dict:
+    """JSON blob for dashboard.js (json_script). Keys match the old inline JS names."""
+    queue = context.get("queue_group")
+    trash = context.get("trash_group")
+    return {
+        "huntApiPath": context.get("hunt_api_path") or "",
+        "getLeadsTableUrl": context.get("get_leads_table_url") or "/leads/ajax/leads-table/",
+        "getLeadChatIndicatorsUrl": context.get("get_lead_chat_indicators_url")
+        or "/leads/ajax/chat-indicators/",
+        "createLeadGroupUrl": context.get("create_lead_group_url") or "/leads/api/lead-groups/",
+        "bulkAssignGroupUrl": context.get("bulk_assign_group_url") or "/leads/api/assign-group/",
+        "reorderLeadGroupsUrl": context.get("reorder_lead_groups_url")
+        or "/leads/api/lead-groups/reorder/",
+        "reorderLeadsUrl": context.get("reorder_leads_url") or "/leads/api/leads/reorder/",
+        "activeSearchRecordId": context.get("active_search_record_id"),
+        "initialLeadGroupTabIdFromPage": context.get("active_group_tab_id") or "",
+        "exportXlsxUrl": context.get("export_xlsx_url") or "/leads/export/xlsx/",
+        "exportFullBackupUrl": context.get("export_full_backup_url") or "/leads/export/backup/",
+        "importFullBackupUrl": context.get("import_full_backup_url") or "/leads/import/backup/",
+        "bulkManualUrl": context.get("bulk_manual_url") or "/leads/api/bulk-manual/",
+        "bulkWhatsappQueueUrl": context.get("bulk_whatsapp_queue_url")
+        or "/leads/api/bulk-whatsapp-queue/",
+        "bulkDequeueUrl": context.get("bulk_dequeue_url") or "/leads/api/bulk-dequeue/",
+        "bulkAssignBatchUrl": context.get("bulk_assign_batch_url")
+        or "/leads/api/bulk-assign-batch/",
+        "whatsappBatchesJsonUrl": context.get("whatsapp_batches_json_url")
+        or "/leads/ajax/whatsapp/batches/",
+        "queueGroupTabId": str(queue.pk) if queue is not None else "",
+        "trashGroupTabId": str(trash.pk) if trash is not None else "",
+        "leadManualCreateUrl": context.get("lead_manual_create_url") or "/leads/api/leads/manual/",
+        "defaultLimit": context.get("hunt_limit_default") or 100,
+    }
+
+
 @method_decorator(ensure_csrf_cookie, name="dispatch")
 class LeadDashboardView(ListView):
     """Template dashboard listing all leads."""
@@ -547,6 +588,8 @@ class LeadDashboardView(ListView):
             context["active_group_pk"] = None
             context["active_group_tab_id"] = "uncategorized"
         context.update(_active_folder_context(self.request))
+        context["dashboard_js_config"] = _dashboard_js_config(context)
+        context["workspace_nav_js_config"] = _workspace_nav_js_config()
         return context
 
 
@@ -1713,6 +1756,7 @@ class WhatsAppDashboardView(TemplateView):
         context.update(_whatsapp_dashboard_context(request=self.request))
         context["workspace_fragment_dashboard_url"] = reverse("workspace_fragment_dashboard")
         context["workspace_fragment_whatsapp_url"] = reverse("workspace_fragment_whatsapp")
+        context["workspace_nav_js_config"] = _workspace_nav_js_config()
         return context
 
 

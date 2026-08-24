@@ -1,0 +1,9 @@
+(function () {
+  try {
+    document.documentElement.classList.add(
+      localStorage.getItem('clinic_crm_clinic_view') === 'grid' ? 'cv-grid' : 'cv-list'
+    );
+  } catch (e) {
+    document.documentElement.classList.add('cv-list');
+  }
+})();
