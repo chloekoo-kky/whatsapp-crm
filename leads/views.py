@@ -46,6 +46,7 @@ from leads.display import (
     whatsapp_me_url,
 )
 from leads.category_types import is_valid_category_slug, lead_category_choices, normalize_category_slug
+from leads.permissions import is_admin_tier
 from leads.models import (
     CategoryRule,
     ChainBrandStatus,
@@ -2911,6 +2912,12 @@ def clinics_export_xlsx(request):
     - ``ids``: optional comma-separated primary keys; further restricts to that subset (e.g. checked rows).
     If ``group_id`` is omitted, all leads are eligible (legacy); the dashboard always sends ``group_id``.
     """
+    if not is_admin_tier(request.user):
+        return HttpResponse(
+            "Admin role required.",
+            status=403,
+            content_type="text/plain; charset=utf-8",
+        )
     try:
         from openpyxl import Workbook
     except ImportError:
@@ -3030,6 +3037,12 @@ def export_full_backup_xlsx(request):
       (plus their chats, logs, and folder rows) are included. Otherwise all leads
       across every folder are exported.
     """
+    if not is_admin_tier(request.user):
+        return HttpResponse(
+            "Admin role required.",
+            status=403,
+            content_type="text/plain; charset=utf-8",
+        )
     raw_ids = (request.GET.get("ids") or "").strip()
     id_list: list[int] | None = None
     if raw_ids:
@@ -3072,6 +3085,8 @@ def import_full_backup_xlsx(request):
     Existing leads (matched by name + address) are skipped; only missing leads
     and their history are created.
     """
+    if not is_admin_tier(request.user):
+        return JsonResponse({"ok": False, "detail": "Admin role required."}, status=403)
     upload = request.FILES.get("backup")
     if not upload:
         return JsonResponse(

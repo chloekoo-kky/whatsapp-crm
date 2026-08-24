@@ -1,4 +1,6 @@
 from django.contrib import admin
+from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
+from django.contrib.auth.models import User
 
 from leads.models import (
     CategoryRule,
@@ -8,9 +10,33 @@ from leads.models import (
     LeadConversationLog,
     LeadGroup,
     SearchQueryRecord,
+    UserProfile,
     WhatsAppBatchSchedule,
     WhatsAppConfig,
 )
+
+
+class UserProfileInline(admin.StackedInline):
+    model = UserProfile
+    can_delete = False
+    extra = 0
+    max_num = 1
+    verbose_name_plural = "CRM role"
+
+
+class UserAdmin(BaseUserAdmin):
+    inlines = (UserProfileInline,)
+
+    def get_inline_instances(self, request, obj=None):
+        # On add, skip the inline so post_save can create the default sales profile
+        # without a duplicate INSERT from the inline form.
+        if obj is None:
+            return []
+        return super().get_inline_instances(request, obj)
+
+
+admin.site.unregister(User)
+admin.site.register(User, UserAdmin)
 
 
 @admin.register(ChainBrandStatus)
@@ -56,6 +82,7 @@ class CategoryRuleAdmin(admin.ModelAdmin):
 class LeadAdmin(admin.ModelAdmin):
     list_display = (
         "name",
+        "assigned_to",
         "shop_keyword",
         "category",
         "is_chain",
@@ -68,10 +95,12 @@ class LeadAdmin(admin.ModelAdmin):
     list_filter = (
         "category",
         "group",
+        "assigned_to",
         "is_processed",
         "is_chain",
         "is_very_important",
     )
+    autocomplete_fields = ("assigned_to",)
     search_fields = (
         "name",
         "address",

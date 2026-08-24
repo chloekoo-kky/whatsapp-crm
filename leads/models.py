@@ -1,6 +1,34 @@
 from datetime import time
 
+from django.conf import settings
 from django.db import models
+
+
+class UserProfile(models.Model):
+    """Per-user CRM role. Every User gets one via post_save (default: sales)."""
+
+    ROLE_SALES = "sales"
+    ROLE_SUPERVISOR = "supervisor"
+    ROLE_ADMIN = "admin"
+    ROLE_CHOICES = [
+        (ROLE_SALES, "Sales"),
+        (ROLE_SUPERVISOR, "Supervisor"),
+        (ROLE_ADMIN, "Admin"),
+    ]
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="profile",
+    )
+    role = models.CharField(max_length=20, choices=ROLE_CHOICES, default=ROLE_SALES)
+
+    class Meta:
+        verbose_name = "User profile"
+        verbose_name_plural = "User profiles"
+
+    def __str__(self) -> str:
+        return f"{self.user} ({self.get_role_display()})"
 
 
 class ShopType(models.Model):
@@ -272,6 +300,14 @@ class Lead(models.Model):
         on_delete=models.SET_NULL,
         related_name="leads",
         help_text="Optional folder; ungrouped leads appear only under “All leads”.",
+    )
+    assigned_to = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="assigned_leads",
+        help_text="Sales owner. Sales-role users only see leads assigned to them.",
     )
     display_order = models.PositiveIntegerField(
         default=0,
