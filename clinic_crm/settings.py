@@ -209,6 +209,10 @@ USE_TZ = True
 
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
+# Compiled Tailwind lives in leads/static. In DEBUG, WhiteNoise uses finders so
+# `npm run watch:css` is picked up under Gunicorn/Docker bind-mounts.
+WHITENOISE_USE_FINDERS = DEBUG
+WHITENOISE_AUTOREFRESH = DEBUG
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 

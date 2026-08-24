@@ -1,4 +1,15 @@
 # Clinic CRM — Django app
+FROM node:22-bookworm-slim AS frontend
+
+WORKDIR /app
+
+COPY package.json package-lock.json ./
+COPY tailwind.config.js ./
+COPY theme ./theme
+COPY leads ./leads
+
+RUN npm ci && npm run build:css
+
 FROM python:3.12-slim-bookworm
 
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -14,6 +25,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
+COPY --from=frontend /app/leads/static/leads/css/app.css /app/leads/static/leads/css/app.css
 
 # Windows CRLF in shell scripts breaks the shebang in Linux ("no such file or directory").
 RUN sed -i 's/\r$//' docker/entrypoint.sh \

@@ -1,0 +1,11 @@
+{
+  "name": "whatsapp-crm",
+  "private": true,
+  "scripts": {
+    "build:css": "tailwindcss -i ./theme/input.css -o ./leads/static/leads/css/app.css --minify",
+    "watch:css": "tailwindcss -i ./theme/input.css -o ./leads/static/leads/css/app.css --watch"
+  },
+  "devDependencies": {
+    "tailwindcss": "^3.4.17"
+  }
+}
