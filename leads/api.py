@@ -9,8 +9,8 @@ from django.db.models import Q
 from django.shortcuts import get_object_or_404
 
 from ninja import Field, ModelSchema, Query, Router, Schema
-
 from ninja.errors import HttpError
+from ninja.security import django_auth
 
 
 
@@ -20,7 +20,7 @@ from leads.services import fetch_leads_from_serper
 
 
 
-router = Router(tags=["leads"])
+router = Router(tags=["leads"], auth=django_auth)
 
 
 

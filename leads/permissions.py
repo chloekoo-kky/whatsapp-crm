@@ -19,3 +19,16 @@ def can_see_all_leads(user):
 
 def is_admin_tier(user):
     return user.is_authenticated and (user.is_superuser or get_role(user) == "admin")
+
+
+def role_label(user):
+    """Short label for the sidebar (Sales / Supervisor / Admin)."""
+    labels = {"sales": "Sales", "supervisor": "Supervisor", "admin": "Admin"}
+    role = get_role(user)
+    if role in labels:
+        if user.is_superuser and role != "admin":
+            return labels[role] + " · superuser"
+        return labels[role]
+    if getattr(user, "is_superuser", False):
+        return "Superuser"
+    return "Sales"

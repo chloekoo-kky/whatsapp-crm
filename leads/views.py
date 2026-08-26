@@ -16,6 +16,7 @@ from io import BytesIO
 from typing import Optional
 
 from django.conf import settings
+from django.contrib.auth.decorators import login_not_required
 from django.db import IntegrityError, connection, transaction
 from django.db.models import Q
 from django.db.models.deletion import ProtectedError
@@ -3609,6 +3610,7 @@ def lead_delete(request, pk: int):
     return JsonResponse({"ok": True, "id": lead_id})
 
 
+@login_not_required
 @csrf_exempt
 @require_http_methods(["GET", "POST"])
 def whatsapp_webhook(request):
@@ -3619,6 +3621,7 @@ def whatsapp_webhook(request):
     return JsonResponse(body, status=status)
 
 
+@login_not_required
 @csrf_exempt
 @require_http_methods(["GET", "POST"])
 def whatsapp_webhook_receiver(request):

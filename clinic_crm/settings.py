@@ -139,6 +139,7 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "django.contrib.auth.middleware.LoginRequiredMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
@@ -150,6 +151,7 @@ _template_ctx = [
     "django.contrib.auth.context_processors.auth",
     "django.contrib.messages.context_processors.messages",
 ]
+_TEMPLATE_DIRS = [BASE_DIR / "leads" / "templates"]
 
 # When DEBUG is True, skip django.template.loaders.cached.Loader so edits to HTML
 # templates are visible on refresh without restarting Gunicorn/Docker workers.
@@ -157,7 +159,7 @@ if DEBUG:
     TEMPLATES = [
         {
             "BACKEND": "django.template.backends.django.DjangoTemplates",
-            "DIRS": [],
+            "DIRS": _TEMPLATE_DIRS,
             "APP_DIRS": False,
             "OPTIONS": {
                 "context_processors": _template_ctx,
@@ -172,7 +174,7 @@ else:
     TEMPLATES = [
         {
             "BACKEND": "django.template.backends.django.DjangoTemplates",
-            "DIRS": [],
+            "DIRS": _TEMPLATE_DIRS,
             "APP_DIRS": True,
             "OPTIONS": {
                 "context_processors": _template_ctx,
@@ -215,5 +217,17 @@ WHITENOISE_USE_FINDERS = DEBUG
 WHITENOISE_AUTOREFRESH = DEBUG
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+LOGIN_URL = "/accounts/login/"
+LOGIN_REDIRECT_URL = "dashboard"
+LOGOUT_REDIRECT_URL = "/accounts/login/"
+
+EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+EMAIL_HOST = env("EMAIL_HOST", default="")
+EMAIL_PORT = env.int("EMAIL_PORT", default=587)
+EMAIL_HOST_USER = env("EMAIL_HOST_USER", default="")
+EMAIL_HOST_PASSWORD = env("EMAIL_HOST_PASSWORD", default="")
+EMAIL_USE_TLS = env.bool("EMAIL_USE_TLS", default=True)
+DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="no-reply@localhost")
 
 NINJA_PAGINATION_PER_PAGE = 50
