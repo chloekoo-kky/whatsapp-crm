@@ -261,6 +261,12 @@ class Lead(models.Model):
         related_name="leads",
         help_text="Scheduled batches this lead is part of (assigned from the Queue).",
     )
+    tags = models.ManyToManyField(
+        "Tag",
+        blank=True,
+        related_name="leads",
+        help_text="Multi-select tags (additive copy of category; unused by the live app yet).",
+    )
     search_city = models.CharField(
         max_length=255,
         null=True,
@@ -597,7 +603,7 @@ class LeadConversationLog(models.Model):
 
 
 class LeadCategoryType(models.Model):
-    """User-managed business category options (dropdown values on leads)."""
+    """Legacy category-type rows. Not written by live app paths; kept for a later cleanup."""
 
     slug = models.SlugField(
         max_length=32,
@@ -619,6 +625,99 @@ class LeadCategoryType(models.Model):
 
     def __str__(self) -> str:
         return self.label
+
+
+class Tag(models.Model):
+    """User-managed lead tags (dropdown/filter values and import-rule targets)."""
+
+    slug = models.SlugField(
+        max_length=32,
+        unique=True,
+        help_text="Stable identifier (lowercase, e.g. dental, gp).",
+    )
+    label = models.CharField(max_length=80)
+    sort_order = models.PositiveSmallIntegerField(default=100)
+    is_system = models.BooleanField(
+        default=False,
+        help_text="System tags (Unknown, Invalid) cannot be deleted.",
+    )
+
+    class Meta:
+        db_table = "leads_tag"
+        ordering = ["sort_order", "label", "slug"]
+        verbose_name = "Tag"
+        verbose_name_plural = "Tags"
+
+    def __str__(self) -> str:
+        return self.label
+
+    @classmethod
+    def from_slugs(cls, raw) -> list["Tag"]:
+        """Resolve unique tag slugs to Tag rows (sort_order, label, slug).
+
+        Raises ValueError if any slug is not a live Tag.
+        """
+        slugs: list[str] = []
+        seen: set[str] = set()
+        for item in raw or []:
+            key = str(item or "").strip().lower()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            slugs.append(key)
+        if not slugs:
+            return []
+        tags = list(cls.objects.filter(slug__in=slugs).order_by("sort_order", "label", "slug"))
+        found = {tag.slug for tag in tags}
+        if any(slug not in found for slug in slugs):
+            raise ValueError("Invalid tag.")
+        return tags
+
+    @staticmethod
+    def derived_category_slug(tags: list["Tag"]) -> str:
+        """Pick Lead.category from selected tags without surfacing it in the UI.
+
+        Prefer the first non-system tag (by sort_order). If only system tags are
+        selected, Invalid wins over Unknown. Empty selection → unknown.
+        """
+        from leads.category_types import INVALID_SLUG, UNKNOWN_SLUG
+
+        if not tags:
+            return UNKNOWN_SLUG
+        preferred = [tag for tag in tags if not tag.is_system]
+        if preferred:
+            return preferred[0].slug
+        slugs = {tag.slug for tag in tags}
+        if INVALID_SLUG in slugs:
+            return INVALID_SLUG
+        return UNKNOWN_SLUG
+
+    @classmethod
+    def sync_from_category_type(
+        cls,
+        cat_type: "LeadCategoryType",
+        *,
+        previous_slug: str | None = None,
+    ) -> "Tag":
+        """Create or update the Tag that mirrors a LeadCategoryType (keyed by slug)."""
+        lookup_slug = previous_slug or cat_type.slug
+        defaults = {
+            "label": cat_type.label,
+            "sort_order": cat_type.sort_order,
+            "is_system": cat_type.is_system,
+        }
+        tag = cls.objects.filter(slug=lookup_slug).first()
+        if tag is None and lookup_slug != cat_type.slug:
+            tag = cls.objects.filter(slug=cat_type.slug).first()
+        if tag is None:
+            tag, _ = cls.objects.update_or_create(slug=cat_type.slug, defaults=defaults)
+            return tag
+        tag.slug = cat_type.slug
+        tag.label = cat_type.label
+        tag.sort_order = cat_type.sort_order
+        tag.is_system = cat_type.is_system
+        tag.save(update_fields=["slug", "label", "sort_order", "is_system"])
+        return tag
 
 
 class CategoryRule(models.Model):

@@ -1,4 +1,4 @@
-"""Lead business category types (dropdown options) stored in the database."""
+"""Lead classification helpers. Live lookups use Tag; LeadCategoryType is legacy."""
 
 from __future__ import annotations
 
@@ -21,20 +21,18 @@ DEFAULT_CATEGORY_TYPES: list[tuple[str, str, int, bool]] = [
 
 
 def lead_category_choices() -> list[tuple[str, str]]:
-    from leads.models import LeadCategoryType
+    from leads.models import Tag
 
     return list(
-        LeadCategoryType.objects.order_by("sort_order", "label", "slug").values_list(
-            "slug", "label"
-        )
+        Tag.objects.order_by("sort_order", "label", "slug").values_list("slug", "label")
     )
 
 
 def category_label_for(slug: str) -> str:
-    from leads.models import LeadCategoryType
+    from leads.models import Tag
 
     key = (slug or UNKNOWN_SLUG).strip().lower()
-    row = LeadCategoryType.objects.filter(slug=key).values_list("label", flat=True).first()
+    row = Tag.objects.filter(slug=key).values_list("label", flat=True).first()
     if row:
         return row
     for s, label, *_ in DEFAULT_CATEGORY_TYPES:
@@ -51,12 +49,12 @@ def normalize_category_slug(raw: str, *, fallback_label: str = "") -> str:
 
 
 def is_valid_category_slug(slug: str) -> bool:
-    from leads.models import LeadCategoryType
+    from leads.models import Tag
 
     key = (slug or "").strip().lower()
     if not key:
         return False
-    return LeadCategoryType.objects.filter(slug=key).exists()
+    return Tag.objects.filter(slug=key).exists()
 
 
 def ensure_default_category_types() -> None:

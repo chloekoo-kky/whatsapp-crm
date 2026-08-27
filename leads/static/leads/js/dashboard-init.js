@@ -85,7 +85,11 @@
           refreshSelectionVisuals();
         });
       }
-      refreshBulkActionDock();
+      try {
+        refreshBulkActionDock();
+      } catch (err) {
+        console.error(err);
+      }
       window.exportXlsxBtn = document.getElementById('export-xlsx-btn');
       window.exportXlsxStatus = document.getElementById('export-xlsx-status');
       window.exportXlsxIcon = document.getElementById('export-xlsx-icon');
@@ -197,47 +201,97 @@
         restoreBackupInput.addEventListener('change', function () {
           var file = restoreBackupInput.files && restoreBackupInput.files[0];
           if (!file) return;
-          if (!window.confirm('Restore leads from "' + file.name + '"?\n\nExisting leads (same name & address) are skipped; only missing leads and their history are added.')) {
-            restoreBackupInput.value = '';
-            return;
-          }
-          var fd = new FormData();
-          fd.append('backup', file);
-          restoreBackupSetBusy(true);
-          fetch(dashboardJsConfig.importFullBackupUrl, {
-            method: 'POST',
-            credentials: 'same-origin',
-            headers: { 'X-CSRFToken': getCsrfToken() },
-            body: fd,
-          })
-            .then(function (res) {
-              return res.json().then(function (data) {
-                return { ok: res.ok, data: data };
-              });
-            })
-            .then(function (o) {
-              if (!o.ok || !o.data.ok) {
-                throw new Error((o.data && o.data.detail) || 'Restore failed.');
-              }
-              var d = o.data;
-              window.alert(
-                'Restore complete:\n' +
-                  '• ' + (d.leads_created || 0) + ' leads added (' + (d.leads_skipped || 0) + ' already existed)\n' +
-                  '• ' + (d.groups_created || 0) + ' groups, ' + (d.scripts_created || 0) + ' script templates\n' +
-                  '• ' + (d.chats_created || 0) + ' chat messages, ' + (d.logs_created || 0) + ' conversation logs\n' +
-                  '• ' + (d.config_created || 0) + ' WhatsApp config'
-              );
-              window.location.reload();
-            })
-            .catch(function (err) {
-              exportXlsxShowErr((err && err.message ? err.message : String(err)) || 'Restore failed.');
-            })
-            .finally(function () {
-              restoreBackupSetBusy(false);
+          window.appConfirm({
+            title: 'Restore from backup?',
+            message: 'Restore leads from "' + file.name + '"?\n\nExisting leads (same name & address) are skipped; only missing leads and their history are added.',
+            confirmLabel: 'Restore',
+          }).then(function (ok) {
+            if (!ok) {
               restoreBackupInput.value = '';
-            });
+              return;
+            }
+            var fd = new FormData();
+            fd.append('backup', file);
+            restoreBackupSetBusy(true);
+            fetch(dashboardJsConfig.importFullBackupUrl, {
+              method: 'POST',
+              credentials: 'same-origin',
+              headers: { 'X-CSRFToken': getCsrfToken() },
+              body: fd,
+            })
+              .then(function (res) {
+                return res.json().then(function (data) {
+                  return { ok: res.ok, data: data };
+                });
+              })
+              .then(function (o) {
+                if (!o.ok || !o.data.ok) {
+                  throw new Error((o.data && o.data.detail) || 'Restore failed.');
+                }
+                var d = o.data;
+                return window.appAlert({
+                  title: 'Restore complete',
+                  message:
+                    '• ' + (d.leads_created || 0) + ' leads added (' + (d.leads_skipped || 0) + ' already existed)\n' +
+                    '• ' + (d.groups_created || 0) + ' groups, ' + (d.scripts_created || 0) + ' script templates\n' +
+                    '• ' + (d.chats_created || 0) + ' chat messages, ' + (d.logs_created || 0) + ' conversation logs\n' +
+                    '• ' + (d.config_created || 0) + ' WhatsApp config',
+                }).then(function () {
+                  window.location.reload();
+                });
+              })
+              .catch(function (err) {
+                exportXlsxShowErr((err && err.message ? err.message : String(err)) || 'Restore failed.');
+              })
+              .finally(function () {
+                restoreBackupSetBusy(false);
+                restoreBackupInput.value = '';
+              });
+          });
         });
       }
+      (function bindLeadsMoreMenu() {
+        var openBtn = document.getElementById('leads-more-open');
+        var panel = document.getElementById('leads-more-panel');
+        if (!openBtn || !panel) return;
+        function closeMore() {
+          panel.classList.add('hidden');
+          panel.setAttribute('aria-hidden', 'true');
+          openBtn.setAttribute('aria-expanded', 'false');
+        }
+        function isMoreOpen() {
+          return !panel.classList.contains('hidden');
+        }
+        openBtn.addEventListener('click', function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          if (isMoreOpen()) {
+            closeMore();
+            return;
+          }
+          panel.classList.remove('hidden');
+          panel.setAttribute('aria-hidden', 'false');
+          openBtn.setAttribute('aria-expanded', 'true');
+        });
+        document.addEventListener(
+          'click',
+          function (e) {
+            if (!isMoreOpen()) return;
+            var t = e.target;
+            if (t.closest && t.closest('#leads-more-menu')) return;
+            closeMore();
+          },
+          true
+        );
+        document.addEventListener('keydown', function (e) {
+          if (e.key === 'Escape' && isMoreOpen()) closeMore();
+        });
+        panel.addEventListener('click', function (e) {
+          var item = e.target.closest && e.target.closest('button[role="menuitem"]');
+          if (!item || item.id === 'restore-backup-btn') return;
+          closeMore();
+        });
+      })();
       window.clinicsPanelEl = document.getElementById('clinics-panel');
       if (clinicsPanelEl) {
         clinicsPanelEl.addEventListener('change', function (e) {
@@ -265,13 +319,32 @@
           }
           var vipBtn = e.target.closest('#filter-very-important-only');
           if (vipBtn) {
+            setLeadTagFilterMenuOpen(false);
             toggleLeadFilterButton(vipBtn, 'amber');
             return;
           }
           var sentBtn = e.target.closest('#filter-sent-message-only');
           if (sentBtn) {
+            setLeadTagFilterMenuOpen(false);
             toggleLeadFilterButton(sentBtn, 'emerald');
             return;
+          }
+          var tagFilterToggle = e.target.closest('#lead-tag-filter-toggle');
+          if (tagFilterToggle) {
+            toggleLeadTagFilterMenu();
+            return;
+          }
+          var tagFilterClear = e.target.closest('#lead-tag-filter-clear');
+          if (tagFilterClear) {
+            saveLeadTagFilterSlugs([]);
+            setLeadTagFilterMenuOpen(false);
+            applyTableFilter({ resetPage: true });
+            refreshSelectAllState();
+            refreshSelectionVisuals();
+            return;
+          }
+          if (!e.target.closest('#lead-tag-filter')) {
+            setLeadTagFilterMenuOpen(false);
           }
           if (e.target.closest('#leads-page-prev')) {
             e.preventDefault();
@@ -295,6 +368,15 @@
             } catch (err) { /* ignore */ }
             currentLeadPage = 1;
             applyLeadPagination(false);
+          }
+          if (e.target && e.target.classList && e.target.classList.contains('lead-tag-filter-cb')) {
+            var slugs = Array.from(document.querySelectorAll('.lead-tag-filter-cb:checked')).map(function (cb) {
+              return cb.value;
+            });
+            saveLeadTagFilterSlugs(slugs);
+            applyTableFilter({ resetPage: true });
+            refreshSelectAllState();
+            refreshSelectionVisuals();
           }
         });
       }
@@ -568,13 +650,18 @@
             })
             .then(function (o) {
               if (!o.res.ok) {
-                window.alert(typeof o.data.detail === 'string' ? o.data.detail : 'Could not save tab order.');
-                window.location.reload();
+                window.appAlert({
+                  title: 'Could not save tab order',
+                  message: typeof o.data.detail === 'string' ? o.data.detail : 'Could not save tab order.',
+                }).then(function () {
+                  window.location.reload();
+                });
               }
             })
             .catch(function () {
-              window.alert('Could not save tab order.');
-              window.location.reload();
+              window.appAlert('Could not save tab order.').then(function () {
+                window.location.reload();
+              });
             });
         });
       })();
@@ -639,13 +726,18 @@
             })
             .then(function (o) {
               if (!o.res.ok) {
-                window.alert(typeof o.data.detail === 'string' ? o.data.detail : 'Could not save card order.');
-                switchLeadGroupTab(currentLeadGroupTabId, { force: true, skipHistory: true });
+                window.appAlert({
+                  title: 'Could not save card order',
+                  message: typeof o.data.detail === 'string' ? o.data.detail : 'Could not save card order.',
+                }).then(function () {
+                  switchLeadGroupTab(currentLeadGroupTabId, { force: true, skipHistory: true });
+                });
               }
             })
             .catch(function () {
-              window.alert('Could not save card order.');
-              switchLeadGroupTab(currentLeadGroupTabId, { force: true, skipHistory: true });
+              window.appAlert('Could not save card order.').then(function () {
+                switchLeadGroupTab(currentLeadGroupTabId, { force: true, skipHistory: true });
+              });
             });
         });
       })();
@@ -678,7 +770,7 @@
           });
           var data = await res.json().catch(function () { return {}; });
           if (!res.ok || !data.ok) {
-            window.alert(typeof data.detail === 'string' ? data.detail : 'Could not create group.');
+            await window.appAlert(typeof data.detail === 'string' ? data.detail : 'Could not create group.');
             return;
           }
           var wrap = document.getElementById('lead-group-tabs');
@@ -719,7 +811,7 @@
           switchLeadGroupTab(String(data.id));
         } catch (err) {
           console.error(err);
-          window.alert('Network error creating group.');
+          await window.appAlert('Network error creating group.');
         }
       });
       window.pendingMoveLeadIds = [];
@@ -731,6 +823,13 @@
         var ids = getUniqueSelectedLeadIds();
         if (ids.length < 1) return;
         toggleLeadGroupMoveMenu(this, ids);
+      });
+      document.getElementById('bulk-assign-owner-open')?.addEventListener('click', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        var ids = getUniqueSelectedLeadIds();
+        if (ids.length < 1) return;
+        toggleLeadOwnerAssignMenu(this, ids);
       });
       document.addEventListener(
         'click',
@@ -744,11 +843,25 @@
         },
         true
       );
+      document.addEventListener(
+        'click',
+        function (e) {
+          if (!leadOwnerAssignMenuOpen) return;
+          var t = e.target;
+          if (t.closest && t.closest('#lead-owner-assign-menu')) return;
+          if (t.closest && t.closest('#bulk-assign-owner-open')) return;
+          if (t.closest && t.closest('.assign-to-user-btn')) return;
+          closeLeadOwnerAssignMenu();
+        },
+        true
+      );
       document.addEventListener('keydown', function (e) {
         if (e.key === 'Escape' && leadGroupMoveMenuOpen) closeLeadGroupMoveMenu();
+        if (e.key === 'Escape' && leadOwnerAssignMenuOpen) closeLeadOwnerAssignMenu();
       });
       window.addEventListener('resize', function () {
         if (leadGroupMoveMenuOpen && leadGroupMoveMenuAnchor) positionLeadGroupMoveMenu(leadGroupMoveMenuAnchor);
+        if (leadOwnerAssignMenuOpen && leadOwnerAssignMenuAnchor) positionLeadOwnerAssignMenu(leadOwnerAssignMenuAnchor);
       });
       document.getElementById('lead-group-move-menu')?.addEventListener('click', async function (e) {
         var pick = e.target.closest('.lead-group-move-pick');
@@ -805,6 +918,61 @@
           });
         }
       });
+      document.getElementById('lead-owner-assign-menu')?.addEventListener('click', async function (e) {
+        var pick = e.target.closest('.lead-owner-assign-pick');
+        if (!pick || !this.contains(pick)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        var raw = pick.getAttribute('data-user-id');
+        var userId = raw ? parseInt(raw, 10) : NaN;
+        if (isNaN(userId)) return;
+        var ids = pendingOwnerAssignLeadIds.map(function (v) { return parseInt(v, 10); }).filter(function (n) { return !isNaN(n); });
+        if (!ids.length) {
+          closeLeadOwnerAssignMenu();
+          return;
+        }
+        var menu = document.getElementById('lead-owner-assign-menu');
+        var picks = menu ? menu.querySelectorAll('.lead-owner-assign-pick') : [];
+        picks.forEach(function (b) {
+          b.disabled = true;
+        });
+        clearLeadOwnerAssignMenuErr();
+        try {
+          var res = await fetch(dashboardJsConfig.bulkAssignOwnerUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-CSRFToken': getCsrfToken(),
+            },
+            credentials: 'same-origin',
+            body: JSON.stringify({ ids: ids, user_id: userId }),
+          });
+          var data = await res.json().catch(function () { return {}; });
+          if (!res.ok) {
+            var errEl = document.getElementById('lead-owner-assign-menu-error');
+            if (errEl) {
+              errEl.textContent =
+                typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail || res.statusText);
+              errEl.classList.remove('hidden');
+              positionLeadOwnerAssignMenu(leadOwnerAssignMenuAnchor);
+            }
+            return;
+          }
+          closeLeadOwnerAssignMenu();
+          await switchLeadGroupTab(currentLeadGroupTabId, { force: true, skipHistory: true });
+        } catch (err) {
+          var errEl2 = document.getElementById('lead-owner-assign-menu-error');
+          if (errEl2) {
+            errEl2.textContent = 'Network error: ' + err;
+            errEl2.classList.remove('hidden');
+            positionLeadOwnerAssignMenu(leadOwnerAssignMenuAnchor);
+          }
+        } finally {
+          picks.forEach(function (b) {
+            b.disabled = false;
+          });
+        }
+      });
       window.editDialog = document.getElementById('clinic-edit-dialog');
       window.editForm = document.getElementById('clinic-edit-form');
       window.editErr = document.getElementById('clinic-edit-error');
@@ -826,6 +994,14 @@
           e.stopPropagation();
           var rawM = moveGrpBtn.getAttribute('data-clinic-id');
           if (rawM) toggleLeadGroupMoveMenu(moveGrpBtn, [rawM]);
+          return;
+        }
+        var assignUserBtn = e.target.closest('.assign-to-user-btn');
+        if (assignUserBtn && this.contains(assignUserBtn)) {
+          e.preventDefault();
+          e.stopPropagation();
+          var rawA = assignUserBtn.getAttribute('data-clinic-id');
+          if (rawA) toggleLeadOwnerAssignMenu(assignUserBtn, [rawA]);
           return;
         }
         var conversationLogBtn = e.target.closest('.lead-conversation-log-btn');
@@ -920,44 +1096,50 @@
           var rawDel = deleteLeadBtn.getAttribute('data-clinic-id');
           var idDel = rawDel ? parseInt(rawDel, 10) : NaN;
           if (isNaN(idDel)) return;
-          if (!window.confirm('Delete this lead permanently? This cannot be undone.')) return;
-          deleteLeadBtn.disabled = true;
-          var urlDel = leadDeleteUrlTemplate.replace('__ID__', String(idDel));
-          fetch(urlDel, {
-            method: 'DELETE',
-            headers: {
-              'X-CSRFToken': getCsrfToken(),
-            },
-            credentials: 'same-origin',
-          })
-            .then(function (res) {
-              return res.json().then(function (data) {
-                return { res: res, data: data };
+          window.appConfirm({
+            title: 'Delete this lead?',
+            message: 'Delete this lead permanently? This cannot be undone.',
+            confirmLabel: 'Delete',
+            danger: true,
+          }).then(function (ok) {
+            if (!ok) return;
+            deleteLeadBtn.disabled = true;
+            var urlDel = leadDeleteUrlTemplate.replace('__ID__', String(idDel));
+            fetch(urlDel, {
+              method: 'DELETE',
+              headers: {
+                'X-CSRFToken': getCsrfToken(),
+              },
+              credentials: 'same-origin',
+            })
+              .then(function (res) {
+                return res.json().then(function (data) {
+                  return { res: res, data: data };
+                });
+              })
+              .then(function (o) {
+                if (!o.res.ok) {
+                  var msg = typeof o.data.detail === 'string' ? o.data.detail : 'Could not delete.';
+                  return window.appAlert(msg);
+                }
+                document.querySelectorAll('.clinic-row[data-clinic-id="' + idDel + '"]').forEach(function (row) {
+                  row.remove();
+                });
+                refreshSelectAllState();
+                refreshSelectionVisuals();
+                refreshSetCategoryButtonState();
+                refreshBulkAssignGroupButtonState();
+                refreshTableSearchClearVisibility();
+                applyTableFilter({ resetPage: false });
+              })
+              .catch(function () {
+                return window.appAlert('Network error while deleting.');
+              })
+              .finally(function () {
+                var still = document.querySelector('.lead-card-delete-btn[data-clinic-id="' + idDel + '"]');
+                if (still) still.disabled = false;
               });
-            })
-            .then(function (o) {
-              if (!o.res.ok) {
-                var msg = typeof o.data.detail === 'string' ? o.data.detail : 'Could not delete.';
-                window.alert(msg);
-                return;
-              }
-              document.querySelectorAll('.clinic-row[data-clinic-id="' + idDel + '"]').forEach(function (row) {
-                row.remove();
-              });
-              refreshSelectAllState();
-              refreshSelectionVisuals();
-              refreshSetCategoryButtonState();
-              refreshBulkAssignGroupButtonState();
-              refreshTableSearchClearVisibility();
-              applyTableFilter({ resetPage: false });
-            })
-            .catch(function () {
-              window.alert('Network error while deleting.');
-            })
-            .finally(function () {
-              var still = document.querySelector('.lead-card-delete-btn[data-clinic-id="' + idDel + '"]');
-              if (still) still.disabled = false;
-            });
+          });
           return;
         }
         var addrCopyBtn = e.target.closest('.address-copy-trigger');
@@ -1066,7 +1248,7 @@
           search_state: document.getElementById('clinic-edit-search-state').value.trim(),
           search_city: document.getElementById('clinic-edit-search-city').value.trim(),
           search_query: document.getElementById('clinic-edit-search-query').value.trim(),
-          category: document.getElementById('clinic-edit-type').value,
+          tags: collectTagPickerSlugs(document.getElementById('clinic-edit-tags')),
           is_chain: document.getElementById('clinic-edit-chain').checked,
           whatsapp_draft: document.getElementById('clinic-edit-whatsapp')
             ? document.getElementById('clinic-edit-whatsapp').value.trim()
@@ -1129,7 +1311,7 @@
           phone_numbers: collectManualPhonePayload(document.getElementById('lead-create-phones-list')),
           address: document.getElementById('lead-create-address').value.trim(),
           website: document.getElementById('lead-create-website').value.trim(),
-          category: document.getElementById('lead-create-type').value,
+          tags: collectTagPickerSlugs(document.getElementById('lead-create-tags')),
           group_id: gid === 'uncategorized' ? 'uncategorized' : gid,
         };
         if (!payload.name) {
@@ -1244,7 +1426,13 @@
         var rawLogId = btn.getAttribute('data-log-id') || '';
         var logId = rawLogId ? parseInt(rawLogId, 10) : NaN;
         if (!leadId || isNaN(logId)) return;
-        if (!window.confirm('Delete this conversation log?')) return;
+        var ok = await window.appConfirm({
+          title: 'Delete conversation log?',
+          message: 'Delete this conversation log?',
+          confirmLabel: 'Delete',
+          danger: true,
+        });
+        if (!ok) return;
         btn.disabled = true;
         await deleteLeadConversationLog(leadId, logId);
       });
@@ -1285,7 +1473,14 @@
           }
           return;
         }
-        const category = document.getElementById('bulk-manual-category').value;
+        const tags = collectTagPickerSlugs(document.getElementById('bulk-manual-tags'));
+        if (!tags.length) {
+          if (bulkManualErr) {
+            bulkManualErr.textContent = 'Select at least one tag.';
+            bulkManualErr.classList.remove('hidden');
+          }
+          return;
+        }
         if (bulkManualSubmit) bulkManualSubmit.disabled = true;
         if (bulkManualSpinner) bulkManualSpinner.classList.remove('hidden');
         if (bulkManualSubmitLabel) bulkManualSubmitLabel.textContent = 'Applying…';
@@ -1297,7 +1492,7 @@
               'X-CSRFToken': getCsrfToken(),
             },
             credentials: 'same-origin',
-            body: JSON.stringify({ ids: ids, category: category }),
+            body: JSON.stringify({ ids: ids, tags: tags }),
           });
           const data = await res.json().catch(function () { return {}; });
           if (!res.ok) {
@@ -1324,6 +1519,8 @@
         initClinicViewModeFromStorage();
         syncLeadSortSelect();
         applyLeadSort();
+        if (typeof window.syncLeadTagFilterUi === 'function') window.syncLeadTagFilterUi();
+        if (typeof window.applyTableFilter === 'function') window.applyTableFilter({ resetPage: false });
         if (typeof window.__ensureGridHtmxBound === 'function') window.__ensureGridHtmxBound();
         if (typeof window.__syncLeadChatIndicatorPolling === 'function') {
           window.__syncLeadChatIndicatorPolling();

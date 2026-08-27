@@ -5,6 +5,7 @@
   hx-target="#lead-grid-cell-{{ lead_id }}"
   hx-swap="delete swap:300ms"
   hx-confirm="Are you sure you want to permanently delete this lead from the database?"
+  data-confirm-danger
   hx-indicator="this"
   hx-target-error="#lead-junk-error-{{ lead_id }}"
   onclick="event.stopPropagation()"

@@ -6,6 +6,7 @@ from django.conf import settings
 from django.utils import timezone
 
 from leads.models import Lead, SearchQueryRecord
+from leads.permissions import visible_leads
 from leads.whatsapp_service import fetch_gateway_status, queue_counts
 
 
@@ -13,7 +14,7 @@ def _serper_configured() -> bool:
     return bool((getattr(settings, "SERPER_API_KEY", "") or "").strip())
 
 
-def get_api_sidebar_context() -> dict:
+def get_api_sidebar_context(request=None) -> dict:
     """Build status + usage snapshot for YCloud WhatsApp and Serper Maps."""
     connection = fetch_gateway_status()
     ycloud_connected = bool(connection.get("connected"))
@@ -21,7 +22,11 @@ def get_api_sidebar_context() -> dict:
     today = timezone.localdate()
 
     wa_today = (
-        Lead.objects.filter(whatsapp_sent_at__date=today)
+        visible_leads(request).filter(whatsapp_sent_at__date=today)
+        .exclude(phone_number="")
+        .count()
+        if request is not None
+        else Lead.objects.filter(whatsapp_sent_at__date=today)
         .exclude(phone_number="")
         .count()
     )

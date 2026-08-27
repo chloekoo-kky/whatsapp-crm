@@ -1,0 +1,10 @@
+{% if show_folder_badge and c.dashboard_folder_name %}
+<button type="button"
+  class="lead-folder-badge mb-1.5 inline-flex max-w-full items-center gap-1 rounded-md bg-violet-50 px-2 py-0.5 text-[11px] font-semibold leading-snug text-violet-800 ring-1 ring-violet-200/80 transition hover:bg-violet-100 hover:text-violet-950 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/40"
+  data-folder-tab-id="{{ c.dashboard_folder_tab_id }}"
+  data-clinic-id="{{ c.id }}"
+  title="Open in {{ c.dashboard_folder_name|escape }}">
+  <svg class="h-3 w-3 shrink-0 opacity-80" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z"/></svg>
+  <span class="truncate">{{ c.dashboard_folder_name }}</span>
+</button>
+{% endif %}

@@ -1,0 +1,6 @@
+<button type="button"
+  class="clinic-address-inner address-copy-trigger relative z-0 block w-full max-w-full cursor-copy select-none rounded-lg border-0 bg-transparent p-0 text-left text-sm leading-snug transition hover:bg-slate-100/90 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/35 disabled:cursor-not-allowed disabled:text-slate-400 disabled:hover:bg-transparent {{ extra_class }}"
+  data-clinic-name="{{ c.name|default_if_none:''|escape }}"
+  data-address-copy="{{ c.address|default_if_none:''|escape }}"
+  title="{% if c.name or c.address %}Click to copy name &amp; address{% else %}Nothing to copy{% endif %}"
+  {% if not c.name and not c.address %}disabled{% endif %}>{{ c.address|default:"—" }}</button>

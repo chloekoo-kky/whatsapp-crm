@@ -12,6 +12,7 @@
       dashboardJsConfig.getLeadChatIndicatorsUrl = dashboardJsConfig.getLeadChatIndicatorsUrl || "/leads/ajax/chat-indicators/";
       dashboardJsConfig.createLeadGroupUrl = dashboardJsConfig.createLeadGroupUrl || "/leads/api/lead-groups/";
       dashboardJsConfig.bulkAssignGroupUrl = dashboardJsConfig.bulkAssignGroupUrl || "/leads/api/assign-group/";
+      dashboardJsConfig.bulkAssignOwnerUrl = dashboardJsConfig.bulkAssignOwnerUrl || "/leads/api/assign-owner/";
       dashboardJsConfig.reorderLeadGroupsUrl = dashboardJsConfig.reorderLeadGroupsUrl || "/leads/api/lead-groups/reorder/";
       dashboardJsConfig.reorderLeadsUrl = dashboardJsConfig.reorderLeadsUrl || "/leads/api/leads/reorder/";
       dashboardJsConfig.exportXlsxUrl = dashboardJsConfig.exportXlsxUrl || "/leads/export/xlsx/";
@@ -29,6 +30,40 @@
       dashboardJsConfig.trashGroupTabId = dashboardJsConfig.trashGroupTabId || "";
       dashboardJsConfig.defaultLimit = dashboardJsConfig.defaultLimit || 100;
       window.activeSearchRecordId = dashboardJsConfig.activeSearchRecordId != null ? dashboardJsConfig.activeSearchRecordId : null;
+      /* Shared mutable state. Feature files read these as bare identifiers; that
+         throws ReferenceError until they exist on window. The old single IIFE
+         used `var`, which was hoisted to undefined before later assignment. */
+      window.currentLeadGroupTabId = dashboardJsConfig.initialLeadGroupTabIdFromPage || 'uncategorized';
+      window.currentLeadPage = 1;
+      window.folderTotalPipelineCount = 0;
+      window.selectionAnchorId = null;
+      window.leadSortMode = 'default';
+      window.globalSearchActive = false;
+      window.globalSearchQuery = '';
+      window.tabBeforeGlobalSearch = 'uncategorized';
+      window.globalSearchDebounceTimer = null;
+      window.globalSearchRequestId = 0;
+      window.pendingHighlightLeadId = null;
+      window.leadChatIndicatorPollTimer = null;
+      window.leadChatIndicatorSnapshot = '';
+      window.clinicSaveStatusTimer = null;
+      window.leadGroupTabBusy = false;
+      window.pendingMoveLeadIds = [];
+      window.pendingOwnerAssignLeadIds = [];
+      window.leadOwnerAssignMenuOpen = false;
+      window.leadOwnerAssignMenuAnchor = null;
+      window.chooseBatchDialog = null;
+      window.selectAll = null;
+      window.LEAD_FILTER_TAGS_KEY = 'clinic_crm_lead_filter_tags';
+      window.LEAD_FILTER_TAG_MAX = 24;
+      window.LEAD_FILTER_TAG_LEN_MAX = 80;
+      window.HUNT_KEYWORD_TAGS_KEY = 'clinic_crm_hunt_keyword_tags';
+      window.HUNT_KEYWORD_TAG_MAX = 24;
+      window.HUNT_KEYWORD_TAG_LEN_MAX = 120;
+      window.HUNT_EXCLUDE_TAGS_KEY = 'clinic_crm_hunt_exclude_keywords';
+      window.HUNT_EXCLUDE_TAG_MAX = 12;
+      window.HUNT_EXCLUDE_TAG_LEN_MAX = 80;
+      window.GLOBAL_SEARCH_MIN_LEN = 2;
       /* Hardcoded URLs: avoids view-context + Gunicorn stale imports; matches leads/urls and Ninja mount. */
       window.clinicApiDetailPrefix = "/api/clinics/";
       window.clinicUpdateUrlTemplate = "/leads/api/clinic/__ID__/";
@@ -41,6 +76,7 @@
       window.CHAT_INDICATOR_POLL_MS = 15000;
       window.VIEW_MODE_KEY = "clinic_crm_clinic_view";
       window.LEAD_SORT_KEY = "clinic_crm_lead_sort";
+      window.LEAD_TAG_FILTER_KEY = "clinic_crm_lead_tag_filter";
       window.shopTypesApiPath = "/leads/api/shop-types/";
       window.shopTypeDeleteUrlTemplate = "/leads/api/shop-types/__ID__/";
 })();

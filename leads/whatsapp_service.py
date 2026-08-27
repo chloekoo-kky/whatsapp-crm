@@ -458,7 +458,8 @@ def reset_lead_whatsapp_after_phone_change(
     lead.whatsapp_sent_at = None
     lead.whatsapp_last_error = ""
     lead.whatsapp_instance_id = ""
-    ChatMessage.objects.filter(lead=lead).delete()
+    # Keep inbound client replies so the Active Chat drawer still has the thread.
+    ChatMessage.objects.filter(lead=lead, is_outbound=True).delete()
     return True
 
 

@@ -1,0 +1,13 @@
+<div class="flex max-h-40 flex-wrap content-start gap-x-3 gap-y-1.5 overflow-y-auto">
+  {% for tag in dashboard_tags %}
+  <label class="inline-flex max-w-full cursor-pointer items-center gap-1.5 text-xs font-medium text-slate-700">
+    <input type="checkbox"
+      class="lead-tag-picker-cb h-3.5 w-3.5 shrink-0 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500/40"
+      value="{{ tag.slug }}"
+      {% if default_checked_slug and tag.slug == default_checked_slug %}checked{% endif %} />
+    <span class="min-w-0 truncate">{{ tag.label }}</span>
+  </label>
+  {% empty %}
+  <p class="text-xs text-slate-400">No tags yet</p>
+  {% endfor %}
+</div>

@@ -13,10 +13,13 @@
         var dashPanel = document.getElementById('workspace-panel-dashboard');
         var onLeadsPage = !!dashPanel && !dashPanel.hasAttribute('hidden');
 
+        var gid = typeof currentLeadGroupTabId !== 'undefined' && currentLeadGroupTabId != null
+          ? String(currentLeadGroupTabId)
+          : 'uncategorized';
         var onQueueTab = dashboardJsConfig.queueGroupTabId &&
-          String(currentLeadGroupTabId) === String(dashboardJsConfig.queueGroupTabId);
+          gid === String(dashboardJsConfig.queueGroupTabId);
         var onTrashTab = dashboardJsConfig.trashGroupTabId &&
-          String(currentLeadGroupTabId) === String(dashboardJsConfig.trashGroupTabId);
+          gid === String(dashboardJsConfig.trashGroupTabId);
 
         // Queue → "Choose batch" + "Remove from queue"; Trash → no bulk action; else → "Push to queue".
         var showQueueBtn = onLeadsPage && !onQueueTab && !onTrashTab;
@@ -51,7 +54,13 @@
       async function bulkDequeueSelectedFromQueue() {
         var ids = getUniqueSelectedLeadIds();
         if (!ids.length) return;
-        if (!window.confirm('Remove ' + ids.length + ' selected lead(s) from the WhatsApp queue?')) return;
+        var ok = await window.appConfirm({
+          title: 'Remove from queue?',
+          message: 'Remove ' + ids.length + ' selected lead(s) from the WhatsApp queue?',
+          confirmLabel: 'Remove',
+          danger: true,
+        });
+        if (!ok) return;
         var btn = document.getElementById('bulk-dequeue-btn');
         if (btn) btn.disabled = true;
         try {
@@ -80,7 +89,7 @@
           await switchLeadGroupTab(currentLeadGroupTabId, { force: true, skipHistory: true });
         } catch (err) {
           console.error(err);
-          window.alert((err && err.message) || 'Could not remove selected leads from the queue.');
+          await window.appAlert((err && err.message) || 'Could not remove selected leads from the queue.');
         } finally {
           if (btn) btn.disabled = false;
         }
@@ -115,7 +124,7 @@
           await switchLeadGroupTab(currentLeadGroupTabId, { force: true, skipHistory: true });
         } catch (err) {
           console.error(err);
-          window.alert((err && err.message) || 'Could not queue selected leads.');
+          await window.appAlert((err && err.message) || 'Could not queue selected leads.');
         } finally {
           if (btn) btn.disabled = false;
         }
@@ -271,10 +280,11 @@
       }
       window.refreshSetCategoryButtonState = refreshSetCategoryButtonState;
       function refreshBulkAssignGroupButtonState() {
-        const btn = document.getElementById('bulk-assign-group-open');
-        if (!btn) return;
         const n = getUniqueSelectedLeadIds().length;
-        btn.disabled = n < 1;
+        const btn = document.getElementById('bulk-assign-group-open');
+        if (btn) btn.disabled = n < 1;
+        const ownerBtn = document.getElementById('bulk-assign-owner-open');
+        if (ownerBtn) ownerBtn.disabled = n < 1;
       }
       window.refreshBulkAssignGroupButtonState = refreshBulkAssignGroupButtonState;
       function bindSelectableSurface(root) {

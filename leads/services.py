@@ -14,7 +14,7 @@ import requests
 from django.conf import settings
 
 from leads.display import normalize_manual_phone
-from leads.models import CategoryRule, Lead, SearchQueryRecord
+from leads.models import CategoryRule, Lead, SearchQueryRecord, Tag
 from leads.pipeline import (
     ensure_pipeline_system_groups,
     get_or_create_uncategorized_group,
@@ -83,19 +83,51 @@ def _country_hint_to_gl(country: str) -> str | None:
     return _COUNTRY_NAME_TO_GL.get(c)
 
 
-def classify_category_from_name(name: str) -> str:
-    """First matching admin rule (priority, id); case-insensitive substring on business name."""
-    from leads.category_types import UNKNOWN_SLUG
+def _matching_category_rules(name: str):
+    """CategoryRule rows whose match_phrase is a case-insensitive substring of name.
 
+    Ordered by (priority, id) — the same order classify_category_from_name uses.
+    """
     n = (name or "").strip().lower()
     if not n:
-        return UNKNOWN_SLUG
+        return []
+    hits = []
     qs = CategoryRule.objects.order_by("priority", "id").only("match_phrase", "category")
     for rule in qs:
         piece = (rule.match_phrase or "").strip().lower()
         if piece and piece in n:
-            return rule.category
-    return UNKNOWN_SLUG
+            hits.append(rule)
+    return hits
+
+
+def classify_category_from_name(name: str) -> str:
+    """First matching admin rule (priority, id); case-insensitive substring on business name."""
+    from leads.category_types import UNKNOWN_SLUG
+
+    hits = _matching_category_rules(name)
+    return hits[0].category if hits else UNKNOWN_SLUG
+
+
+def matching_category_slugs_from_name(name: str) -> list[str]:
+    """Every matching rule's category slug (priority, id order); duplicates dropped."""
+    slugs: list[str] = []
+    seen: set[str] = set()
+    for rule in _matching_category_rules(name):
+        slug = (rule.category or "").strip()
+        if slug and slug not in seen:
+            seen.add(slug)
+            slugs.append(slug)
+    return slugs
+
+
+def _assign_classified_tags(lead: Lead, name: str) -> None:
+    """Set Lead.tags from all matching CategoryRules; fall back to the primary category slug."""
+    from leads.category_types import UNKNOWN_SLUG
+
+    slugs = matching_category_slugs_from_name(name) or [lead.category or UNKNOWN_SLUG]
+    tags = list(Tag.objects.filter(slug__in=slugs))
+    if tags:
+        lead.tags.add(*tags)
 
 
 @dataclass
@@ -567,6 +599,7 @@ def fetch_leads_from_serper(
     search_query_record: SearchQueryRecord | None = None,
     require_website: bool = False,
     exclude_keywords: list[str] | None = None,
+    assigned_to=None,
 ) -> FetchLeadsResult:
     """
     Call Serper Maps API (paginated) and persist leads. Uniqueness is (name, address); phone
@@ -678,6 +711,8 @@ def fetch_leads_from_serper(
         }
         if record_pk:
             defaults["search_query_record_id"] = record_pk
+        if assigned_to is not None:
+            defaults["assigned_to"] = assigned_to
         try:
             lead, was_created = Lead.objects.get_or_create(
                 name=normalized["name"],
@@ -692,11 +727,12 @@ def fetch_leads_from_serper(
         if was_created:
             created += 1
             created_ids.append(lead.pk)
+            _assign_classified_tags(lead, normalized["name"])
             sync_chain_flags_for_name(normalized["name"])
         else:
             skipped_existing += 1
             update_fields: list[str] = []
-            # Existing row: never change group, category, AI/processed flags, or shop_keyword here.
+            # Existing row: never change group, category, tags, AI/processed flags, or shop_keyword here.
             # Only refresh hunt provenance + fill in contact gaps from the new Serper payload.
             lead.search_city = search_city_db
             lead.search_state = search_state_db

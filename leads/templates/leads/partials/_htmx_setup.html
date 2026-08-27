@@ -1,4 +1,7 @@
+{% load static %}
+{% include "leads/partials/_app_confirm_dialog.html" %}
 <script src="https://unpkg.com/htmx.org@2.0.4/dist/htmx.min.js" integrity="sha384-HGfztofotfshcF7+8n44JQL2oJmowVChPTg48S+jvZoztPfvwD79OC/LTtG6dMp+" crossorigin="anonymous"></script>
+<script src="{% static 'leads/js/app-dialog.js' %}"></script>
 
 <script>
 
@@ -224,6 +227,12 @@
   window.__sinkLeadCard = function (id) {
     if (id == null) return;
     window.__applyLeadDispatchedChrome(id);
+    var rows = typeof window.getFilteredClinicRowsInOrder === "function"
+      ? window.getFilteredClinicRowsInOrder()
+      : [];
+    var perPage = typeof window.readLeadsPerPage === "function" ? window.readLeadsPerPage() : 0;
+    // Moving to the end of a paginated folder hides the card on the current page.
+    if (perPage && rows.length > perPage) return;
     var cell = document.getElementById("lead-grid-cell-" + id);
     var grid = document.getElementById("clinics-grid-inner");
     if (cell && grid) {

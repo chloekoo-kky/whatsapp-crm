@@ -10,6 +10,7 @@ from leads.models import (
     LeadConversationLog,
     LeadGroup,
     SearchQueryRecord,
+    Tag,
     UserProfile,
     WhatsAppBatchSchedule,
     WhatsAppConfig,
@@ -70,6 +71,14 @@ class LeadCategoryTypeAdmin(admin.ModelAdmin):
     ordering = ("sort_order", "label")
 
 
+@admin.register(Tag)
+class TagAdmin(admin.ModelAdmin):
+    list_display = ("sort_order", "label", "slug", "is_system")
+    list_filter = ("is_system",)
+    search_fields = ("label", "slug")
+    ordering = ("sort_order", "label")
+
+
 @admin.register(CategoryRule)
 class CategoryRuleAdmin(admin.ModelAdmin):
     list_display = ("priority", "match_phrase", "category")
@@ -80,6 +89,8 @@ class CategoryRuleAdmin(admin.ModelAdmin):
 
 @admin.register(Lead)
 class LeadAdmin(admin.ModelAdmin):
+    # tags is schema-only for now; keep the Lead change form unchanged.
+    exclude = ("tags",)
     list_display = (
         "name",
         "assigned_to",

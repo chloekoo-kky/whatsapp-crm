@@ -1,0 +1,10 @@
+{% with state=c.search_state|default_if_none:""|default:"" area=c.search_city|default_if_none:""|default:"" kw=c.shop_keyword|default_if_none:""|default:"" q=c.search_query|default_if_none:""|default:"" %}
+{% if state or area or kw or q %}
+  {% if state %}{{ state }}{% endif %}
+  {% if area %}{% if state %} <span class="text-slate-400">/</span> {% endif %}{{ area }}{% endif %}
+  {% if kw %}{% if state or area %} <span class="text-slate-400">/</span> {% endif %}{{ kw }}{% endif %}
+  {% if q %}{% if state or area or kw %} <span class="text-slate-400">/</span> {% endif %}{{ q }}{% endif %}
+{% else %}
+  <span class="text-slate-400">—</span>
+{% endif %}
+{% endwith %}

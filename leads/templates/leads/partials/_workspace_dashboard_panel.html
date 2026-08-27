@@ -1,3 +1,4 @@
+{% load crm_auth %}
 <div id="workspace-panel-dashboard" class="dashboard-workspace"{% if not workspace_fragment %} data-loaded="1"{% endif %}{% if workspace_fragment %} hidden{% endif %}>
 {{ dashboard_js_config|json_script:"dashboard-js-config" }}
 
@@ -143,7 +144,7 @@
     </aside>
 
     <main id="content-panel" class="dashboard-content-col" aria-label="Leads">
-      <header id="content-toolbar" class="shrink-0 border-b border-slate-200/90 bg-white/95 px-4 py-3 shadow-[0_1px_2px_0_rgb(15_23_42/0.04)] backdrop-blur-sm supports-[backdrop-filter]:bg-white/85 sm:px-5">
+      <header id="content-toolbar" class="relative z-30 shrink-0 border-b border-slate-200/90 bg-white/95 px-4 py-3 shadow-[0_1px_2px_0_rgb(15_23_42/0.04)] backdrop-blur-sm supports-[backdrop-filter]:bg-white/85 sm:px-5">
         <div class="flex flex-col gap-2">
           <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
             <div class="flex min-h-[2.5rem] min-w-0 flex-1 items-stretch gap-2 sm:min-w-[12rem]">
@@ -161,14 +162,22 @@
             <div class="leads-toolbar-actions hidden min-w-0 shrink-0 flex-wrap items-center gap-2 lg:flex">
               <button type="button" id="bulk-manual-open" disabled
                 class="inline-flex min-h-[2.5rem] shrink-0 items-center rounded-xl border border-indigo-200 bg-indigo-50/90 px-3.5 py-2 text-xs font-semibold text-indigo-950 shadow-sm transition hover:border-indigo-300 hover:bg-indigo-100/90 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/35 disabled:pointer-events-none disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400 disabled:opacity-70"
-                title="Set category and mark selected leads as processed (no AI). Select at least one lead first."
-                aria-label="Set category for selected leads without AI">Set category</button>
+                title="Set tags and mark selected leads as processed (no AI). Select at least one lead first."
+                aria-label="Set tags for selected leads without AI">Set tags</button>
               <button type="button" id="bulk-assign-group-open" disabled
                 class="inline-flex min-h-[2.5rem] shrink-0 items-center rounded-xl border border-violet-200 bg-violet-50/90 px-3.5 py-2 text-xs font-semibold text-violet-950 shadow-sm transition hover:border-violet-300 hover:bg-violet-100/90 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/35 disabled:pointer-events-none disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400 disabled:opacity-70"
                 title="Choose a folder for selected leads (or Uncategorized)"
                 aria-label="Move selected leads to a group"
                 aria-expanded="false"
                 aria-haspopup="true">Move to group…</button>
+              {% if request.user|can_see_all_leads %}
+              <button type="button" id="bulk-assign-owner-open" disabled
+                class="inline-flex min-h-[2.5rem] shrink-0 items-center rounded-xl border border-sky-200 bg-sky-50/90 px-3.5 py-2 text-xs font-semibold text-sky-950 shadow-sm transition hover:border-sky-300 hover:bg-sky-100/90 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/35 disabled:pointer-events-none disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400 disabled:opacity-70"
+                title="Assign selected leads to a Sales user"
+                aria-label="Assign selected leads to a user"
+                aria-expanded="false"
+                aria-haspopup="true">Assign to…</button>
+              {% endif %}
               <button type="button" id="lead-manual-create-open"
                 class="inline-flex min-h-[2.5rem] min-w-[2.5rem] shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:border-indigo-300/80 hover:bg-indigo-50/90 hover:text-indigo-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/35"
                 title="Add a lead manually (saved in the current folder tab)"
@@ -176,28 +185,45 @@
                 <span class="sr-only">Add lead manually</span>
                 <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/></svg>
               </button>
-              <button type="button" id="export-xlsx-btn"
-                class="inline-flex min-h-[2.5rem] min-w-[2.5rem] shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:border-emerald-300/80 hover:bg-emerald-50/90 hover:text-emerald-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/35 disabled:pointer-events-none disabled:opacity-50"
-                title="Download Excel (.xlsx) for the current folder — checked rows only if any are selected (still limited to this folder)">
-                <span class="sr-only">Export to Excel</span>
-                <svg id="export-xlsx-icon" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5m0 0V9.375A3.375 3.375 0 0013.5 6.375h-1.5a3.375 3.375 0 00-3.375 3.375V10.5m14.625 0a3.375 3.375 0 00-3.375-3.375H3.375A3.375 3.375 0 001.875 10.5v8.25A3.375 3.375 0 004.875 22.125h14.25a3.375 3.375 0 003.375-3.375V14.25"/><path stroke-linecap="round" stroke-linejoin="round" d="M6 10.5h9m-9 4.5h6M7.5 18H18M10.5 3.75h3m-1.5-1.5v3"/></svg>
-                <svg id="export-xlsx-spinner" class="hidden h-5 w-5 animate-spin text-emerald-700" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-              </button>
-              <button type="button" id="backup-all-btn"
-                class="inline-flex min-h-[2.5rem] min-w-[2.5rem] shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:border-sky-300/80 hover:bg-sky-50/90 hover:text-sky-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/35 disabled:pointer-events-none disabled:opacity-50"
-                title="Backup leads to a re-importable .xlsx — checked rows only when any are selected, otherwise all folders (with chats, logs &amp; settings)">
-                <span class="sr-only">Backup leads</span>
-                <svg id="backup-all-icon" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12a9.75 9.75 0 0119.5 0v.75M12 2.25v9m0 0l-3-3m3 3l3-3M4.5 18.75h15"/></svg>
-                <svg id="backup-all-spinner" class="hidden h-5 w-5 animate-spin text-sky-700" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-              </button>
-              <button type="button" id="restore-backup-btn"
-                class="inline-flex min-h-[2.5rem] min-w-[2.5rem] shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:border-amber-300/80 hover:bg-amber-50/90 hover:text-amber-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/35 disabled:pointer-events-none disabled:opacity-50"
-                title="Restore from a backup .xlsx file — existing leads (same name &amp; address) are skipped">
-                <span class="sr-only">Restore from backup</span>
-                <svg id="restore-backup-icon" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 21.75a9.75 9.75 0 119.75-9.75M12 21.75V12m0 9.75l3-3m-3 3l-3-3M4.5 5.25h15"/></svg>
-                <svg id="restore-backup-spinner" class="hidden h-5 w-5 animate-spin text-amber-700" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-              </button>
-              <input type="file" id="restore-backup-input" accept=".xlsx" class="hidden" aria-hidden="true" tabindex="-1" />
+              {% if request.user.is_superuser %}
+              <div id="leads-more-menu" class="relative shrink-0">
+                <button type="button" id="leads-more-open"
+                  class="inline-flex min-h-[2.5rem] shrink-0 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/35"
+                  title="More lead actions"
+                  aria-label="More"
+                  aria-expanded="false"
+                  aria-haspopup="menu"
+                  aria-controls="leads-more-panel">
+                  <svg class="h-4 w-4 shrink-0 text-slate-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M6.75 12a.75.75 0 11-1.5 0 .75.75 0 011.5 0zm6 0a.75.75 0 11-1.5 0 .75.75 0 011.5 0zm6 0a.75.75 0 11-1.5 0 .75.75 0 011.5 0z"/></svg>
+                  More
+                  <svg class="h-3.5 w-3.5 shrink-0 text-slate-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5"/></svg>
+                </button>
+                <div id="leads-more-panel" class="absolute right-0 z-[200] mt-1 hidden w-max min-w-[12rem] max-w-[calc(100vw-1.5rem)] rounded-xl border border-slate-200/95 bg-white py-1 shadow-xl shadow-slate-900/15 ring-1 ring-slate-900/5" role="menu" aria-hidden="true" aria-label="More lead actions">
+                  <button type="button" id="export-xlsx-btn" role="menuitem"
+                    class="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm font-medium text-slate-800 transition hover:bg-emerald-50/90 focus:bg-emerald-50/90 focus:outline-none disabled:cursor-wait disabled:opacity-60"
+                    title="Download Excel (.xlsx) for the current folder — checked rows only if any are selected (still limited to this folder)">
+                    <svg id="export-xlsx-icon" class="h-5 w-5 shrink-0 text-emerald-600" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5m0 0V9.375A3.375 3.375 0 0013.5 6.375h-1.5a3.375 3.375 0 00-3.375 3.375V10.5m14.625 0a3.375 3.375 0 00-3.375-3.375H3.375A3.375 3.375 0 001.875 10.5v8.25A3.375 3.375 0 004.875 22.125h14.25a3.375 3.375 0 003.375-3.375V14.25"/><path stroke-linecap="round" stroke-linejoin="round" d="M6 10.5h9m-9 4.5h6M7.5 18H18M10.5 3.75h3m-1.5-1.5v3"/></svg>
+                    <svg id="export-xlsx-spinner" class="hidden h-5 w-5 shrink-0 animate-spin text-emerald-700" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                    <span class="whitespace-nowrap">Export to Excel</span>
+                  </button>
+                  <button type="button" id="backup-all-btn" role="menuitem"
+                    class="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm font-medium text-slate-800 transition hover:bg-sky-50/90 focus:bg-sky-50/90 focus:outline-none disabled:cursor-wait disabled:opacity-60"
+                    title="Backup leads to a re-importable .xlsx — checked rows only when any are selected, otherwise all folders (with chats, logs &amp; settings)">
+                    <svg id="backup-all-icon" class="h-5 w-5 shrink-0 text-sky-600" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12a9.75 9.75 0 0119.5 0v.75M12 2.25v9m0 0l-3-3m3 3l3-3M4.5 18.75h15"/></svg>
+                    <svg id="backup-all-spinner" class="hidden h-5 w-5 shrink-0 animate-spin text-sky-700" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                    <span class="whitespace-nowrap">Backup</span>
+                  </button>
+                  <button type="button" id="restore-backup-btn" role="menuitem"
+                    class="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm font-medium text-slate-800 transition hover:bg-amber-50/90 focus:bg-amber-50/90 focus:outline-none disabled:cursor-wait disabled:opacity-60"
+                    title="Restore from a backup .xlsx file — existing leads (same name &amp; address) are skipped">
+                    <svg id="restore-backup-icon" class="h-5 w-5 shrink-0 text-amber-600" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 21.75a9.75 9.75 0 119.75-9.75M12 21.75V12m0 9.75l3-3m-3 3l-3-3M4.5 5.25h15"/></svg>
+                    <svg id="restore-backup-spinner" class="hidden h-5 w-5 shrink-0 animate-spin text-amber-700" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                    <span class="whitespace-nowrap">Restore</span>
+                  </button>
+                </div>
+                <input type="file" id="restore-backup-input" accept=".xlsx" class="hidden" aria-hidden="true" tabindex="-1" />
+              </div>
+              {% endif %}
             </div>
           </div>
           <div id="global-search-banner" class="hidden rounded-xl border border-indigo-200/90 bg-indigo-50/70 px-3 py-2 text-xs text-indigo-950 sm:px-3.5" role="status" aria-live="polite">
@@ -273,6 +299,33 @@
               <svg class="h-4 w-4 shrink-0 text-emerald-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M8.625 12a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H8.25m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H12m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 01-2.555-.337A5.972 5.972 0 015.41 20.97a5.969 5.969 0 01-.474-.065 4.48 4.48 0 00.978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25z" /></svg>
               <span>Sent message</span>
             </button>
+            <div id="lead-tag-filter" class="relative shrink-0">
+              <button type="button" id="lead-tag-filter-toggle"
+                class="inline-flex min-h-[2.5rem] shrink-0 items-center gap-1 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-600 shadow-sm transition hover:border-indigo-400/70 hover:bg-indigo-50/60 hover:text-indigo-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/35"
+                aria-pressed="false" aria-expanded="false" aria-haspopup="true" aria-controls="lead-tag-filter-menu"
+                title="Filter leads by tags (match any selected)">
+                <svg class="h-4 w-4 shrink-0 text-indigo-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.75" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9.568 3H5.25A2.25 2.25 0 003 5.25v4.318c0 .597.237 1.17.659 1.591l9.581 9.581c.699.699 1.78.872 2.607.33a18.095 18.095 0 005.223-5.223c.542-.827.369-1.908-.33-2.607L11.16 3.66A2.25 2.25 0 009.568 3z"/><path stroke-linecap="round" stroke-linejoin="round" d="M6 6h.008v.008H6V6z"/></svg>
+                <span>Tags</span>
+                <span id="lead-tag-filter-count" class="hidden min-w-[1.15rem] rounded-full bg-indigo-600 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white" aria-hidden="true">0</span>
+              </button>
+              <div id="lead-tag-filter-menu" class="absolute left-0 top-full z-[200] mt-1 hidden w-56 rounded-xl border border-slate-200 bg-white p-2 shadow-lg ring-1 ring-slate-900/5" role="group" aria-label="Filter by tags" hidden>
+                <p class="px-1.5 pb-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Match any selected</p>
+                <div id="lead-tag-filter-options" class="max-h-64 space-y-0.5 overflow-y-auto">
+                  {% for tag in dashboard_tags %}
+                  <label class="flex cursor-pointer items-center gap-2 rounded-lg px-1.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-indigo-50/70">
+                    <input type="checkbox" class="lead-tag-filter-cb h-3.5 w-3.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500/40" value="{{ tag.slug }}" data-tag-label="{{ tag.label }}" />
+                    <span class="min-w-0 truncate">{{ tag.label }}</span>
+                  </label>
+                  {% empty %}
+                  <p class="px-1.5 py-2 text-xs text-slate-400">No tags yet</p>
+                  {% endfor %}
+                </div>
+                <button type="button" id="lead-tag-filter-clear"
+                  class="mt-1.5 w-full rounded-lg px-2 py-1.5 text-[11px] font-semibold text-slate-500 transition hover:bg-slate-50 hover:text-slate-800">
+                  Clear tags
+                </button>
+              </div>
+            </div>
             <label class="inline-flex min-h-[2.5rem] shrink-0 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-600 shadow-sm transition hover:border-slate-300 hover:bg-slate-50/80 focus-within:ring-2 focus-within:ring-indigo-500/35" title="Sort leads in the current folder">
               <span class="pl-0.5 text-slate-500">Sort</span>
               <select id="lead-sort-select" class="max-w-[9.5rem] cursor-pointer border-0 bg-transparent py-1 pr-6 text-xs font-semibold text-slate-700 focus:outline-none focus:ring-0" aria-label="Sort leads">
@@ -303,7 +356,7 @@
         <p id="export-xlsx-status" class="mt-2 hidden text-right text-[11px] text-red-600" role="status"></p>
       </header>
 
-      <div id="leads-scroll-container" class="leads-scroll-container relative min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-4 py-4 sm:px-5 sm:py-5">
+      <div id="leads-scroll-container" class="leads-scroll-container relative z-0 min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-4 py-4 sm:px-5 sm:py-5">
         <div id="leads-ptr-indicator" class="leads-ptr-indicator lg:hidden" aria-hidden="true">
           <svg class="leads-ptr-icon h-5 w-5 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99"/></svg>
           <span class="leads-ptr-text text-xs font-medium">Pull to refresh</span>
@@ -374,10 +427,10 @@
             <p class="text-[10px] leading-snug text-slate-400">Default +60. Up to 8 numbers; first is primary. Spaces/dashes stripped on save.</p>
           </div>
           <div class="space-y-1.5">
-            <label for="clinic-edit-type" class="text-xs font-semibold text-slate-700">Category</label>
-            <select id="clinic-edit-type" name="category" class="category-select w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15">
-              {% include "leads/partials/_category_option_list.html" %}
-            </select>
+            <p class="text-xs font-semibold text-slate-700">Tags</p>
+            <div id="clinic-edit-tags" class="rounded-xl border border-slate-200 bg-white px-2.5 py-2 shadow-sm">
+              {% include "leads/partials/_tag_picker.html" %}
+            </div>
           </div>
         </div>
         <div class="space-y-1.5">
@@ -424,7 +477,7 @@
   </dialog>
 
   <dialog id="lead-create-dialog" class="z-[100] w-[calc(100%-1.5rem)] max-w-lg overflow-hidden rounded-2xl border border-slate-200/90 bg-white p-0 shadow-2xl ring-1 ring-slate-900/5 backdrop:bg-slate-900/45">
-    <form id="lead-create-form" class="flex max-h-[min(90vh,520px)] flex-col">
+    <form id="lead-create-form" class="flex max-h-[min(90vh,640px)] flex-col">
       <div class="flex items-start justify-between gap-3 border-b border-slate-100 bg-slate-50/80 px-5 py-4">
         <div>
           <h2 class="text-base font-semibold tracking-tight text-slate-900">Add lead</h2>
@@ -450,10 +503,10 @@
             <p class="text-[10px] leading-snug text-slate-400">Default +60. Up to 8 numbers. Spaces/dashes stripped on save.</p>
           </div>
           <div class="space-y-1.5">
-            <label for="lead-create-type" class="text-xs font-semibold text-slate-700">Category</label>
-            <select id="lead-create-type" name="category" class="category-select w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15">
-              {% include "leads/partials/_category_option_list.html" %}
-            </select>
+            <p class="text-xs font-semibold text-slate-700">Tags</p>
+            <div id="lead-create-tags" class="rounded-xl border border-slate-200 bg-white px-2.5 py-2 shadow-sm">
+              {% include "leads/partials/_tag_picker.html" with default_checked_slug="unknown" %}
+            </div>
           </div>
         </div>
         <div class="space-y-1.5">
@@ -528,8 +581,8 @@
     <form id="bulk-manual-form" class="flex max-h-[min(90vh,480px)] flex-col">
       <div class="flex items-start justify-between gap-3 border-b border-slate-100 bg-slate-50/80 px-5 py-4">
         <div>
-          <h2 class="text-base font-semibold tracking-tight text-slate-900">Set category</h2>
-          <p class="mt-0.5 text-xs text-slate-500">Sets <strong class="font-medium text-slate-700">category</strong> and <strong class="font-medium text-slate-700">is processed</strong> for selected leads. No Serper calls.</p>
+          <h2 class="text-base font-semibold tracking-tight text-slate-900">Set tags</h2>
+          <p class="mt-0.5 text-xs text-slate-500">Sets <strong class="font-medium text-slate-700">tags</strong> and <strong class="font-medium text-slate-700">is processed</strong> for selected leads. No Serper calls.</p>
         </div>
         <button type="button" id="bulk-manual-close-x" class="rounded-lg p-1.5 text-slate-400 transition hover:bg-white hover:text-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/40" aria-label="Close">
           <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
@@ -539,10 +592,10 @@
         <p id="bulk-manual-error" class="hidden rounded-lg bg-red-50 px-3 py-2 text-xs font-medium text-red-800 ring-1 ring-red-200/80" role="alert"></p>
         <p id="bulk-manual-count" class="text-xs text-slate-600"></p>
         <div class="space-y-1.5">
-          <label for="bulk-manual-category" class="text-xs font-semibold text-slate-700">Category</label>
-          <select id="bulk-manual-category" class="category-select w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15">
-            {% include "leads/partials/_category_option_list.html" %}
-          </select>
+          <p class="text-xs font-semibold text-slate-700">Tags</p>
+          <div id="bulk-manual-tags" class="rounded-xl border border-slate-200 bg-white px-2.5 py-2 shadow-sm">
+            {% include "leads/partials/_tag_picker.html" %}
+          </div>
         </div>
       </div>
       <div class="flex flex-wrap items-center justify-end gap-2 border-t border-slate-100 bg-slate-50/50 px-5 py-3">
@@ -568,6 +621,24 @@
       </div>
     </div>
   </dialog>
+
+  {% if request.user|can_see_all_leads %}
+  <div id="lead-owner-assign-menu" class="fixed z-[200] hidden w-[min(calc(100vw-1.5rem),17.5rem)] rounded-xl border border-slate-200/95 bg-white py-1 shadow-xl shadow-slate-900/15 ring-1 ring-slate-900/5" role="menu" aria-hidden="true" aria-label="Assign leads to user">
+    <p class="border-b border-slate-100 px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-slate-400">Assign to…</p>
+    <p id="lead-owner-assign-menu-error" class="hidden border-b border-red-100 bg-red-50 px-3 py-2 text-xs font-medium text-red-800" role="alert"></p>
+    <p id="lead-owner-assign-menu-count" class="border-b border-slate-50 px-3 py-1.5 text-[11px] text-slate-500"></p>
+    <div id="lead-owner-assign-menu-users" class="max-h-[min(55vh,18rem)] overflow-y-auto py-0.5">
+      {% for u in sales_assignees %}
+      <button type="button" role="menuitem" class="lead-owner-assign-pick flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm font-medium text-slate-800 transition hover:bg-sky-50/90 focus:bg-sky-50/90 focus:outline-none disabled:cursor-wait disabled:opacity-60" data-user-id="{{ u.pk }}">
+        <svg class="h-5 w-5 shrink-0 text-sky-500" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z"/></svg>
+        <span class="min-w-0 flex-1 truncate">{% firstof u.get_full_name u.username %}</span>
+      </button>
+      {% empty %}
+      <p class="px-3 py-2.5 text-sm text-slate-500">No Sales users yet.</p>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
 
   <div id="lead-group-move-menu" class="fixed z-[200] hidden w-[min(calc(100vw-1.5rem),17.5rem)] rounded-xl border border-slate-200/95 bg-white py-1 shadow-xl shadow-slate-900/15 ring-1 ring-slate-900/5" role="menu" aria-hidden="true" aria-label="Move leads to folder">
     <p class="border-b border-slate-100 px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-slate-400">Move to…</p>

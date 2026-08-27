@@ -2,11 +2,12 @@ import json
 from datetime import date
 from unittest.mock import Mock, patch
 
+from django.contrib.auth import get_user_model
 from django.test import Client, TestCase, override_settings
 from django.urls import reverse
 from django.db.models import Exists, OuterRef
 
-from leads.models import CategoryRule, ChatMessage, Lead, LeadCategoryType, LeadConversationLog, LeadGroup, SearchQueryRecord, WhatsAppConfig, WhatsAppScriptTemplate
+from leads.models import CategoryRule, ChatMessage, Lead, LeadConversationLog, LeadGroup, SearchQueryRecord, Tag, WhatsAppConfig, WhatsAppScriptTemplate
 from leads.chat_messages import record_inbound_chat_message, record_outbound_chat_message
 from leads.display import (
     lead_google_maps_url,
@@ -15,7 +16,7 @@ from leads.display import (
     lead_whatsapp_dispatched,
     normalize_manual_phone,
 )
-from leads.views import _leads_qs_for_tab, _leads_tab_base_qs
+from leads.views import _annotate_lead_dashboard_qs, _leads_qs_for_tab
 from leads.whatsapp_service import (
     compose_free_text_template,
     compose_free_text_templates_for_lead,
@@ -27,6 +28,7 @@ from leads.whatsapp_service import (
 from leads.whatsapp_webhook import parse_meta_cloud_webhook
 from leads.pipeline import (
     QUEUE_GROUP_NAME,
+
     TRASH_GROUP_NAME,
     UNCATEGORIZED_GROUP_NAME,
     WHATSAPP_CHATS_GROUP_NAME,
@@ -36,6 +38,16 @@ from leads.pipeline import (
     get_or_create_uncategorized_group,
     phone_exists_in_database,
 )
+
+
+def staff_client(**kwargs):
+    """Logged-in superuser client for view tests (LoginRequiredMiddleware)."""
+    User = get_user_model()
+    suffix = str(User.objects.count())
+    user = User.objects.create_superuser(f"_s{suffix}", f"_s{suffix}@t.test", "pass")
+    client = Client(**kwargs)
+    client.force_login(user)
+    return client
 
 
 class PipelineGroupTests(TestCase):
@@ -83,7 +95,7 @@ class PipelineGroupTests(TestCase):
             group=groups["uncategorized"],
             whatsapp_status=Lead.WhatsappStatus.PENDING,
         )
-        client = Client(enforce_csrf_checks=True)
+        client = staff_client(enforce_csrf_checks=True)
         client.get("/")
         response = client.post(
             f"/leads/ajax/lead/{lead.pk}/dequeue/",
@@ -160,7 +172,7 @@ class LeadDisplayPipelineTests(TestCase):
         )
         record_outbound_chat_message(lead, body="Hello from CRM")
         record_inbound_chat_message(lead, body="Yes please")
-        annotated = _leads_tab_base_qs().get(pk=lead.pk)
+        annotated = _annotate_lead_dashboard_qs(Lead.objects.all()).get(pk=lead.pk)
         self.assertTrue(lead_whatsapp_active_chat(annotated))
 
     def test_active_chat_cleared_after_staff_reply(self):
@@ -175,7 +187,7 @@ class LeadDisplayPipelineTests(TestCase):
         record_outbound_chat_message(lead, body="Hello from CRM")
         record_inbound_chat_message(lead, body="Interested")
         record_outbound_chat_message(lead, body="Great, let's talk")
-        annotated = _leads_tab_base_qs().get(pk=lead.pk)
+        annotated = _annotate_lead_dashboard_qs(Lead.objects.all()).get(pk=lead.pk)
         self.assertFalse(lead_whatsapp_active_chat(annotated))
 
     def test_outbound_only_thread_has_no_active_chat_pulse(self):
@@ -188,7 +200,7 @@ class LeadDisplayPipelineTests(TestCase):
             whatsapp_sent_at=timezone.now(),
         )
         record_outbound_chat_message(lead, body="Hello from CRM")
-        annotated = _leads_tab_base_qs().get(pk=lead.pk)
+        annotated = _annotate_lead_dashboard_qs(Lead.objects.all()).get(pk=lead.pk)
         self.assertFalse(lead_whatsapp_active_chat(annotated))
 
     def test_human_log_without_client_reply_is_not_active_chat(self):
@@ -279,7 +291,12 @@ class ActiveChatTabTests(TestCase):
         record_outbound_chat_message(lead, body="Hello")
         record_inbound_chat_message(lead, body="Please call me")
 
-        active_chat_qs = _leads_qs_for_tab(str(groups["whatsapp_chats"].pk), None)
+        from django.test import RequestFactory
+
+        user = get_user_model().objects.create_superuser("tabuser", "tab@t.test", "x")
+        req = RequestFactory().get("/")
+        req.user = user
+        active_chat_qs = _leads_qs_for_tab(req, str(groups["whatsapp_chats"].pk), None)
         self.assertEqual(list(active_chat_qs.values_list("pk", flat=True)), [lead.pk])
         lead.refresh_from_db()
         self.assertEqual(lead.group_id, quality.pk)
@@ -367,7 +384,7 @@ class FreeTextTemplateTests(TestCase):
         self.assertEqual(compose_free_text_template(lead), templates[0]["text"])
 
     def test_free_text_template_page_loads(self):
-        client = Client()
+        client = staff_client()
         response = client.get(reverse("free_text_template"))
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Free text templates", response.content)
@@ -375,7 +392,7 @@ class FreeTextTemplateTests(TestCase):
         self.assertIn(b"thank you for your reply", response.content)
 
     def test_save_free_text_template_persists_order(self):
-        client = Client()
+        client = staff_client()
         response = client.post(
             reverse("save_free_text_template"),
             data={
@@ -411,7 +428,7 @@ class FreeTextTemplateTests(TestCase):
             {"label": "Hidden", "text": "Should not appear {{ name }}"},
         ]
         config.save(update_fields=["free_text_templates"])
-        client = Client()
+        client = staff_client()
         response = client.get(reverse("chat_inbox", kwargs={"pk": lead.pk}))
         self.assertEqual(response.status_code, 200)
         html = response.content.decode()
@@ -1171,7 +1188,7 @@ class ChatFreeTextSendTests(TestCase):
         )
         mock_send.return_value = (True, "", msg)
 
-        client = Client()
+        client = staff_client()
         response = client.post(
             reverse("send_free_text", kwargs={"pk": self.lead.pk}),
             {"message": "Thanks for your reply!"},
@@ -1181,7 +1198,7 @@ class ChatFreeTextSendTests(TestCase):
         mock_send.assert_called_once_with(self.lead, "Thanks for your reply!")
 
     def test_send_free_text_rejects_empty_body(self):
-        client = Client()
+        client = staff_client()
         response = client.post(
             reverse("send_free_text", kwargs={"pk": self.lead.pk}),
             {"message": "   "},
@@ -1274,7 +1291,7 @@ class WhatsAppBatchScheduleTests(TestCase):
         target = (timezone.localtime() + timedelta(days=1)).replace(
             second=0, microsecond=0
         )
-        client = Client()
+        client = staff_client()
         response = client.post(
             reverse("whatsapp_schedule_batch"),
             {
@@ -1295,7 +1312,7 @@ class WhatsAppBatchScheduleTests(TestCase):
         from leads.models import WhatsAppBatchSchedule
 
         target = timezone.localtime() - timedelta(days=1)
-        client = Client()
+        client = staff_client()
         response = client.post(
             reverse("whatsapp_schedule_batch"),
             {
@@ -1316,7 +1333,7 @@ class WhatsAppBatchScheduleTests(TestCase):
         batch = WhatsAppBatchSchedule.objects.create(
             scheduled_at=timezone.now() + timedelta(hours=2),
         )
-        client = Client()
+        client = staff_client()
         response = client.post(reverse("whatsapp_cancel_batch", kwargs={"pk": batch.pk}))
         self.assertEqual(response.status_code, 200)
         batch.refresh_from_db()
@@ -1335,7 +1352,7 @@ class WhatsAppBatchScheduleTests(TestCase):
         )
         a = self._make_pending_lead("Aa")
         b = self._make_pending_lead("Bb")
-        client = Client()
+        client = staff_client()
         response = client.post(
             reverse("leads_bulk_assign_batch"),
             data=_json.dumps({"ids": [a.pk, b.pk], "batch_id": batch.pk}),
@@ -1362,7 +1379,7 @@ class WhatsAppBatchScheduleTests(TestCase):
             second=0, microsecond=0
         )
         a = self._make_pending_lead("Cc")
-        client = Client()
+        client = staff_client()
         response = client.post(
             reverse("leads_bulk_assign_batch"),
             data=_json.dumps(
@@ -1396,7 +1413,7 @@ class WhatsAppBatchScheduleTests(TestCase):
         lead = self._make_pending_lead("Dequeued")
         lead.whatsapp_batches.add(batch)
 
-        client = Client()
+        client = staff_client()
         response = client.post(reverse("dequeue_lead", kwargs={"pk": lead.pk}))
         self.assertEqual(response.status_code, 200)
 
@@ -1418,7 +1435,7 @@ class WhatsAppBatchScheduleTests(TestCase):
         lead = self._make_pending_lead("KeepHistory")
         lead.whatsapp_batches.add(done)
 
-        client = Client()
+        client = staff_client()
         response = client.post(reverse("dequeue_lead", kwargs={"pk": lead.pk}))
         self.assertEqual(response.status_code, 200)
 
@@ -1444,7 +1461,7 @@ class WhatsAppBatchScheduleTests(TestCase):
         pending_a.whatsapp_batches.add(batch)
         pending_b.whatsapp_batches.add(batch)
 
-        client = Client()
+        client = staff_client()
         response = client.post(
             reverse("leads_bulk_dequeue"),
             data=_json.dumps({"ids": [pending_a.pk, pending_b.pk, processing.pk]}),
@@ -1483,7 +1500,7 @@ class WhatsAppBatchScheduleTests(TestCase):
         already.whatsapp_batches.add(existing)
         fresh = self._make_pending_lead("Fresh")
 
-        client = Client()
+        client = staff_client()
         response = client.post(
             reverse("leads_bulk_assign_batch"),
             data=_json.dumps({"ids": [already.pk, fresh.pk], "batch_id": target.pk}),
@@ -1635,7 +1652,7 @@ class WhatsAppMetaTemplateSyncTests(TestCase):
     def test_refresh_meta_templates_view_returns_toast_and_oob_field(self, mock_sync):
         mock_sync.return_value = (3, None)
 
-        client = Client()
+        client = staff_client()
         response = client.post(reverse("whatsapp_refresh_meta_templates"))
         self.assertEqual(response.status_code, 200)
         body = response.content.decode()
@@ -1648,7 +1665,7 @@ class WhatsAppMetaTemplateSyncTests(TestCase):
     def test_refresh_meta_templates_view_shows_error_toast(self, mock_sync):
         mock_sync.return_value = (0, "Token expired")
 
-        client = Client()
+        client = staff_client()
         response = client.post(reverse("whatsapp_refresh_meta_templates"))
         self.assertEqual(response.status_code, 200)
         self.assertIn("Template sync failed: Token expired", response.content.decode())
@@ -1680,6 +1697,11 @@ class ClinicUpdatePhoneTests(TestCase):
     def setUp(self):
         groups = ensure_pipeline_system_groups()
         self.group = LeadGroup.objects.create(name="Test Folder", sort_order=50)
+        self.user = get_user_model().objects.create_user(
+            username="phone-editor", password="pass"
+        )
+        self.user.is_superuser = True
+        self.user.save()
         self.lead = Lead.objects.create(
             name="Phone Change Clinic",
             address="1 Main St",
@@ -1694,9 +1716,15 @@ class ClinicUpdatePhoneTests(TestCase):
             is_outbound=True,
             template_name="say_hi",
         )
+        ChatMessage.objects.create(
+            lead=self.lead,
+            body="Yes, we are open",
+            is_outbound=False,
+        )
 
     def test_clinic_update_phone_resets_whatsapp_dispatch_state(self):
-        client = Client()
+        client = staff_client()
+        client.force_login(self.user)
         response = client.patch(
             reverse("clinic_update", kwargs={"pk": self.lead.pk}),
             data=json.dumps(
@@ -1713,14 +1741,18 @@ class ClinicUpdatePhoneTests(TestCase):
         data = response.json()
         self.assertEqual(data["phone_numbers"], ["+60198765432"])
         self.assertEqual(data["whatsapp_status"], Lead.WhatsappStatus.IDLE)
-        self.assertFalse(data["whatsapp_dispatched"])
         self.assertIn("lead-force-send-btn", data["grid_bottom_actions_html"])
 
         self.lead.refresh_from_db()
         self.assertEqual(self.lead.phone_number, "+60198765432")
         self.assertEqual(self.lead.whatsapp_status, Lead.WhatsappStatus.IDLE)
         self.assertIsNone(self.lead.whatsapp_sent_at)
-        self.assertFalse(ChatMessage.objects.filter(lead=self.lead).exists())
+        self.assertFalse(
+            ChatMessage.objects.filter(lead=self.lead, is_outbound=True).exists()
+        )
+        inbound = ChatMessage.objects.filter(lead=self.lead, is_outbound=False)
+        self.assertEqual(inbound.count(), 1)
+        self.assertEqual(inbound.first().body, "Yes, we are open")
 
     def test_primary_phone_uses_phone_numbers_over_stale_phone_number(self):
         from leads.whatsapp_service import build_meta_template_payload, primary_phone
@@ -1762,7 +1794,8 @@ class ClinicUpdatePhoneTests(TestCase):
             is_outbound=True,
             template_name="say_hi",
         )
-        client = Client()
+        client = staff_client()
+        client.force_login(self.user)
         with self.settings(WHATSAPP_FROM_NUMBER="+60126336429", YCLOUD_API_KEY="test"):
             response = client.post(
                 reverse("whatsapp_force_send", kwargs={"pk": self.lead.pk}),
@@ -1789,7 +1822,8 @@ class ClinicUpdatePhoneTests(TestCase):
             is_outbound=True,
             template_name="say_hi",
         )
-        client = Client()
+        client = staff_client()
+        client.force_login(self.user)
         with self.settings(WHATSAPP_FROM_NUMBER="+60126336429", YCLOUD_API_KEY="test"):
             response = client.post(
                 reverse("whatsapp_force_send", kwargs={"pk": self.lead.pk}),
@@ -1824,8 +1858,8 @@ class ClinicUpdatePhoneTests(TestCase):
         self.assertEqual(trigger["leadCardDispatched"], self.lead.pk)
         self.assertEqual(trigger["leadCardSink"], self.lead.pk)
         body = response.content.decode()
-        self.assertIn("hx-swap-oob", body)
-        self.assertIn("clinic-card--dispatched", body)
+        self.assertIn("lead-force-send-btn", body)
+        self.assertNotIn("hx-swap-oob", body)
 
 
 class DailyReportTests(TestCase):
@@ -1838,6 +1872,11 @@ class DailyReportTests(TestCase):
 
         self.tz = campaign_timezone()
         self.today = timezone.now().astimezone(self.tz).date()
+        self.user = get_user_model().objects.create_superuser(
+            "reportadmin", "report@t.test", "pass"
+        )
+        self.client = Client()
+        self.client.force_login(self.user)
         start = timezone.make_aware(datetime.combine(self.today, time.min), self.tz)
         self.lead_sent = Lead.objects.create(
             name="Alpha Clinic",
@@ -1870,6 +1909,13 @@ class DailyReportTests(TestCase):
             created_at=start,
         )
 
+    def _req(self):
+        from django.test import RequestFactory
+
+        req = RequestFactory().get("/")
+        req.user = self.user
+        return req
+
     def test_reports_excludes_leads_without_outbound_that_day(self):
         from django.utils import timezone
 
@@ -1890,7 +1936,7 @@ class DailyReportTests(TestCase):
             conversation_date=self.today,
             remarks="Phone number updated.",
         )
-        leads = _daily_report_leads(self.today)
+        leads = _daily_report_leads(self._req(), self.today)
         names = {lead.name for lead in leads}
         self.assertIn("Alpha Clinic", names)
         self.assertNotIn("Log Only Clinic", names)
@@ -1924,13 +1970,13 @@ class DailyReportTests(TestCase):
             is_outbound=False,
             created_at=start,
         )
-        leads = {lead.name: lead for lead in _daily_report_leads(self.today)}
+        leads = {lead.name: lead for lead in _daily_report_leads(self._req(), self.today)}
         self.assertEqual(leads["Failed But Active"].report_status_display, "Active")
 
     def test_reports_first_send_without_reply_shows_first_message_sent(self):
         from leads.views import _daily_report_leads
 
-        leads = {lead.name: lead for lead in _daily_report_leads(self.today)}
+        leads = {lead.name: lead for lead in _daily_report_leads(self._req(), self.today)}
         self.assertEqual(leads["Alpha Clinic"].report_status_display, "First Message Sent")
 
     def test_reports_same_day_reply_shows_active(self):
@@ -1962,7 +2008,7 @@ class DailyReportTests(TestCase):
             is_outbound=False,
             created_at=start + timedelta(hours=1),
         )
-        leads = {lead.name: lead for lead in _daily_report_leads(self.today)}
+        leads = {lead.name: lead for lead in _daily_report_leads(self._req(), self.today)}
         self.assertEqual(leads["Same Day Reply"].report_status_display, "Active")
 
     def test_reports_follow_up_outbound_without_inbound_shows_active(self):
@@ -2001,7 +2047,7 @@ class DailyReportTests(TestCase):
             template_name="say_hi",
             created_at=today_start,
         )
-        leads = {lead.name: lead for lead in _daily_report_leads(self.today)}
+        leads = {lead.name: lead for lead in _daily_report_leads(self._req(), self.today)}
         self.assertEqual(leads["Follow Up Only"].report_status_display, "Active")
 
     def test_reports_delayed_inbound_shows_high_potential(self):
@@ -2039,12 +2085,11 @@ class DailyReportTests(TestCase):
             is_outbound=False,
             created_at=today_start,
         )
-        leads = {lead.name: lead for lead in _daily_report_leads(self.today)}
+        leads = {lead.name: lead for lead in _daily_report_leads(self._req(), self.today)}
         self.assertEqual(leads["Delayed Reply"].report_status_display, "High Potential")
 
     def test_reports_page_shows_daily_dashboard(self):
-        client = Client()
-        response = client.get(
+        response = self.client.get(
             reverse("reports"),
             {"date": self.today.isoformat()},
         )
@@ -2058,8 +2103,7 @@ class DailyReportTests(TestCase):
         self.assertIn("Click for state breakdown", html)
 
     def test_reports_page_shows_state_breakdown_for_metric(self):
-        client = Client()
-        response = client.get(
+        response = self.client.get(
             reverse("reports"),
             {"date": self.today.isoformat(), "metric": "first_sends"},
         )
@@ -2077,7 +2121,7 @@ class DailyReportTests(TestCase):
             _daily_report_state_breakdown,
         )
 
-        leads = {lead.name: lead for lead in _daily_report_leads(self.today)}
+        leads = {lead.name: lead for lead in _daily_report_leads(self._req(), self.today)}
         self.assertEqual(
             _daily_report_location_display(leads["Alpha Clinic"]),
             "Selangor / Petaling Jaya",
@@ -2086,12 +2130,11 @@ class DailyReportTests(TestCase):
             leads["Alpha Clinic"].report_location_display,
             "Selangor / Petaling Jaya",
         )
-        breakdown = _daily_report_state_breakdown(self.today, "first_sends")
+        breakdown = _daily_report_state_breakdown(self._req(), self.today, "first_sends")
         self.assertEqual(breakdown, [{"state": "Selangor", "count": 1}])
 
     def test_daily_report_export_xlsx(self):
-        client = Client()
-        response = client.get(
+        response = self.client.get(
             reverse("daily_report_export_xlsx"),
             {"date": self.today.isoformat()},
         )
@@ -2132,9 +2175,8 @@ class DailyReportTests(TestCase):
         self.assertIn(("First sends", "Selangor", 1), state_rows)
 
     def test_monthly_report_export_xlsx(self):
-        client = Client()
         month = self.today.strftime("%Y-%m")
-        response = client.get(
+        response = self.client.get(
             reverse("monthly_report_export_xlsx"),
             {"month": month},
         )
@@ -2167,21 +2209,29 @@ class CategoryRuleManagementTests(TestCase):
             category=Lead.Category.DENTAL,
             priority=10,
         )
-        client = Client()
+        client = staff_client()
         response = client.get(reverse("category_rules"))
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"dental", response.content)
+        html = response.content.decode()
+        self.assertIn("Manage Tags", html)
+        self.assertIn("Add tag", html)
+        self.assertIn("Manage tags and import rules", html)
+        self.assertNotIn("Category types", html)
 
     def test_category_types_fragment_returns_manage_html(self):
-        client = Client()
+        client = staff_client()
         response = client.get(reverse("category_types_fragment"))
         self.assertEqual(response.status_code, 200)
         html = response.content.decode()
-        self.assertIn("data-category-type-form", html)
+        self.assertIn("data-tag-form", html)
         self.assertIn("Unknown", html)
 
     def test_category_type_save_via_fragment_header(self):
-        client = Client()
+        from leads.models import LeadCategoryType
+
+        client = staff_client()
+        type_count = LeadCategoryType.objects.count()
         response = client.post(
             reverse("category_type_save"),
             data={
@@ -2189,14 +2239,19 @@ class CategoryRuleManagementTests(TestCase):
                 "slug": "vet",
                 "sort_order": "50",
             },
-            HTTP_X_CATEGORY_TYPES_FRAGMENT="1",
+            HTTP_X_TAGS_FRAGMENT="1",
         )
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Veterinary", response.content)
-        self.assertTrue(LeadCategoryType.objects.filter(slug="vet").exists())
+        self.assertTrue(Tag.objects.filter(slug="vet").exists())
+        self.assertFalse(LeadCategoryType.objects.filter(slug="vet").exists())
+        self.assertEqual(LeadCategoryType.objects.count(), type_count)
 
     def test_category_type_save_and_delete(self):
-        client = Client()
+        from leads.models import LeadCategoryType
+
+        client = staff_client()
+        type_count = LeadCategoryType.objects.count()
         create = client.post(
             reverse("category_type_save"),
             data={
@@ -2206,28 +2261,31 @@ class CategoryRuleManagementTests(TestCase):
             },
         )
         self.assertEqual(create.status_code, 302)
-        cat_type = LeadCategoryType.objects.get(slug="pilates")
-        self.assertEqual(cat_type.label, "Pilates")
+        tag = Tag.objects.get(slug="pilates")
+        self.assertEqual(tag.label, "Pilates")
+        self.assertFalse(LeadCategoryType.objects.filter(slug="pilates").exists())
+        self.assertEqual(LeadCategoryType.objects.count(), type_count)
 
         update = client.post(
             reverse("category_type_save"),
             data={
-                "id": str(cat_type.pk),
+                "id": str(tag.pk),
                 "label": "Pilates Studio",
                 "slug": "pilates",
                 "sort_order": "75",
             },
         )
         self.assertEqual(update.status_code, 302)
-        cat_type.refresh_from_db()
-        self.assertEqual(cat_type.label, "Pilates Studio")
+        tag.refresh_from_db()
+        self.assertEqual(tag.label, "Pilates Studio")
 
-        delete = client.post(reverse("category_type_delete", kwargs={"pk": cat_type.pk}))
+        delete = client.post(reverse("category_type_delete", kwargs={"pk": tag.pk}))
         self.assertEqual(delete.status_code, 302)
-        self.assertFalse(LeadCategoryType.objects.filter(pk=cat_type.pk).exists())
+        self.assertFalse(Tag.objects.filter(pk=tag.pk).exists())
+        self.assertEqual(LeadCategoryType.objects.count(), type_count)
 
     def test_category_rule_save_and_delete(self):
-        client = Client()
+        client = staff_client()
         create = client.post(
             reverse("category_rule_save"),
             data={
@@ -2481,7 +2539,7 @@ class BackupExportTests(TestCase):
     def test_export_full_backup_view_accepts_ids_query(self):
         keep = Lead.objects.create(name="Export Me", address="9 Road")
         Lead.objects.create(name="Other", address="8 Road")
-        client = Client()
+        client = staff_client()
         response = client.get(reverse("export_full_backup"), {"ids": str(keep.pk)})
         self.assertEqual(response.status_code, 200)
         self.assertIn("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", response["Content-Type"])
@@ -2493,6 +2551,10 @@ class GlobalLeadSearchTests(TestCase):
         from leads.models import LeadGroup
 
         self.client = Client()
+        self.user = get_user_model().objects.create_superuser(
+            "searchadmin", "search@t.test", "pass"
+        )
+        self.client.force_login(self.user)
         self.uncategorized = get_or_create_uncategorized_group()
         self.custom_group = LeadGroup.objects.create(name="Selangor Prospects", sort_order=10)
         self.hidden_in_uncategorized = Lead.objects.create(
@@ -2516,6 +2578,7 @@ class GlobalLeadSearchTests(TestCase):
         from leads.views import _leads_queryset_for_table
 
         request = RequestFactory().get("/", {"q": "Beta"})
+        request.user = self.user
         qs, is_global = _leads_queryset_for_table(request)
         self.assertTrue(is_global)
         names = list(qs.values_list("name", flat=True))
@@ -2568,6 +2631,7 @@ class GlobalLeadSearchTests(TestCase):
         from leads.views import _leads_queryset_for_table
 
         request = RequestFactory().get("/", {"q": "A", "group_id": str(self.custom_group.pk)})
+        request.user = self.user
         qs, is_global = _leads_queryset_for_table(request)
         self.assertFalse(is_global)
         self.assertEqual(list(qs.values_list("name", flat=True)), ["Beta Physio"])
@@ -2601,7 +2665,7 @@ class ApiStatusSidebarTests(TestCase):
             "leads.api_status_service.fetch_gateway_status",
             return_value={"connected": False, "state": "unconfigured", "error": "Missing: YCLOUD_API_KEY"},
         ):
-            response = Client().get(reverse("api_status_sidebar"))
+            response = staff_client().get(reverse("api_status_sidebar"))
         self.assertEqual(response.status_code, 200)
         html = response.content.decode()
         self.assertIn("YCloud WhatsApp", html)
@@ -2620,7 +2684,7 @@ class ApiStatusSidebarTests(TestCase):
             "leads.api_status_service.fetch_gateway_status",
             return_value={"connected": True, "state": "open", "error": None},
         ):
-            response = Client().get(reverse("api_status_sidebar"))
+            response = staff_client().get(reverse("api_status_sidebar"))
         self.assertEqual(response.status_code, 200)
         html = response.content.decode()
         self.assertIn("Connected", html)

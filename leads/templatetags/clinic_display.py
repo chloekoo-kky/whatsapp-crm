@@ -38,6 +38,13 @@ def location_suffix(clinic):
 
 
 @register.filter
+def extra_lead_tags(lead):
+    """Tags other than the primary category slug (already shown as the category badge)."""
+    category = (getattr(lead, "category", None) or "").strip()
+    return [tag for tag in lead.tags.all() if tag.slug != category]
+
+
+@register.filter
 def category_badge(cat):
     return mark_safe(category_badge_html(cat or ""))
 

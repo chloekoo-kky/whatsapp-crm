@@ -162,7 +162,7 @@
           }
         } catch (err) {
           console.error(err);
-          window.alert('Could not load leads for this group.');
+          await window.appAlert('Could not load leads for this group.');
         } finally {
           leadGroupTabBusy = false;
         }
@@ -215,6 +215,7 @@
       function openLeadGroupMoveMenu(anchor, ids) {
         var list = (ids || []).map(function (x) { return String(x); }).filter(function (x) { return x; });
         if (!list.length || !anchor) return;
+        if (typeof closeLeadOwnerAssignMenu === 'function') closeLeadOwnerAssignMenu();
         pendingMoveLeadIds = list;
         clearLeadGroupMoveMenuErr();
         var cnt = document.getElementById('lead-group-move-menu-count');
@@ -237,4 +238,67 @@
         openLeadGroupMoveMenu(anchor, ids);
       }
       window.toggleLeadGroupMoveMenu = toggleLeadGroupMoveMenu;
+      function clearLeadOwnerAssignMenuErr() {
+        var el = document.getElementById('lead-owner-assign-menu-error');
+        if (!el) return;
+        el.classList.add('hidden');
+        el.textContent = '';
+      }
+      window.clearLeadOwnerAssignMenuErr = clearLeadOwnerAssignMenuErr;
+      function closeLeadOwnerAssignMenu() {
+        var m = document.getElementById('lead-owner-assign-menu');
+        if (m) {
+          m.classList.add('hidden');
+          m.setAttribute('aria-hidden', 'true');
+        }
+        var bulk = document.getElementById('bulk-assign-owner-open');
+        if (bulk) bulk.setAttribute('aria-expanded', 'false');
+        leadOwnerAssignMenuOpen = false;
+        leadOwnerAssignMenuAnchor = null;
+        pendingOwnerAssignLeadIds = [];
+        clearLeadOwnerAssignMenuErr();
+      }
+      window.closeLeadOwnerAssignMenu = closeLeadOwnerAssignMenu;
+      function positionLeadOwnerAssignMenu(anchor) {
+        var menu = document.getElementById('lead-owner-assign-menu');
+        if (!menu || !anchor) return;
+        menu.classList.remove('hidden');
+        menu.setAttribute('aria-hidden', 'false');
+        var mw = menu.offsetWidth;
+        var mh = menu.offsetHeight;
+        var r = anchor.getBoundingClientRect();
+        var left = r.left + r.width / 2 - mw / 2;
+        var top = r.bottom + 6;
+        left = Math.max(8, Math.min(left, window.innerWidth - mw - 8));
+        if (top + mh > window.innerHeight - 8) top = Math.max(8, r.top - mh - 6);
+        menu.style.left = left + 'px';
+        menu.style.top = top + 'px';
+      }
+      window.positionLeadOwnerAssignMenu = positionLeadOwnerAssignMenu;
+      function openLeadOwnerAssignMenu(anchor, ids) {
+        var list = (ids || []).map(function (x) { return String(x); }).filter(function (x) { return x; });
+        if (!list.length || !anchor) return;
+        if (typeof closeLeadGroupMoveMenu === 'function') closeLeadGroupMoveMenu();
+        pendingOwnerAssignLeadIds = list;
+        clearLeadOwnerAssignMenuErr();
+        var cnt = document.getElementById('lead-owner-assign-menu-count');
+        if (cnt) {
+          var n = list.length;
+          cnt.textContent = n === 1 ? '1 lead selected' : n + ' leads selected';
+        }
+        leadOwnerAssignMenuOpen = true;
+        leadOwnerAssignMenuAnchor = anchor;
+        if (anchor.id === 'bulk-assign-owner-open') anchor.setAttribute('aria-expanded', 'true');
+        positionLeadOwnerAssignMenu(anchor);
+      }
+      window.openLeadOwnerAssignMenu = openLeadOwnerAssignMenu;
+      function toggleLeadOwnerAssignMenu(anchor, ids) {
+        if (leadOwnerAssignMenuOpen && leadOwnerAssignMenuAnchor === anchor) {
+          closeLeadOwnerAssignMenu();
+          return;
+        }
+        if (leadOwnerAssignMenuOpen) closeLeadOwnerAssignMenu();
+        openLeadOwnerAssignMenu(anchor, ids);
+      }
+      window.toggleLeadOwnerAssignMenu = toggleLeadOwnerAssignMenu;
 })();

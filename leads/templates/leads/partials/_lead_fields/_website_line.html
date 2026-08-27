@@ -1,0 +1,5 @@
+<p class="clinic-website-line {{ extra_class }} text-xs leading-snug{% if not c.website %} hidden{% endif %}">
+  {% if c.website %}
+    <a href="{{ c.website }}" class="break-all text-indigo-600 underline decoration-slate-300 decoration-1 underline-offset-2 transition hover:text-indigo-500" target="_blank" rel="noopener" title="{{ c.website|escape }}">{{ c.website }}</a>
+  {% endif %}
+</p>

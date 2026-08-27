@@ -1,0 +1,7 @@
+<p class="clinic-branches-line {{ extra_class }}{% if c.dashboard_same_brand_count < 2 and not c.location_count_estimate %} hidden{% endif %}">
+  {% if c.dashboard_same_brand_count >= 2 %}
+    {{ c.dashboard_same_brand_count }} locations in CRM
+  {% elif c.location_count_estimate %}
+    ~{{ c.location_count_estimate }} branches <span class="text-slate-400">(estimate)</span>
+  {% endif %}
+</p>

@@ -4,17 +4,16 @@ from typing import List, Optional
 
 
 
-from django.db.models import Q
-
-from django.shortcuts import get_object_or_404
-
+from django.db.models import Prefetch, Q
 from ninja import Field, ModelSchema, Query, Router, Schema
 from ninja.errors import HttpError
 from ninja.security import django_auth
 
 
 
-from leads.models import Lead, SearchQueryRecord
+from leads.models import Lead, SearchQueryRecord, Tag
+
+from leads.permissions import get_visible_lead_or_404, hunt_owner_for_request, visible_leads
 
 from leads.services import fetch_leads_from_serper
 
@@ -27,6 +26,8 @@ router = Router(tags=["leads"], auth=django_auth)
 
 
 class LeadOut(ModelSchema):
+
+    tags: List[str] = []
 
     class Meta:
 
@@ -78,6 +79,10 @@ class LeadOut(ModelSchema):
 
         ]
 
+    @staticmethod
+    def resolve_tags(obj: Lead) -> list[str]:
+        return list(obj.tags.values_list("slug", flat=True))
+
 
 
 
@@ -111,6 +116,12 @@ class LeadListOut(Schema):
     search_query: Optional[str] = None
 
     created_at: datetime
+
+    tags: List[str] = []
+
+    @staticmethod
+    def resolve_tags(obj: Lead) -> list[str]:
+        return list(obj.tags.values_list("slug", flat=True))
 
 
 
@@ -236,7 +247,7 @@ class HuntOut(Schema):
 
 def list_leads(request, filters: Query[LeadFilters]):
 
-    qs = Lead.objects.all()
+    qs = visible_leads(request)
 
     if filters.shop_keyword:
 
@@ -262,7 +273,9 @@ def list_leads(request, filters: Query[LeadFilters]):
 
             qs = qs.filter(Q(name__icontains=qq) | Q(address__icontains=qq))
 
-    return qs[:500]
+    return qs.prefetch_related(
+        Prefetch("tags", queryset=Tag.objects.order_by("sort_order", "label", "slug"))
+    )[:500]
 
 
 
@@ -338,6 +351,8 @@ def hunt_leads(request, body: HuntIn):
 
             exclude_keywords=body.exclude_keywords,
 
+            assigned_to=hunt_owner_for_request(request),
+
         )
 
     except ValueError as exc:
@@ -394,7 +409,7 @@ def hunt_leads(request, body: HuntIn):
 
 def get_lead(request, lead_id: int):
 
-    return get_object_or_404(Lead, pk=lead_id)
+    return get_visible_lead_or_404(request, lead_id)
 
 
 
@@ -404,5 +419,5 @@ def get_lead(request, lead_id: int):
 
 def get_lead_trailing_slash(request, lead_id: int):
 
-    return get_object_or_404(Lead, pk=lead_id)
+    return get_visible_lead_or_404(request, lead_id)
 

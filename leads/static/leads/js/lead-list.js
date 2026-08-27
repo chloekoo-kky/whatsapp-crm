@@ -20,7 +20,7 @@
           });
           var html = await res.text();
           if (!res.ok) {
-            window.alert('Could not remove this lead from the WhatsApp queue.');
+            await window.appAlert('Could not remove this lead from the WhatsApp queue.');
             return;
           }
           dispatchHtmxTriggerHeader(res.headers.get('HX-Trigger'));
@@ -49,7 +49,7 @@
           if (typeof window.applyTableFilter === 'function') window.applyTableFilter({ resetPage: false });
         } catch (err) {
           console.error(err);
-          window.alert('Network error while removing lead from queue.');
+          await window.appAlert('Network error while removing lead from queue.');
         } finally {
           if (document.body.contains(btn)) {
             btn.classList.remove('is-busy');
@@ -86,7 +86,7 @@
         btn.classList.toggle('hover:text-amber-500', !on);
       }
       window.setLeadVipStarVisual = setLeadVipStarVisual;
-      function syncRowDataSearch(row, category, isChain, isVeryImportant) {
+      function syncRowDataSearch(row, category, isChain, isVeryImportant, tags) {
         const base = (row.getAttribute('data-search-base') || '').trim();
         var t = (row.getAttribute('data-category') || '').trim();
         if (category !== undefined && category !== null) {
@@ -103,7 +103,16 @@
           vip = !!isVeryImportant;
           row.setAttribute('data-very-important', vip ? '1' : '0');
         }
-        const bits = [base, t];
+        var tagBits = [];
+        if (tags !== undefined && tags !== null) {
+          if (Array.isArray(tags)) {
+            tagBits = tags.map(function (s) { return String(s).trim(); }).filter(Boolean);
+            row.setAttribute('data-tags', tagBits.join(' '));
+          }
+        } else {
+          tagBits = String(row.getAttribute('data-tags') || '').split(/\s+/).filter(Boolean);
+        }
+        const bits = [base, t].concat(tagBits);
         if (chain) bits.push('chain');
         if (vip) bits.push('important');
         row.setAttribute('data-search', bits.join(' ').replace(/\s+/g, ' ').trim());
@@ -211,7 +220,8 @@
             row,
             d.category || d.clinic_type,
             d.is_chain,
-            d.is_very_important
+            d.is_very_important,
+            d.tags
           );
 
           const nameInner = row.querySelector('.clinic-name-cell-inner');
@@ -501,7 +511,8 @@
         var vip = document.getElementById('filter-very-important-only');
         if (vip && vip.getAttribute('aria-pressed') === 'true') return true;
         var sent = document.getElementById('filter-sent-message-only');
-        return !!(sent && sent.getAttribute('aria-pressed') === 'true');
+        if (sent && sent.getAttribute('aria-pressed') === 'true') return true;
+        return getLeadTagFilterSlugs().length > 0;
       }
       window.isLeadTableFilterActive = isLeadTableFilterActive;
       function getFolderLeadCount() {
@@ -707,6 +718,98 @@
         refreshSelectionVisuals();
       }
       window.toggleLeadFilterButton = toggleLeadFilterButton;
+      function getLeadTagFilterKey() {
+        return window.LEAD_TAG_FILTER_KEY || 'clinic_crm_lead_tag_filter';
+      }
+      function getLeadTagFilterSlugs() {
+        try {
+          var raw = localStorage.getItem(getLeadTagFilterKey());
+          if (!raw) return [];
+          var parsed = JSON.parse(raw);
+          if (!Array.isArray(parsed)) return [];
+          var seen = {};
+          var out = [];
+          parsed.forEach(function (item) {
+            var slug = String(item || '').trim();
+            if (!slug || seen[slug]) return;
+            seen[slug] = true;
+            out.push(slug);
+          });
+          return out;
+        } catch (err) {
+          return [];
+        }
+      }
+      window.getLeadTagFilterSlugs = getLeadTagFilterSlugs;
+      function saveLeadTagFilterSlugs(slugs) {
+        var cleaned = [];
+        var seen = {};
+        (slugs || []).forEach(function (item) {
+          var slug = String(item || '').trim();
+          if (!slug || seen[slug]) return;
+          seen[slug] = true;
+          cleaned.push(slug);
+        });
+        try {
+          if (cleaned.length) localStorage.setItem(getLeadTagFilterKey(), JSON.stringify(cleaned));
+          else localStorage.removeItem(getLeadTagFilterKey());
+        } catch (err) { /* ignore */ }
+        return cleaned;
+      }
+      window.saveLeadTagFilterSlugs = saveLeadTagFilterSlugs;
+      function setLeadTagFilterMenuOpen(open) {
+        var wrap = document.getElementById('lead-tag-filter');
+        var btn = document.getElementById('lead-tag-filter-toggle');
+        var menu = document.getElementById('lead-tag-filter-menu');
+        if (!btn || !menu) return;
+        var on = !!open;
+        btn.setAttribute('aria-expanded', on ? 'true' : 'false');
+        menu.classList.toggle('hidden', !on);
+        if (on) menu.removeAttribute('hidden');
+        else menu.setAttribute('hidden', '');
+        if (wrap) wrap.classList.toggle('lead-tag-filter--open', on);
+      }
+      window.setLeadTagFilterMenuOpen = setLeadTagFilterMenuOpen;
+      function toggleLeadTagFilterMenu() {
+        var btn = document.getElementById('lead-tag-filter-toggle');
+        var open = btn && btn.getAttribute('aria-expanded') === 'true';
+        setLeadTagFilterMenuOpen(!open);
+      }
+      window.toggleLeadTagFilterMenu = toggleLeadTagFilterMenu;
+      function syncLeadTagFilterUi() {
+        var slugs = getLeadTagFilterSlugs();
+        var selected = {};
+        slugs.forEach(function (slug) { selected[slug] = true; });
+        document.querySelectorAll('.lead-tag-filter-cb').forEach(function (cb) {
+          cb.checked = !!selected[cb.value];
+        });
+        var btn = document.getElementById('lead-tag-filter-toggle');
+        var countEl = document.getElementById('lead-tag-filter-count');
+        var on = slugs.length > 0;
+        if (btn) {
+          btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+          btn.classList.toggle('border-indigo-500', on);
+          btn.classList.toggle('bg-indigo-50', on);
+          btn.classList.toggle('text-indigo-950', on);
+          btn.classList.toggle('shadow-inner', on);
+          btn.classList.toggle('ring-1', on);
+          btn.classList.toggle('ring-indigo-400/50', on);
+        }
+        if (countEl) {
+          countEl.textContent = String(slugs.length);
+          countEl.classList.toggle('hidden', !on);
+        }
+      }
+      window.syncLeadTagFilterUi = syncLeadTagFilterUi;
+      function leadRowMatchesTagFilter(row, slugs) {
+        if (!slugs || !slugs.length) return true;
+        var rowTags = String(row.getAttribute('data-tags') || '').split(/\s+/).filter(Boolean);
+        for (var i = 0; i < slugs.length; i += 1) {
+          if (rowTags.indexOf(slugs[i]) !== -1) return true;
+        }
+        return false;
+      }
+      window.leadRowMatchesTagFilter = leadRowMatchesTagFilter;
       function refreshTableSearchClearVisibility() {
         var si = document.getElementById('table-search');
         var btn = document.getElementById('table-search-clear');
@@ -822,12 +925,14 @@
       window.removeLeadFilterTag = removeLeadFilterTag;
       function applyTableFilter(opts) {
         opts = opts || {};
+        syncLeadTagFilterUi();
         const searchInput = document.getElementById('table-search');
         const q = searchInput ? searchInput.value.trim().toLowerCase() : '';
         const vipBtn = document.getElementById('filter-very-important-only');
         const vipOnly = vipBtn && vipBtn.getAttribute('aria-pressed') === 'true';
         const sentBtn = document.getElementById('filter-sent-message-only');
         const sentOnly = sentBtn && sentBtn.getAttribute('aria-pressed') === 'true';
+        const tagSlugs = getLeadTagFilterSlugs();
         document.querySelectorAll('.clinic-row').forEach(function (row) {
           const hay = (row.getAttribute('data-search') || '').toLowerCase();
           const isVip = row.getAttribute('data-very-important') === '1';
@@ -836,6 +941,7 @@
           if (!opts.skipKeyword && !globalSearchActive && q && !hay.includes(q)) hide = true;
           if (vipOnly && !isVip) hide = true;
           if (sentOnly && !hasSent) hide = true;
+          if (tagSlugs.length && !leadRowMatchesTagFilter(row, tagSlugs)) hide = true;
           row.classList.toggle('hidden', hide);
           var cell = row.closest('.lead-card-container');
           if (cell) cell.classList.toggle('hidden', hide);
@@ -855,6 +961,7 @@
         if (vip && vip.getAttribute('aria-pressed') === 'true') return false;
         var sent = document.getElementById('filter-sent-message-only');
         if (sent && sent.getAttribute('aria-pressed') === 'true') return false;
+        if (getLeadTagFilterSlugs().length > 0) return false;
         var filtered = getFilteredClinicRowsInOrder();
         if (filtered.length > readLeadsPerPage()) return false;
         return true;

@@ -1,0 +1,4 @@
+{% load clinic_display %}
+<a href="{{ c|google_maps_url }}" class="clinic-name-link {{ extra_class }}" target="_blank" rel="noopener" title="Open in Google Maps">
+  {{ c.name }}{% if c.is_chain %}{% if c.dashboard_location_suffix %}<span class="text-xs text-gray-400">(@ {{ c.dashboard_location_suffix }})</span>{% endif %}{% endif %}
+</a>

@@ -51,6 +51,28 @@
         return out;
       }
       window.collectManualPhonePayload = collectManualPhonePayload;
+      function collectTagPickerSlugs(container) {
+        var out = [];
+        if (!container) return out;
+        container.querySelectorAll('.lead-tag-picker-cb:checked').forEach(function (cb) {
+          var v = String(cb.value || '').trim().toLowerCase();
+          if (v && out.indexOf(v) === -1) out.push(v);
+        });
+        return out;
+      }
+      window.collectTagPickerSlugs = collectTagPickerSlugs;
+      function setTagPickerSlugs(container, slugs) {
+        var wanted = Object.create(null);
+        (Array.isArray(slugs) ? slugs : []).forEach(function (s) {
+          var key = String(s || '').trim().toLowerCase();
+          if (key) wanted[key] = true;
+        });
+        if (!container) return;
+        container.querySelectorAll('.lead-tag-picker-cb').forEach(function (cb) {
+          cb.checked = !!wanted[String(cb.value || '').trim().toLowerCase()];
+        });
+      }
+      window.setTagPickerSlugs = setTagPickerSlugs;
       function closeClinicEditDialog() {
         if (editDialog) editDialog.close();
       }
@@ -92,8 +114,11 @@
           document.getElementById('clinic-edit-search-state').value = data.search_state || '';
           document.getElementById('clinic-edit-search-city').value = data.search_city || '';
           document.getElementById('clinic-edit-search-query').value = data.search_query || '';
-          var cat = (data.category || data.clinic_type || 'unknown').toLowerCase();
-          document.getElementById('clinic-edit-type').value = cat;
+          var tagSlugs = Array.isArray(data.tags) ? data.tags : [];
+          if (!tagSlugs.length && (data.category || data.clinic_type)) {
+            tagSlugs = [data.category || data.clinic_type];
+          }
+          setTagPickerSlugs(document.getElementById('clinic-edit-tags'), tagSlugs);
           document.getElementById('clinic-edit-chain').checked = !!data.is_chain;
           var waEl = document.getElementById('clinic-edit-whatsapp');
           if (waEl) waEl.value = data.whatsapp_draft || '';
@@ -141,8 +166,7 @@
       function resetLeadCreateForm() {
         if (!leadCreateForm) return;
         leadCreateForm.reset();
-        var t = document.getElementById('lead-create-type');
-        if (t) t.value = 'unknown';
+        setTagPickerSlugs(document.getElementById('lead-create-tags'), ['unknown']);
         fillManualPhoneList(document.getElementById('lead-create-phones-list'), []);
       }
       window.resetLeadCreateForm = resetLeadCreateForm;
