@@ -41,28 +41,42 @@
         return match ? decodeURIComponent(match[1]) : "";
       }
 
+      function bindLabelPhrasePair(label, phrase) {
+        if (!label || !phrase || phrase.dataset.mirrorBound === "1") return;
+        phrase.dataset.mirrorBound = "1";
+        if (!phrase.value) phrase.value = label.value;
+        var dirty = phrase.value !== label.value;
+        phrase.addEventListener("input", function () {
+          dirty = true;
+        });
+        label.addEventListener("input", function () {
+          if (dirty) return;
+          phrase.value = label.value;
+        });
+      }
+
       function bindMatchPhraseMirror(root) {
         if (!root) return;
         root.querySelectorAll('form[data-tag-form="save"]').forEach(function (form) {
-          var label = form.elements.namedItem("label");
-          var phrase = form.elements.namedItem("match_phrase");
-          if (!label || !phrase || phrase.dataset.mirrorBound === "1") return;
-          phrase.dataset.mirrorBound = "1";
-          if (!phrase.value) phrase.value = label.value;
-          var dirty = phrase.value !== label.value;
-          phrase.addEventListener("input", function () {
-            dirty = true;
-          });
-          label.addEventListener("input", function () {
-            if (dirty) return;
-            phrase.value = label.value;
-          });
+          bindLabelPhrasePair(
+            form.elements.namedItem("label"),
+            form.elements.namedItem("match_phrase")
+          );
+        });
+        root.querySelectorAll(".tags-table tbody tr").forEach(function (row) {
+          bindLabelPhrasePair(
+            row.querySelector('input[name="label"]'),
+            row.querySelector('input[name="match_phrase"]')
+          );
         });
       }
 
       function submitControl(form) {
         if (form.id) {
-          return document.querySelector('button[type="submit"][form="' + form.id + '"]');
+          var external = document.querySelector(
+            'button[type="submit"][form="' + form.id + '"]'
+          );
+          if (external) return external;
         }
         return form.querySelector('[type="submit"]');
       }

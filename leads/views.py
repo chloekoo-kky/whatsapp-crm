@@ -1731,6 +1731,14 @@ def _unique_tag_slug(desired: str) -> str:
     return slug
 
 
+def _parse_tag_sort_order(raw: str) -> int:
+    try:
+        sort_order = int((raw or "100").strip())
+    except ValueError:
+        sort_order = 100
+    return max(0, min(sort_order, 32767))
+
+
 @csrf_protect
 @require_POST
 def category_type_save(request):
@@ -1740,11 +1748,7 @@ def category_type_save(request):
     raw_slug = (request.POST.get("slug") or "").strip()
     if not label:
         return HttpResponse("Label is required.", status=400)
-    try:
-        sort_order = int((request.POST.get("sort_order") or "100").strip())
-    except ValueError:
-        sort_order = 100
-    sort_order = max(0, min(sort_order, 32767))
+    sort_order = _parse_tag_sort_order(request.POST.get("sort_order") or "100")
 
     if type_id.isdigit():
         tag = get_object_or_404(Tag, pk=int(type_id))
@@ -1783,6 +1787,100 @@ def category_type_save(request):
             _reconcile_tag_category_rules(
                 slug, request.POST.get("match_phrase") or ""
             )
+
+    if _wants_tags_fragment(request):
+        return _tags_fragment_response(request)
+    return redirect("category_rules")
+
+
+def _temporary_bulk_slug(tag: Tag) -> str:
+    """Slug that cannot collide while two tags swap identifiers."""
+    n = 0
+    while True:
+        suffix = f"_{n}" if n else ""
+        slug = f"zzztmp{tag.pk}{suffix}"[:32]
+        if not Tag.objects.filter(slug=slug).exclude(pk=tag.pk).exists():
+            return slug
+        n += 1
+
+
+def _temporary_rule_category(tag: Tag) -> str:
+    """Placeholder CategoryRule.category while two tags swap slugs."""
+    return f"zzzr{tag.pk}"[:32]
+
+
+@csrf_protect
+@require_POST
+def category_type_bulk_save(request):
+    """Update every tag row submitted from the Manage Tags table."""
+    ids = request.POST.getlist("id")
+    labels = request.POST.getlist("label")
+    slugs = request.POST.getlist("slug")
+    sorts = request.POST.getlist("sort_order")
+    phrases = request.POST.getlist("match_phrase")
+    n = len(ids)
+    if not n or not all(len(field) == n for field in (labels, slugs, sorts, phrases)):
+        return HttpResponse("Invalid tag table payload.", status=400)
+
+    pk_list: list[int] = []
+    for raw_id in ids:
+        if not raw_id.isdigit():
+            return HttpResponse("Invalid tag.", status=400)
+        pk_list.append(int(raw_id))
+    if len(set(pk_list)) != n:
+        return HttpResponse("Invalid tag table payload.", status=400)
+
+    tags_by_id = {tag.pk: tag for tag in Tag.objects.filter(pk__in=pk_list)}
+    planned: list[tuple[Tag, str, str, str, int, str]] = []
+    for i, pk in enumerate(pk_list):
+        tag = tags_by_id.get(pk)
+        if tag is None:
+            return HttpResponse("Invalid tag.", status=400)
+        label = (labels[i] or "").strip()[:80]
+        if not label:
+            return HttpResponse("Label is required.", status=400)
+        sort_order = _parse_tag_sort_order(sorts[i])
+        if tag.is_system:
+            new_slug = tag.slug
+        else:
+            new_slug = normalize_category_slug(slugs[i], fallback_label=label)
+            if not new_slug:
+                return HttpResponse("Slug is required.", status=400)
+        planned.append(
+            (tag, tag.slug, label, new_slug, sort_order, phrases[i] or "")
+        )
+
+    new_slugs = [row[3] for row in planned]
+    if len(set(new_slugs)) != len(new_slugs):
+        return HttpResponse("A tag with this slug already exists.", status=400)
+    planned_ids = {row[0].pk for row in planned}
+    if Tag.objects.exclude(pk__in=planned_ids).filter(slug__in=new_slugs).exists():
+        return HttpResponse("A tag with this slug already exists.", status=400)
+
+    with transaction.atomic():
+        changing = [
+            (tag, original_slug, new_slug)
+            for tag, original_slug, _, new_slug, _, _ in planned
+            if original_slug != new_slug
+        ]
+        for tag, _original_slug, _new_slug in changing:
+            tag.slug = _temporary_bulk_slug(tag)
+            tag.save(update_fields=["slug"])
+        for tag, original_slug, label, new_slug, sort_order, phrase in planned:
+            tag.label = label
+            tag.sort_order = sort_order
+            tag.slug = new_slug
+            tag.save(update_fields=["slug", "label", "sort_order"])
+        for tag, original_slug, _new_slug in changing:
+            CategoryRule.objects.filter(category=original_slug).update(
+                category=_temporary_rule_category(tag)
+            )
+        for tag, _original_slug, new_slug in changing:
+            CategoryRule.objects.filter(
+                category=_temporary_rule_category(tag)
+            ).update(category=new_slug)
+        for _tag, _original_slug, _label, new_slug, _sort_order, phrase in planned:
+            _reconcile_tag_category_rules(new_slug, phrase)
 
     if _wants_tags_fragment(request):
         return _tags_fragment_response(request)

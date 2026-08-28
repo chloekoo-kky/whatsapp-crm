@@ -13,6 +13,38 @@ from leads.services import classify_category_from_name, matching_category_slugs_
 from leads.tests import staff_client
 
 
+def _table_save_data(overrides=None):
+    """POST body matching the Manage Tags table (document order)."""
+    overrides = overrides or {}
+    phrases_by_slug: dict[str, list[str]] = {}
+    for category, phrase in CategoryRule.objects.order_by("id").values_list(
+        "category", "match_phrase"
+    ):
+        phrases_by_slug.setdefault(category, []).append(phrase)
+
+    data = {
+        "id": [],
+        "label": [],
+        "slug": [],
+        "sort_order": [],
+        "match_phrase": [],
+    }
+    for tag in Tag.objects.order_by("sort_order", "label", "slug"):
+        row = overrides.get(tag.pk, {})
+        data["id"].append(str(tag.pk))
+        data["label"].append(row.get("label", tag.label))
+        data["slug"].append(row.get("slug", tag.slug))
+        data["sort_order"].append(str(row.get("sort_order", tag.sort_order)))
+        if "match_phrase" in row:
+            data["match_phrase"].append(row["match_phrase"])
+        else:
+            existing = phrases_by_slug.get(tag.slug, [])
+            data["match_phrase"].append(
+                ", ".join(existing) if existing else tag.label
+            )
+    return data
+
+
 class NewLeadTagDefaultsTests(TestCase):
     def test_new_lead_starts_with_no_tags(self):
         lead = Lead.objects.create(
@@ -272,6 +304,145 @@ class TagManagementTests(TestCase):
         self.assertRegex(html, r'data-tag-slug="dental"[^>]*>2 leads<')
         self.assertRegex(html, r'data-tag-slug="gp"[^>]*>1 lead<')
         self.assertRegex(html, r'data-tag-slug="aesthetic"[^>]*>0 leads<')
+
+    def test_manage_page_has_single_save_changes_control(self):
+        html = staff_client().get(reverse("category_rules")).content.decode()
+        self.assertIn("Save changes", html)
+        self.assertIn('id="tags-table-save"', html)
+        self.assertIn('data-tag-form="save-all"', html)
+        self.assertIn('data-tag-add="1"', html)
+        self.assertIn("Add tag", html)
+        self.assertIn("Delete", html)
+        self.assertNotIn(">Save</button>", html)
+        self.assertEqual(html.count("Save changes"), 1)
+
+    def test_bulk_save_updates_multiple_rows(self):
+        client = staff_client()
+        dental = Tag.objects.get(slug="dental")
+        gp = Tag.objects.get(slug="gp")
+        response = client.post(
+            reverse("category_type_bulk_save"),
+            data=_table_save_data(
+                {
+                    dental.pk: {
+                        "label": "Dental clinics",
+                        "sort_order": "15",
+                        "match_phrase": "Dental, Pergigian",
+                    },
+                    gp.pk: {
+                        "label": "General practice",
+                        "match_phrase": "GP clinic",
+                    },
+                }
+            ),
+        )
+        self.assertEqual(response.status_code, 302)
+        dental.refresh_from_db()
+        gp.refresh_from_db()
+        self.assertEqual(dental.label, "Dental clinics")
+        self.assertEqual(dental.sort_order, 15)
+        self.assertEqual(gp.label, "General practice")
+        self.assertEqual(
+            list(
+                CategoryRule.objects.filter(category="dental")
+                .order_by("id")
+                .values_list("match_phrase", flat=True)
+            ),
+            ["Dental", "Pergigian"],
+        )
+        self.assertEqual(
+            CategoryRule.objects.get(category="gp").match_phrase,
+            "GP clinic",
+        )
+
+    def test_bulk_save_swaps_slugs_and_rules(self):
+        client = staff_client()
+        client.post(
+            reverse("category_type_save"),
+            data={"label": "Alpha", "slug": "alpha", "sort_order": "200"},
+        )
+        client.post(
+            reverse("category_type_save"),
+            data={"label": "Beta", "slug": "beta", "sort_order": "210"},
+        )
+        alpha = Tag.objects.get(slug="alpha")
+        beta = Tag.objects.get(slug="beta")
+        CategoryRule.objects.create(
+            match_phrase="alpha-rule",
+            category="alpha",
+            priority=10,
+        )
+        CategoryRule.objects.create(
+            match_phrase="beta-rule",
+            category="beta",
+            priority=10,
+        )
+        lead = Lead.objects.create(name="Alpha Swap Clinic", address="1 Swap St")
+        lead.tags.add(alpha)
+
+        response = client.post(
+            reverse("category_type_bulk_save"),
+            data=_table_save_data(
+                {
+                    alpha.pk: {"slug": "beta", "match_phrase": "alpha-rule"},
+                    beta.pk: {"slug": "alpha", "match_phrase": "beta-rule"},
+                }
+            ),
+        )
+        self.assertEqual(response.status_code, 302)
+        alpha.refresh_from_db()
+        beta.refresh_from_db()
+        self.assertEqual(alpha.slug, "beta")
+        self.assertEqual(beta.slug, "alpha")
+        self.assertEqual(
+            CategoryRule.objects.get(match_phrase="alpha-rule").category,
+            "beta",
+        )
+        self.assertEqual(
+            CategoryRule.objects.get(match_phrase="beta-rule").category,
+            "alpha",
+        )
+        lead.refresh_from_db()
+        self.assertEqual(list(lead.tags.values_list("slug", flat=True)), ["beta"])
+
+    def test_bulk_save_rejects_duplicate_slugs(self):
+        client = staff_client()
+        dental = Tag.objects.get(slug="dental")
+        gp = Tag.objects.get(slug="gp")
+        response = client.post(
+            reverse("category_type_bulk_save"),
+            data=_table_save_data(
+                {
+                    dental.pk: {"slug": "same-slug"},
+                    gp.pk: {"slug": "same-slug"},
+                }
+            ),
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            response.content.decode(),
+            "A tag with this slug already exists.",
+        )
+        dental.refresh_from_db()
+        gp.refresh_from_db()
+        self.assertEqual(dental.slug, "dental")
+        self.assertEqual(gp.slug, "gp")
+
+    def test_bulk_save_via_fragment_header(self):
+        client = staff_client()
+        dental = Tag.objects.get(slug="dental")
+        response = client.post(
+            reverse("category_type_bulk_save"),
+            data=_table_save_data({dental.pk: {"label": "Dental fragment"}}),
+            HTTP_X_TAGS_FRAGMENT="1",
+        )
+        self.assertEqual(response.status_code, 200)
+        html = response.content.decode()
+        self.assertIn("Dental fragment", html)
+        self.assertIn("Save changes", html)
+        self.assertNotIn(">Save</button>", html)
+        dental.refresh_from_db()
+        self.assertEqual(dental.label, "Dental fragment")
 
     def test_save_updates_tag_slug_and_derived_category_refs(self):
         client = staff_client()

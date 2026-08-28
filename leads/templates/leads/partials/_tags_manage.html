@@ -30,90 +30,96 @@
   </section>
 
   <section class="overflow-hidden rounded-xl border border-slate-200/80 bg-white shadow-sm shadow-slate-900/5">
-    <div class="flex items-center justify-between border-b border-slate-100 px-4 py-2.5">
-      <h3 class="text-xs font-semibold uppercase tracking-wide text-slate-500">Tags</h3>
-      <span class="text-[11px] font-medium text-slate-400">{{ tags|length }} tag{{ tags|length|pluralize }}</span>
-    </div>
-
     {% if tags %}
-    <div class="tags-table-scroll">
-      <table class="tags-table">
-        <colgroup>
-          <col class="tags-col-label" />
-          <col class="tags-col-slug" />
-          <col class="tags-col-sort" />
-          <col class="tags-col-leads" />
-          <col class="tags-col-phrases" />
-          <col class="tags-col-actions" />
-        </colgroup>
-        <thead>
-          <tr>
-            <th scope="col">Label</th>
-            <th scope="col">Slug</th>
-            <th scope="col">Sort</th>
-            <th scope="col">Leads</th>
-            <th scope="col">Match phrase(s)</th>
-            <th scope="col"><span class="sr-only">Actions</span></th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for tag in tags %}
-          <tr>
-            <td>
-              <form id="tag-save-{{ tag.pk }}" method="post" action="{% url 'category_type_save' %}" data-tag-form="save">
-                {% csrf_token %}
+    <form id="tags-table-save" method="post" action="{% url 'category_type_bulk_save' %}" data-tag-form="save-all">
+      {% csrf_token %}
+      <div class="flex items-center justify-between gap-3 border-b border-slate-100 px-4 py-2.5">
+        <h3 class="text-xs font-semibold uppercase tracking-wide text-slate-500">Tags</h3>
+        <div class="flex items-center gap-3">
+          <span class="text-[11px] font-medium text-slate-400">{{ tags|length }} tag{{ tags|length|pluralize }}</span>
+          <button type="submit"
+                  class="inline-flex h-8 items-center justify-center rounded-lg bg-indigo-600 px-3 text-xs font-semibold text-white shadow-sm transition hover:bg-indigo-500">
+            Save changes
+          </button>
+        </div>
+      </div>
+      <div class="tags-table-scroll">
+        <table class="tags-table">
+          <colgroup>
+            <col class="tags-col-label" />
+            <col class="tags-col-slug" />
+            <col class="tags-col-sort" />
+            <col class="tags-col-leads" />
+            <col class="tags-col-phrases" />
+            <col class="tags-col-actions" />
+          </colgroup>
+          <thead>
+            <tr>
+              <th scope="col">Label</th>
+              <th scope="col">Slug</th>
+              <th scope="col">Sort</th>
+              <th scope="col">Leads</th>
+              <th scope="col">Match phrase(s)</th>
+              <th scope="col"><span class="sr-only">Actions</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for tag in tags %}
+            <tr>
+              <td>
                 <input type="hidden" name="id" value="{{ tag.pk }}" />
+                <input name="label" type="text" required maxlength="80" value="{{ tag.label }}" aria-label="Label"
+                       class="tags-table-input" />
+              </td>
+              <td>
                 {% if tag.is_system %}
                 <input type="hidden" name="slug" value="{{ tag.slug }}" />
+                <span class="tags-table-slug" title="{{ tag.slug }}">{{ tag.slug }}</span>
+                {% else %}
+                <input name="slug" type="text" maxlength="32" value="{{ tag.slug }}" aria-label="Slug"
+                       class="tags-table-input tags-table-input--mono" />
                 {% endif %}
-              </form>
-              <input form="tag-save-{{ tag.pk }}" name="label" type="text" required maxlength="80" value="{{ tag.label }}" aria-label="Label"
-                     class="tags-table-input" />
-            </td>
-            <td>
-              {% if tag.is_system %}
-              <span class="tags-table-slug" title="{{ tag.slug }}">{{ tag.slug }}</span>
-              {% else %}
-              <input form="tag-save-{{ tag.pk }}" name="slug" type="text" maxlength="32" value="{{ tag.slug }}" aria-label="Slug"
-                     class="tags-table-input tags-table-input--mono" />
-              {% endif %}
-            </td>
-            <td>
-              <input form="tag-save-{{ tag.pk }}" name="sort_order" type="number" value="{{ tag.sort_order }}" min="0" max="32767" aria-label="Sort"
-                     class="tags-table-input tags-table-input--num" />
-            </td>
-            <td>
-              <span class="tag-lead-count" data-tag-slug="{{ tag.slug }}">{{ tag.lead_count }} lead{{ tag.lead_count|pluralize }}</span>
-            </td>
-            <td>
-              <input form="tag-save-{{ tag.pk }}" name="match_phrase" type="text" maxlength="2000" aria-label="Match phrases"
-                     value="{% firstof tag.match_phrases_display tag.label %}" placeholder="{{ tag.label }}"
-                     class="tags-table-input" />
-            </td>
-            <td>
-              <div class="tags-table-actions">
-                {% if tag.is_system %}
-                <span class="tags-table-system">System</span>
-                {% endif %}
-                <button type="submit" form="tag-save-{{ tag.pk }}" class="tags-table-save">Save</button>
-                {% if not tag.is_system %}
-                <button type="submit" form="tag-delete-{{ tag.pk }}" class="tags-table-delete">Delete</button>
-                {% endif %}
-              </div>
-            </td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-      {% for tag in tags %}
-      {% if not tag.is_system %}
-      <form id="tag-delete-{{ tag.pk }}" method="post" action="{% url 'category_type_delete' pk=tag.pk %}" data-tag-form="delete" hidden>
-        {% csrf_token %}
-      </form>
-      {% endif %}
-      {% endfor %}
-    </div>
+              </td>
+              <td>
+                <input name="sort_order" type="number" value="{{ tag.sort_order }}" min="0" max="32767" aria-label="Sort"
+                       class="tags-table-input tags-table-input--num" />
+              </td>
+              <td>
+                <span class="tag-lead-count" data-tag-slug="{{ tag.slug }}">{{ tag.lead_count }} lead{{ tag.lead_count|pluralize }}</span>
+              </td>
+              <td>
+                <input name="match_phrase" type="text" maxlength="2000" aria-label="Match phrases"
+                       value="{% firstof tag.match_phrases_display tag.label %}" placeholder="{{ tag.label }}"
+                       class="tags-table-input" />
+              </td>
+              <td>
+                <div class="tags-table-actions">
+                  {% if tag.is_system %}
+                  <span class="tags-table-system">System</span>
+                  {% endif %}
+                  {% if not tag.is_system %}
+                  <button type="submit" form="tag-delete-{{ tag.pk }}" class="tags-table-delete">Delete</button>
+                  {% endif %}
+                </div>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </form>
+    {% for tag in tags %}
+    {% if not tag.is_system %}
+    <form id="tag-delete-{{ tag.pk }}" method="post" action="{% url 'category_type_delete' pk=tag.pk %}" data-tag-form="delete" hidden>
+      {% csrf_token %}
+    </form>
+    {% endif %}
+    {% endfor %}
     {% else %}
+    <div class="flex items-center justify-between border-b border-slate-100 px-4 py-2.5">
+      <h3 class="text-xs font-semibold uppercase tracking-wide text-slate-500">Tags</h3>
+      <span class="text-[11px] font-medium text-slate-400">0 tags</span>
+    </div>
     <p class="px-4 py-8 text-center text-xs text-slate-400">No tags yet.</p>
     {% endif %}
   </section>
@@ -152,7 +158,7 @@
   .tags-col-sort { width: 4.75rem; }
   .tags-col-leads { width: 6rem; }
   .tags-col-phrases { width: auto; }
-  .tags-col-actions { width: 8.75rem; }
+  .tags-col-actions { width: 5.5rem; }
   .tags-table th,
   .tags-table td {
     padding: 0.5rem 0.65rem;
@@ -234,21 +240,6 @@
     text-transform: uppercase;
     color: rgb(148 163 184);
   }
-  .tags-table-save {
-    display: inline-flex;
-    height: 2rem;
-    align-items: center;
-    justify-content: center;
-    border: 1px solid rgb(226 232 240);
-    border-radius: 0.375rem;
-    background: #fff;
-    padding: 0 0.625rem;
-    font-size: 0.75rem;
-    font-weight: 600;
-    color: rgb(51 65 85);
-    box-shadow: 0 1px 2px rgb(15 23 42 / 0.04);
-  }
-  .tags-table-save:hover { background: rgb(248 250 252); }
   .tags-table-delete {
     font-size: 11px;
     font-weight: 600;
