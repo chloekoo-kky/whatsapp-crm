@@ -3,7 +3,7 @@
 <tr class="clinic-row clinic-row--selectable cursor-pointer border-b border-slate-100 transition-colors hover:bg-slate-50/90 {% if ck in multi_location_brands %}clinic-row--brand-group{% endif %}"
   data-clinic-id="{{ c.id }}" aria-selected="false"
   data-is-chain="{% if c.is_chain %}1{% else %}0{% endif %}"
-  data-category="{{ c.category }}"
+  data-category="{{ c.primary_tag_slug }}"
   data-tags="{% for t in c.tags.all %}{{ t.slug }}{% if not forloop.last %} {% endif %}{% endfor %}"
   data-very-important="{% if c.is_very_important %}1{% else %}0{% endif %}"
   data-whatsapp-dispatched="{% if c.whatsapp_dispatched %}1{% else %}0{% endif %}"
@@ -11,7 +11,7 @@
   data-sort-state="{{ c.search_state|default_if_none:''|default:''|lower }}"
   data-sort-created="{{ c.created_at|date:'U' }}"
   data-search-base="{{ c.name }} {{ c.address }} {{ c.dashboard_phones|join:' ' }} {{ c.website }} {{ c.shop_keyword }} {{ c.search_state|default_if_none:''|default:'' }} {{ c.search_city|default_if_none:''|default:'' }} {{ c.search_query|default_if_none:''|default:'' }}"
-  data-search="{{ c.name }} {{ c.address }} {{ c.dashboard_phones|join:' ' }} {{ c.website }} {{ c.shop_keyword }} {{ c.category }} {% for t in c.tags.all %}{{ t.slug }} {{ t.label }} {% endfor %}{{ c.search_state|default_if_none:''|default:'' }} {{ c.search_city|default_if_none:''|default:'' }} {{ c.search_query|default_if_none:''|default:'' }} {% if c.is_chain %}chain{% endif %} {% if c.is_very_important %}important{% endif %}">
+  data-search="{{ c.name }} {{ c.address }} {{ c.dashboard_phones|join:' ' }} {{ c.website }} {{ c.shop_keyword }} {{ c.primary_tag_slug }} {% for t in c.tags.all %}{{ t.slug }} {{ t.label }} {% endfor %}{{ c.search_state|default_if_none:''|default:'' }} {{ c.search_city|default_if_none:''|default:'' }} {{ c.search_query|default_if_none:''|default:'' }} {% if c.is_chain %}chain{% endif %} {% if c.is_very_important %}important{% endif %}">
   <td class="align-top px-2 py-3.5 text-center sm:px-3">
     <div hidden class="whatsapp-draft-store">{{ c.whatsapp_draft }}</div>
     <input type="checkbox" class="clinic-select-cb relative top-0.5 h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" value="{{ c.id }}" title="Select row" aria-label="Select {{ c.name }}" />

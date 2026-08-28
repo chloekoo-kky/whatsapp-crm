@@ -164,17 +164,6 @@ class Lead(models.Model):
         SENT = "sent", "First Message Sent"
         FAILED = "failed", "Failed"
 
-    class Category(models.TextChoices):
-        UNKNOWN = "unknown", "Unknown"
-        INVALID = "invalid", "Invalid / irrelevant"
-        GP = "gp", "GP"
-        AESTHETIC = "aesthetic", "Aesthetic"
-        DENTAL = "dental", "Dental"
-        FITNESS = "fitness", "Fitness / gym / yoga"
-        CAFE = "cafe", "Café / restaurant / F&B"
-        RETAIL = "retail", "Retail / shop"
-        SERVICE = "service", "Services / other business"
-
     name = models.CharField(max_length=255)
     phone_number = models.CharField(
         max_length=64,
@@ -193,11 +182,6 @@ class Lead(models.Model):
         blank=True,
         default="",
         help_text="Keyword the user entered before the hunt (e.g. fitness center, café).",
-    )
-    category = models.CharField(
-        max_length=32,
-        default=Category.UNKNOWN,
-        help_text="Business type / relevance — rules, AI, or manual update.",
     )
     source_url = models.TextField(
         blank=True,
@@ -265,7 +249,7 @@ class Lead(models.Model):
         "Tag",
         blank=True,
         related_name="leads",
-        help_text="Multi-select tags (additive copy of category; unused by the live app yet).",
+        help_text="User-managed classification tags (sole source of truth).",
     )
     search_city = models.CharField(
         max_length=255,
@@ -334,13 +318,17 @@ class Lead(models.Model):
         ]
         indexes = [
             models.Index(fields=["shop_keyword"], name="leads_shop_kw_idx"),
-            models.Index(fields=["category"], name="leads_category_idx"),
             models.Index(fields=["search_query_record"], name="leads_search_rec_idx"),
             models.Index(fields=["group"], name="leads_leadgroup_idx"),
         ]
 
     def __str__(self) -> str:
         return self.name
+
+    @property
+    def primary_tag_slug(self) -> str:
+        """Derived display/API slug from this lead's tags (not stored)."""
+        return Tag.derived_category_slug(list(self.tags.all()))
 
 
 class WhatsAppConfig(models.Model):
@@ -602,31 +590,6 @@ class LeadConversationLog(models.Model):
         return f"{self.lead_id} @ {self.conversation_date:%Y-%m-%d}"
 
 
-class LeadCategoryType(models.Model):
-    """Legacy category-type rows. Not written by live app paths; kept for a later cleanup."""
-
-    slug = models.SlugField(
-        max_length=32,
-        unique=True,
-        help_text="Stored on Lead.category (lowercase, e.g. dental, gp).",
-    )
-    label = models.CharField(max_length=80)
-    sort_order = models.PositiveSmallIntegerField(default=100)
-    is_system = models.BooleanField(
-        default=False,
-        help_text="System categories (Unknown, Invalid) cannot be deleted.",
-    )
-
-    class Meta:
-        db_table = "leads_leadcategorytype"
-        ordering = ["sort_order", "label", "slug"]
-        verbose_name = "Category type"
-        verbose_name_plural = "Category types"
-
-    def __str__(self) -> str:
-        return self.label
-
-
 class Tag(models.Model):
     """User-managed lead tags (dropdown/filter values and import-rule targets)."""
 
@@ -675,7 +638,7 @@ class Tag(models.Model):
 
     @staticmethod
     def derived_category_slug(tags: list["Tag"]) -> str:
-        """Pick Lead.category from selected tags without surfacing it in the UI.
+        """Primary tag slug for display, API, and script-group fallback.
 
         Prefer the first non-system tag (by sort_order). If only system tags are
         selected, Invalid wins over Unknown. Empty selection → unknown.
@@ -692,33 +655,6 @@ class Tag(models.Model):
             return INVALID_SLUG
         return UNKNOWN_SLUG
 
-    @classmethod
-    def sync_from_category_type(
-        cls,
-        cat_type: "LeadCategoryType",
-        *,
-        previous_slug: str | None = None,
-    ) -> "Tag":
-        """Create or update the Tag that mirrors a LeadCategoryType (keyed by slug)."""
-        lookup_slug = previous_slug or cat_type.slug
-        defaults = {
-            "label": cat_type.label,
-            "sort_order": cat_type.sort_order,
-            "is_system": cat_type.is_system,
-        }
-        tag = cls.objects.filter(slug=lookup_slug).first()
-        if tag is None and lookup_slug != cat_type.slug:
-            tag = cls.objects.filter(slug=cat_type.slug).first()
-        if tag is None:
-            tag, _ = cls.objects.update_or_create(slug=cat_type.slug, defaults=defaults)
-            return tag
-        tag.slug = cat_type.slug
-        tag.label = cat_type.label
-        tag.sort_order = cat_type.sort_order
-        tag.is_system = cat_type.is_system
-        tag.save(update_fields=["slug", "label", "sort_order", "is_system"])
-        return tag
-
 
 class CategoryRule(models.Model):
     """
@@ -732,7 +668,7 @@ class CategoryRule(models.Model):
     )
     category = models.CharField(
         max_length=32,
-        help_text="Lead.category slug assigned when the rule matches.",
+        help_text="Tag slug assigned when the rule matches.",
     )
     priority = models.PositiveSmallIntegerField(
         default=100,

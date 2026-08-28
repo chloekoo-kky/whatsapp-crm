@@ -438,11 +438,12 @@ def _lead_keyword_search_filter(qs, q: str):
         | Q(phone_number__icontains=qq)
         | Q(website__icontains=qq)
         | Q(shop_keyword__icontains=qq)
-        | Q(category__icontains=qq)
+        | Q(tags__slug__icontains=qq)
+        | Q(tags__label__icontains=qq)
         | Q(search_state__icontains=qq)
         | Q(search_city__icontains=qq)
         | Q(search_query__icontains=qq)
-    )
+    ).distinct()
 
 
 def _lead_dashboard_folder_meta(lead: Lead) -> tuple[str, str]:
@@ -1607,17 +1608,70 @@ def monthly_report_export_xlsx(request):
     return resp
 
 
-def _category_rules_manage_context() -> dict:
-    return {
-        "category_rules": CategoryRule.objects.order_by("priority", "id"),
-        "category_choices": lead_category_choices(),
-    }
+_SEEDED_RULE_PRIORITY = 100
+
+
+def _parse_match_phrases(raw: str) -> list[str]:
+    """Split a comma-separated match-phrase field: trim, drop empties, dedupe."""
+    seen: set[str] = set()
+    phrases: list[str] = []
+    for part in (raw or "").split(","):
+        phrase = part.strip()[:200]
+        if not phrase:
+            continue
+        key = phrase.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        phrases.append(phrase)
+    return phrases
+
+
+def _reconcile_tag_category_rules(slug: str, raw_phrases: str) -> None:
+    """Sync CategoryRule rows for ``slug`` to the submitted phrase list.
+
+    Existing rows whose phrase is still present are left unchanged (priority
+    kept). Missing phrases are created at priority 100. Phrases no longer in
+    the list are deleted. An empty list deletes every rule for the tag.
+    """
+    desired = _parse_match_phrases(raw_phrases)
+    desired_keys = {phrase.lower() for phrase in desired}
+    existing = list(CategoryRule.objects.filter(category=slug))
+    keep_keys: set[str] = set()
+    stale_ids: list[int] = []
+    for rule in existing:
+        key = (rule.match_phrase or "").strip().lower()
+        if key in desired_keys:
+            keep_keys.add(key)
+        else:
+            stale_ids.append(rule.pk)
+    if stale_ids:
+        CategoryRule.objects.filter(pk__in=stale_ids).delete()
+    to_create = [
+        CategoryRule(
+            match_phrase=phrase,
+            category=slug,
+            priority=_SEEDED_RULE_PRIORITY,
+        )
+        for phrase in desired
+        if phrase.lower() not in keep_keys
+    ]
+    if to_create:
+        CategoryRule.objects.bulk_create(to_create)
 
 
 def _tags_manage_context() -> dict:
-    return {
-        "tags": list(Tag.objects.order_by("sort_order", "label", "slug")),
-    }
+    tags = list(
+        Tag.objects.order_by("sort_order", "label", "slug").annotate(
+            lead_count=Count("leads")
+        )
+    )
+    phrases_by_slug: dict[str, list[str]] = {}
+    for rule in CategoryRule.objects.order_by("priority", "id"):
+        phrases_by_slug.setdefault(rule.category, []).append(rule.match_phrase)
+    for tag in tags:
+        tag.match_phrases_display = ", ".join(phrases_by_slug.get(tag.slug, []))
+    return {"tags": tags}
 
 
 def _wants_tags_fragment(request) -> bool:
@@ -1662,9 +1716,7 @@ class CategoryRulesView(TemplateView):
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context["nav_active"] = "tags"
-        context.update(_category_rules_manage_context())
         context.update(_tags_manage_context())
-        context["category_options_fragment_url"] = reverse("category_options_fragment")
         return context
 
 
@@ -1682,7 +1734,7 @@ def _unique_tag_slug(desired: str) -> str:
 @csrf_protect
 @require_POST
 def category_type_save(request):
-    """Create or update a Tag. Does not write LeadCategoryType."""
+    """Create or update a Tag."""
     type_id = (request.POST.get("id") or "").strip()
     label = (request.POST.get("label") or "").strip()[:80]
     raw_slug = (request.POST.get("slug") or "").strip()
@@ -1709,21 +1761,28 @@ def category_type_save(request):
         with transaction.atomic():
             tag.save(update_fields=["slug", "label", "sort_order"])
             if previous_slug != tag.slug:
-                Lead.objects.filter(category=previous_slug).update(category=tag.slug)
                 CategoryRule.objects.filter(category=previous_slug).update(
                     category=tag.slug
+                )
+            if "match_phrase" in request.POST:
+                _reconcile_tag_category_rules(
+                    tag.slug, request.POST.get("match_phrase") or ""
                 )
     else:
         slug = normalize_category_slug(raw_slug, fallback_label=label)
         if not slug:
             return HttpResponse("Slug is required.", status=400)
         slug = _unique_tag_slug(slug)
-        Tag.objects.create(
-            slug=slug,
-            label=label,
-            sort_order=sort_order,
-            is_system=False,
-        )
+        with transaction.atomic():
+            Tag.objects.create(
+                slug=slug,
+                label=label,
+                sort_order=sort_order,
+                is_system=False,
+            )
+            _reconcile_tag_category_rules(
+                slug, request.POST.get("match_phrase") or ""
+            )
 
     if _wants_tags_fragment(request):
         return _tags_fragment_response(request)
@@ -1733,23 +1792,18 @@ def category_type_save(request):
 @csrf_protect
 @require_POST
 def category_type_delete(request, pk: int):
-    """Delete a user-created tag. Does not write LeadCategoryType."""
+    """Delete a user-created tag."""
     tag = get_object_or_404(Tag, pk=pk)
     if tag.is_system:
         return HttpResponse("System tags cannot be deleted.", status=400)
-    if Lead.objects.filter(tags__slug=tag.slug).exists() or Lead.objects.filter(
-        category=tag.slug
-    ).exists():
+    if Lead.objects.filter(tags__slug=tag.slug).exists():
         return HttpResponse(
             "Leads still use this tag. Reassign them before deleting.",
             status=400,
         )
-    if CategoryRule.objects.filter(category=tag.slug).exists():
-        return HttpResponse(
-            "Import rules still reference this tag. Update or delete those rules first.",
-            status=400,
-        )
-    tag.delete()
+    with transaction.atomic():
+        CategoryRule.objects.filter(category=tag.slug).delete()
+        tag.delete()
     if _wants_tags_fragment(request):
         return _tags_fragment_response(request)
     return redirect("category_rules")
@@ -3071,7 +3125,7 @@ def clinics_export_xlsx(request):
                 created_at__gt=OuterRef("_first_sent_at"),
             )
         ),
-    )
+    ).prefetch_related("tags")
 
     wb = Workbook()
     ws = wb.active
@@ -3084,7 +3138,7 @@ def clinics_export_xlsx(request):
             "Address",
             "Website",
             "Keyword",
-            "Category",
+            "Tags",
             "Search city",
             "Search country",
             "Maps query",
@@ -3097,8 +3151,9 @@ def clinics_export_xlsx(request):
             "Created",
         ]
     )
-    for c in qs.iterator(chunk_size=400):
+    for c in qs:
         plist = lead_phone_list(c)
+        tag_slugs = [t.slug for t in c.tags.all()]
         ws.append(
             [
                 c.pk,
@@ -3107,7 +3162,7 @@ def clinics_export_xlsx(request):
                 c.address or "",
                 c.website or "",
                 c.shop_keyword or "",
-                c.category,
+                ", ".join(tag_slugs),
                 c.search_city or "",
                 c.search_country or "",
                 c.search_query or "",
@@ -3451,9 +3506,10 @@ def _lead_tag_slugs(lead: Lead) -> list[str]:
 
 
 def _lead_tags_from_write_body(body, *, require_at_least_one: bool = False):
-    """Parse tags (preferred) or legacy category from a JSON body.
+    """Parse tags (preferred) or a legacy category slug from a JSON body.
 
-    Returns ``(tags, category_slug)`` or a ``JsonResponse`` error.
+    Returns ``(tags, derived_slug)`` or a ``JsonResponse`` error. The slug is for
+    JSON payloads only; it is not stored on Lead.
     """
     if "tags" in body:
         raw = body.get("tags")
@@ -3495,7 +3551,7 @@ def _clinic_edit_payload(lead: Lead, request=None) -> dict:
     """Shared JSON shape for PATCH lead and incremental dashboard DOM updates."""
     brand_n = _same_brand_row_count(lead, request=request)
     branches_html = _branches_line_inner_html(lead, brand_n)
-    cat = lead.category
+    cat = lead.primary_tag_slug
     phones = lead_phone_list(lead)
     primary = phones[0] if phones else ""
     tag_slugs = _lead_tag_slugs(lead)
@@ -3573,7 +3629,6 @@ def clinic_update(request, pk: int):
     lead.address = (body.get("address") or "").strip()
     website = (body.get("website") or "").strip()
     lead.website = website[:500] if website else ""
-    lead.category = raw_type
     sc = (body.get("search_city") or "").strip()
     ss = (body.get("search_state") or "").strip()
     sco = (body.get("search_country") or "").strip()
@@ -3653,7 +3708,6 @@ def lead_manual_create(request):
         phone_number=phone_number,
         phone_numbers=list(phones),
         website=website,
-        category=raw_type,
         group=group,
         whatsapp_status=Lead.WhatsappStatus.IDLE,
         display_order=next_order,
@@ -3918,7 +3972,7 @@ def chain_brand_exempt(request):
 @csrf_protect
 @require_POST
 def leads_bulk_manual_category(request):
-    """Set tags (and derived ``category``) plus ``is_processed`` for many leads."""
+    """Set tags plus ``is_processed`` for many leads."""
     try:
         body = json.loads(request.body.decode() or "{}")
     except json.JSONDecodeError:
@@ -3939,7 +3993,6 @@ def leads_bulk_manual_category(request):
 
     with transaction.atomic():
         updated = Lead.objects.filter(pk__in=id_list).update(
-            category=raw_cat,
             is_processed=True,
         )
         _replace_leads_tags(id_list, tags)

@@ -1,111 +1,26 @@
-"""Additive Tag schema: seeded mirror of LeadCategoryType and backfill helpers."""
+"""Lead tags: import assignment, Manage Tags, write paths, backup, script groups."""
 
-import importlib.util
 import json
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from django.apps import apps as django_apps
-from django.db import connection
 from django.test import TestCase, override_settings
 from django.urls import reverse
 
-from leads.models import CategoryRule, Lead, LeadCategoryType, Tag
+from leads.models import CategoryRule, Lead, Tag
 from leads.pipeline import get_or_create_uncategorized_group
 from leads.services import classify_category_from_name, matching_category_slugs_from_name
 from leads.tests import staff_client
 
-_MIGRATION_PATH = Path(__file__).resolve().parent / "migrations" / "0046_tag_and_lead_tags.py"
-_spec = importlib.util.spec_from_file_location("leads_tag_backfill_migration", _MIGRATION_PATH)
-_migration = importlib.util.module_from_spec(_spec)
-assert _spec.loader is not None
-_spec.loader.exec_module(_migration)
-backfill_tags = _migration.backfill_tags
-reverse_tag_backfill = _migration.reverse_tag_backfill
 
-
-class _SchemaEditor:
-    connection = connection
-
-
-class TagBackfillTests(TestCase):
-    def test_migration_mirrors_every_category_type(self):
-        cat_rows = list(
-            LeadCategoryType.objects.values("slug", "label", "sort_order", "is_system")
-        )
-        tag_rows = list(Tag.objects.values("slug", "label", "sort_order", "is_system"))
-        self.assertEqual(len(tag_rows), len(cat_rows))
-        self.assertCountEqual(tag_rows, cat_rows)
-
-    def test_new_lead_is_not_dual_written(self):
+class NewLeadTagDefaultsTests(TestCase):
+    def test_new_lead_starts_with_no_tags(self):
         lead = Lead.objects.create(
             name="No Dual Write Clinic",
             address="1 Tag Test St",
-            category="dental",
         )
         self.assertEqual(lead.tags.count(), 0)
-
-    def test_backfill_assigns_tag_matching_category_and_is_idempotent(self):
-        dental = Lead.objects.create(
-            name="Dental Backfill Clinic",
-            address="2 Tag Test St",
-            category="dental",
-        )
-        unknown = Lead.objects.create(
-            name="Unknown Backfill Clinic",
-            address="3 Tag Test St",
-            category="unknown",
-        )
-        LeadCategoryType.objects.create(
-            slug="vet",
-            label="Veterinary",
-            sort_order=90,
-            is_system=False,
-        )
-        orphan = Lead.objects.create(
-            name="Vet Backfill Clinic",
-            address="4 Tag Test St",
-            category="vet",
-        )
-
-        backfill_tags(django_apps, _SchemaEditor())
-        backfill_tags(django_apps, _SchemaEditor())
-
-        self.assertEqual(
-            Tag.objects.count(),
-            LeadCategoryType.objects.count(),
-        )
-        self.assertEqual(
-            list(dental.tags.values_list("slug", flat=True)),
-            ["dental"],
-        )
-        self.assertEqual(
-            list(unknown.tags.values_list("slug", flat=True)),
-            ["unknown"],
-        )
-        self.assertEqual(
-            list(orphan.tags.values_list("slug", flat=True)),
-            ["vet"],
-        )
-        vet_tag = Tag.objects.get(slug="vet")
-        self.assertEqual(vet_tag.label, "Veterinary")
-        self.assertEqual(vet_tag.sort_order, 90)
-
-    def test_reverse_then_forward_restores_mirror(self):
-        Lead.objects.create(
-            name="Reverse Clinic",
-            address="5 Tag Test St",
-            category="gp",
-        )
-        reverse_tag_backfill(django_apps, _SchemaEditor())
-        self.assertEqual(Tag.objects.count(), 0)
-
-        backfill_tags(django_apps, _SchemaEditor())
-        cat_slugs = set(LeadCategoryType.objects.values_list("slug", flat=True))
-        tag_slugs = set(Tag.objects.values_list("slug", flat=True))
-        self.assertEqual(tag_slugs, cat_slugs)
-        lead = Lead.objects.get(name="Reverse Clinic")
-        self.assertEqual(list(lead.tags.values_list("slug", flat=True)), ["gp"])
+        self.assertEqual(lead.primary_tag_slug, "unknown")
 
 
 def _serper_places_response(places):
@@ -156,11 +71,11 @@ class SerperImportTagTests(TestCase):
         )
         self.assertEqual(result.created, 1)
         lead = Lead.objects.get(name="Q & M Dental Clinic (Segamat)")
-        self.assertEqual(lead.category, "dental")
         self.assertCountEqual(
             list(lead.tags.values_list("slug", flat=True)),
             ["dental", "gp"],
         )
+        self.assertEqual(lead.primary_tag_slug, "dental")
 
     @override_settings(SERPER_API_KEY="test-key", HUNT_MAX_LIMIT=100)
     @patch("leads.services.requests.post")
@@ -191,11 +106,11 @@ class SerperImportTagTests(TestCase):
         self.assertEqual(result.created, 2)
 
         single = Lead.objects.get(name="Skin Lab Studio")
-        self.assertEqual(single.category, "aesthetic")
+        self.assertEqual(single.primary_tag_slug, "aesthetic")
         self.assertEqual(list(single.tags.values_list("slug", flat=True)), ["aesthetic"])
 
         none = Lead.objects.get(name="Sunrise Hardware")
-        self.assertEqual(none.category, "unknown")
+        self.assertEqual(none.primary_tag_slug, "unknown")
         self.assertEqual(list(none.tags.values_list("slug", flat=True)), ["unknown"])
 
     @override_settings(SERPER_API_KEY="test-key", HUNT_MAX_LIMIT=100)
@@ -206,7 +121,6 @@ class SerperImportTagTests(TestCase):
         existing = Lead.objects.create(
             name="Q & M Dental Clinic (Segamat)",
             address="1 Tag Import St",
-            category="service",
         )
         existing.tags.set(Tag.objects.filter(slug="invalid"))
         prior_tag_ids = list(existing.tags.values_list("id", flat=True))
@@ -230,15 +144,13 @@ class SerperImportTagTests(TestCase):
         self.assertEqual(result.created, 0)
         self.assertEqual(result.skipped_existing, 1)
         existing.refresh_from_db()
-        self.assertEqual(existing.category, "service")
         self.assertEqual(list(existing.tags.values_list("id", flat=True)), prior_tag_ids)
         self.assertEqual(list(existing.tags.values_list("slug", flat=True)), ["invalid"])
 
 
 class TagManagementTests(TestCase):
-    def test_save_creates_tag_not_category_type(self):
+    def test_save_creates_tag(self):
         client = staff_client()
-        type_count = LeadCategoryType.objects.count()
         response = client.post(
             reverse("category_type_save"),
             data={"label": "Veterinary", "slug": "vet", "sort_order": "90"},
@@ -248,8 +160,118 @@ class TagManagementTests(TestCase):
         self.assertEqual(tag.label, "Veterinary")
         self.assertEqual(tag.sort_order, 90)
         self.assertFalse(tag.is_system)
-        self.assertFalse(LeadCategoryType.objects.filter(slug="vet").exists())
-        self.assertEqual(LeadCategoryType.objects.count(), type_count)
+        self.assertFalse(CategoryRule.objects.filter(category="vet").exists())
+
+    def test_create_seeds_one_rule_per_comma_separated_phrase(self):
+        client = staff_client()
+        response = client.post(
+            reverse("category_type_save"),
+            data={
+                "label": "Veterinary",
+                "sort_order": "90",
+                "match_phrase": "Veterinary, Vet Clinic, Animal Hospital, veterinary",
+                "priority": "10",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        tag = Tag.objects.get(slug="veterinary")
+        self.assertEqual(tag.label, "Veterinary")
+        phrases = list(
+            CategoryRule.objects.filter(category="veterinary")
+            .order_by("id")
+            .values_list("match_phrase", "priority")
+        )
+        self.assertEqual(
+            phrases,
+            [
+                ("Veterinary", 100),
+                ("Vet Clinic", 100),
+                ("Animal Hospital", 100),
+            ],
+        )
+
+        html = client.get(reverse("category_rules")).content.decode()
+        self.assertIn("Veterinary, Vet Clinic, Animal Hospital", html)
+        self.assertNotIn("Add rule", html)
+        self.assertNotIn("Import rules", html)
+
+    def test_update_reconciles_match_phrases_without_resetting_priority(self):
+        client = staff_client()
+        client.post(
+            reverse("category_type_save"),
+            data={
+                "label": "Veterinary",
+                "slug": "vet",
+                "sort_order": "90",
+                "match_phrase": "Veterinary, Vet Clinic",
+            },
+        )
+        kept = CategoryRule.objects.get(category="vet", match_phrase="Veterinary")
+        CategoryRule.objects.filter(pk=kept.pk).update(priority=10)
+        kept.refresh_from_db()
+        dropped_id = CategoryRule.objects.get(
+            category="vet", match_phrase="Vet Clinic"
+        ).pk
+
+        tag = Tag.objects.get(slug="vet")
+        response = client.post(
+            reverse("category_type_save"),
+            data={
+                "id": str(tag.pk),
+                "label": "Veterinary",
+                "slug": "vet",
+                "sort_order": "90",
+                "match_phrase": "Veterinary, Animal Hospital",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        kept.refresh_from_db()
+        self.assertEqual(kept.priority, 10)
+        self.assertEqual(kept.match_phrase, "Veterinary")
+        self.assertFalse(CategoryRule.objects.filter(pk=dropped_id).exists())
+        added = CategoryRule.objects.get(category="vet", match_phrase="Animal Hospital")
+        self.assertEqual(added.priority, 100)
+        self.assertEqual(CategoryRule.objects.filter(category="vet").count(), 2)
+
+    def test_update_empty_match_phrases_deletes_all_rules(self):
+        client = staff_client()
+        client.post(
+            reverse("category_type_save"),
+            data={
+                "label": "Veterinary",
+                "slug": "vet",
+                "sort_order": "90",
+                "match_phrase": "Veterinary, Vet Clinic",
+            },
+        )
+        tag = Tag.objects.get(slug="vet")
+        self.assertEqual(CategoryRule.objects.filter(category="vet").count(), 2)
+
+        response = client.post(
+            reverse("category_type_save"),
+            data={
+                "id": str(tag.pk),
+                "label": "Veterinary",
+                "slug": "vet",
+                "sort_order": "90",
+                "match_phrase": "",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(Tag.objects.filter(pk=tag.pk).exists())
+        self.assertFalse(CategoryRule.objects.filter(category="vet").exists())
+
+    def test_manage_list_shows_lead_count_per_tag(self):
+        dental = Tag.objects.get(slug="dental")
+        gp = Tag.objects.get(slug="gp")
+        Lead.objects.create(name="Dental Count A", address="1 Count St").tags.add(dental)
+        Lead.objects.create(name="Dental Count B", address="2 Count St").tags.add(dental)
+        Lead.objects.create(name="GP Count A", address="3 Count St").tags.add(gp)
+
+        html = staff_client().get(reverse("category_rules")).content.decode()
+        self.assertRegex(html, r'data-tag-slug="dental"[^>]*>2 leads<')
+        self.assertRegex(html, r'data-tag-slug="gp"[^>]*>1 lead<')
+        self.assertRegex(html, r'data-tag-slug="aesthetic"[^>]*>0 leads<')
 
     def test_save_updates_tag_slug_and_derived_category_refs(self):
         client = staff_client()
@@ -262,7 +284,6 @@ class TagManagementTests(TestCase):
         lead = Lead.objects.create(
             name="Pilates Rename Clinic",
             address="1 Rename St",
-            category="pilates",
         )
         lead.tags.add(tag)
         CategoryRule.objects.create(
@@ -288,13 +309,11 @@ class TagManagementTests(TestCase):
         self.assertEqual(tag.sort_order, 75)
         self.assertFalse(Tag.objects.filter(slug="pilates").exists())
         lead.refresh_from_db()
-        self.assertEqual(lead.category, "pilates_studio")
         self.assertEqual(list(lead.tags.values_list("slug", flat=True)), ["pilates_studio"])
         self.assertEqual(
             CategoryRule.objects.get(match_phrase="pilates").category,
             "pilates_studio",
         )
-        self.assertFalse(LeadCategoryType.objects.filter(slug="pilates_studio").exists())
 
     def test_delete_unused_tag(self):
         client = staff_client()
@@ -303,26 +322,30 @@ class TagManagementTests(TestCase):
             data={"label": "Pilates", "slug": "pilates", "sort_order": "80"},
         )
         tag = Tag.objects.get(slug="pilates")
-        type_count = LeadCategoryType.objects.count()
 
         response = client.post(reverse("category_type_delete", kwargs={"pk": tag.pk}))
         self.assertEqual(response.status_code, 302)
         self.assertFalse(Tag.objects.filter(pk=tag.pk).exists())
-        self.assertEqual(LeadCategoryType.objects.count(), type_count)
+        self.assertFalse(CategoryRule.objects.filter(category="pilates").exists())
 
     def test_delete_blocked_when_lead_or_rule_still_uses_tag(self):
         client = staff_client()
         client.post(
             reverse("category_type_save"),
-            data={"label": "Veterinary", "slug": "vet", "sort_order": "90"},
+            data={
+                "label": "Veterinary",
+                "slug": "vet",
+                "sort_order": "90",
+                "match_phrase": "Veterinary",
+            },
         )
         tag = Tag.objects.get(slug="vet")
 
         lead = Lead.objects.create(
             name="In-use Tag Clinic",
             address="10 Sync St",
-            category="vet",
         )
+        lead.tags.add(tag)
         blocked_lead = client.post(reverse("category_type_delete", kwargs={"pk": tag.pk}))
         self.assertEqual(blocked_lead.status_code, 400)
         self.assertEqual(
@@ -330,23 +353,9 @@ class TagManagementTests(TestCase):
             "Leads still use this tag. Reassign them before deleting.",
         )
         self.assertTrue(Tag.objects.filter(pk=tag.pk).exists())
+        self.assertTrue(CategoryRule.objects.filter(category="vet").exists())
 
-        lead.category = "unknown"
-        lead.save(update_fields=["category"])
-        CategoryRule.objects.create(
-            match_phrase="veterinary",
-            category="vet",
-            priority=10,
-        )
-        blocked_rule = client.post(reverse("category_type_delete", kwargs={"pk": tag.pk}))
-        self.assertEqual(blocked_rule.status_code, 400)
-        self.assertEqual(
-            blocked_rule.content.decode(),
-            "Import rules still reference this tag. Update or delete those rules first.",
-        )
-        self.assertTrue(Tag.objects.filter(pk=tag.pk).exists())
-
-        CategoryRule.objects.filter(category="vet").delete()
+        lead.tags.clear()
         lead.tags.add(tag)
         blocked_tag = client.post(reverse("category_type_delete", kwargs={"pk": tag.pk}))
         self.assertEqual(blocked_tag.status_code, 400)
@@ -364,18 +373,18 @@ class TagManagementTests(TestCase):
         client = staff_client()
         client.post(
             reverse("category_type_save"),
-            data={"label": "Veterinary", "slug": "vet", "sort_order": "90"},
-        )
-        client.post(
-            reverse("category_rule_save"),
             data={
+                "label": "Veterinary",
+                "slug": "vet",
+                "sort_order": "90",
                 "match_phrase": "veterinary",
-                "category": "vet",
-                "priority": "10",
             },
         )
         self.assertTrue(Tag.objects.filter(slug="vet").exists())
-        self.assertFalse(LeadCategoryType.objects.filter(slug="vet").exists())
+        self.assertEqual(
+            CategoryRule.objects.get(category="vet").match_phrase,
+            "veterinary",
+        )
 
         mock_post.return_value = _serper_places_response(
             [
@@ -395,7 +404,7 @@ class TagManagementTests(TestCase):
         )
         self.assertEqual(result.created, 1)
         lead = Lead.objects.get(name="Sunrise Veterinary Hospital")
-        self.assertEqual(lead.category, "vet")
+        self.assertEqual(lead.primary_tag_slug, "vet")
         self.assertEqual(list(lead.tags.values_list("slug", flat=True)), ["vet"])
 
 
@@ -407,7 +416,6 @@ class TagWritePathTests(TestCase):
             name="Tag Write Clinic",
             address="10 Tag Write St",
             group=self.group,
-            category="unknown",
         )
         self.lead.tags.set(Tag.objects.filter(slug="unknown"))
 
@@ -417,8 +425,8 @@ class TagWritePathTests(TestCase):
         unknown = Tag.objects.get(slug="unknown")
         invalid = Tag.objects.get(slug="invalid")
         ordered = Tag.from_slugs(["dental", "gp"])
-        self.assertEqual([t.slug for t in ordered], ["gp", "dental"])
-        self.assertEqual(Tag.derived_category_slug(ordered), "gp")
+        self.assertEqual([t.slug for t in ordered], ["dental", "gp"])
+        self.assertEqual(Tag.derived_category_slug(ordered), "dental")
         self.assertEqual(
             Tag.derived_category_slug(Tag.from_slugs(["unknown", "dental"])),
             "dental",
@@ -442,18 +450,16 @@ class TagWritePathTests(TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertCountEqual(payload["tags"], ["dental", "gp"])
-        self.assertEqual(payload["category"], "gp")
+        self.assertEqual(payload["category"], "dental")
         self.lead.refresh_from_db()
         self.assertCountEqual(
             list(self.lead.tags.values_list("slug", flat=True)),
             ["dental", "gp"],
         )
-        self.assertEqual(self.lead.category, "gp")
+        self.assertEqual(self.lead.primary_tag_slug, "dental")
 
     def test_clinic_update_empty_tags_clears_m2m_and_uses_unknown(self):
         self.lead.tags.set(Tag.objects.filter(slug__in=["dental", "gp"]))
-        self.lead.category = "gp"
-        self.lead.save(update_fields=["category"])
         response = self.client.patch(
             reverse("clinic_update", kwargs={"pk": self.lead.pk}),
             data=json.dumps(
@@ -468,7 +474,7 @@ class TagWritePathTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.lead.refresh_from_db()
         self.assertEqual(list(self.lead.tags.values_list("slug", flat=True)), [])
-        self.assertEqual(self.lead.category, "unknown")
+        self.assertEqual(self.lead.primary_tag_slug, "unknown")
 
     def test_clinic_update_rejects_unknown_tag_slug(self):
         response = self.client.patch(
@@ -503,14 +509,13 @@ class TagWritePathTests(TestCase):
             list(lead.tags.values_list("slug", flat=True)),
             ["aesthetic", "dental"],
         )
-        self.assertEqual(lead.category, "aesthetic")
+        self.assertEqual(lead.primary_tag_slug, "dental")
 
     def test_bulk_manual_replaces_tags_on_owned_leads(self):
         other = Lead.objects.create(
             name="Bulk Other Clinic",
             address="12 Tag Write St",
             group=self.group,
-            category="unknown",
         )
         response = self.client.post(
             reverse("leads_bulk_manual"),
@@ -533,7 +538,7 @@ class TagWritePathTests(TestCase):
                 list(lead.tags.values_list("slug", flat=True)),
                 ["fitness", "cafe"],
             )
-            self.assertEqual(lead.category, "fitness")
+            self.assertEqual(lead.primary_tag_slug, "fitness")
             self.assertTrue(lead.is_processed)
 
     def test_bulk_manual_requires_at_least_one_tag(self):
@@ -580,3 +585,160 @@ class TagWritePathTests(TestCase):
         self.assertIn("clinic-edit-tags", js)
         self.assertIn("setTagPickerSlugs", js)
         self.assertNotIn("clinic-edit-type", js)
+
+
+class TagBackupAndScriptGroupTests(TestCase):
+    def test_backup_round_trip_preserves_tags_on_fresh_dataset(self):
+        from io import BytesIO
+
+        from openpyxl import load_workbook
+
+        from leads.backup import build_backup_workbook, restore_from_workbook
+
+        vet = Tag.objects.create(slug="veterinary", label="Veterinary", sort_order=90)
+        gp = Tag.objects.get(slug="gp")
+        lead = Lead.objects.create(
+            name="Sunrise Veterinary Hospital",
+            address="20 Backup St",
+        )
+        lead.tags.set([vet, gp])
+
+        wb = build_backup_workbook()
+        buf = BytesIO()
+        wb.save(buf)
+        payload = buf.getvalue()
+
+        loaded = load_workbook(BytesIO(payload), read_only=True, data_only=True)
+        self.assertIn("Tags", loaded.sheetnames)
+        headers = [cell.value for cell in next(loaded["Leads"].iter_rows(min_row=1, max_row=1))]
+        self.assertIn("tags", headers)
+        tag_idx = headers.index("tags")
+        lead_row = next(
+            row
+            for row in loaded["Leads"].iter_rows(min_row=2, values_only=True)
+            if row[1] == "Sunrise Veterinary Hospital"
+        )
+        self.assertCountEqual(
+            [part.strip() for part in str(lead_row[tag_idx]).split(",") if part.strip()],
+            ["veterinary", "gp"],
+        )
+
+        lead.delete()
+        vet.delete()
+        self.assertFalse(Tag.objects.filter(slug="veterinary").exists())
+        self.assertFalse(
+            Lead.objects.filter(
+                name="Sunrise Veterinary Hospital", address="20 Backup St"
+            ).exists()
+        )
+
+        summary = restore_from_workbook(BytesIO(payload))
+        self.assertEqual(summary["leads_created"], 1)
+        restored = Lead.objects.get(
+            name="Sunrise Veterinary Hospital", address="20 Backup St"
+        )
+        self.assertCountEqual(
+            list(restored.tags.values_list("slug", flat=True)),
+            ["veterinary", "gp"],
+        )
+        self.assertEqual(Tag.objects.get(slug="veterinary").label, "Veterinary")
+        self.assertEqual(
+            restored.primary_tag_slug,
+            Tag.derived_category_slug(list(restored.tags.all())),
+        )
+
+    def test_legacy_backup_without_tags_column_still_assigns_a_tag(self):
+        from io import BytesIO
+
+        from openpyxl import Workbook
+
+        from leads.backup import LEAD_HEADERS, restore_from_workbook
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Leads"
+        old_headers = [header for header in LEAD_HEADERS if header != "tags"]
+        ws.append(old_headers)
+        values = {header: "" for header in old_headers}
+        values.update(
+            {
+                "id": 99,
+                "name": "Legacy Dental Clinic",
+                "address": "1 Old Backup St",
+                "category": "dental",
+            }
+        )
+        ws.append([values[header] for header in old_headers])
+        buf = BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+
+        summary = restore_from_workbook(buf)
+        self.assertEqual(summary["leads_created"], 1)
+        lead = Lead.objects.get(name="Legacy Dental Clinic", address="1 Old Backup St")
+        self.assertEqual(lead.primary_tag_slug, "dental")
+        self.assertEqual(list(lead.tags.values_list("slug", flat=True)), ["dental"])
+
+    def test_restore_does_not_change_tags_on_existing_leads(self):
+        from io import BytesIO
+
+        from leads.backup import build_backup_workbook, restore_from_workbook
+
+        gp = Tag.objects.get(slug="gp")
+        dental = Tag.objects.get(slug="dental")
+        lead = Lead.objects.create(
+            name="Stay Put Clinic",
+            address="9 Skip St",
+        )
+        lead.tags.set([gp])
+        wb = build_backup_workbook()
+        buf = BytesIO()
+        wb.save(buf)
+
+        lead.tags.set([dental])
+
+        summary = restore_from_workbook(BytesIO(buf.getvalue()))
+        self.assertEqual(summary["leads_skipped"], 1)
+        lead.refresh_from_db()
+        self.assertEqual(list(lead.tags.values_list("slug", flat=True)), ["dental"])
+
+    def test_script_group_uses_tag_label_not_hardcoded_category_display(self):
+        from leads.pipeline import get_or_create_uncategorized_group
+        from leads.whatsapp_service import (
+            SCRIPT_TEMPLATE_FALLBACK_GROUP,
+            script_group_name_for_lead,
+        )
+
+        tag = Tag.objects.create(
+            slug="psychologist",
+            label="Psychologist",
+            sort_order=95,
+        )
+        lead = Lead.objects.create(
+            name="Mind Clinic",
+            address="1 Psy St",
+            group=get_or_create_uncategorized_group(),
+        )
+        lead.tags.set([tag])
+
+        self.assertFalse(Tag.objects.filter(slug="psychologist", is_system=True).exists())
+        from leads.category_types import DEFAULT_CATEGORY_TYPES
+
+        self.assertNotIn("psychologist", [row[0] for row in DEFAULT_CATEGORY_TYPES])
+        self.assertEqual(script_group_name_for_lead(lead), "Psychologist")
+
+        gp_lead = Lead.objects.create(
+            name="Town GP",
+            address="2 Psy St",
+            group=get_or_create_uncategorized_group(),
+        )
+        gp_lead.tags.set(Tag.objects.filter(slug="gp"))
+        self.assertEqual(script_group_name_for_lead(gp_lead), "GP")
+
+        unknown = Lead.objects.create(
+            name="Unknown Shop",
+            address="3 Psy St",
+            group=get_or_create_uncategorized_group(),
+        )
+        unknown.tags.set(Tag.objects.filter(slug="unknown"))
+        self.assertEqual(script_group_name_for_lead(unknown), SCRIPT_TEMPLATE_FALLBACK_GROUP)

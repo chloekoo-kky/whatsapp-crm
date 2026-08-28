@@ -26,7 +26,6 @@ class LeadFieldPartialTests(TestCase):
             group=self.group,
             phone_number="+60123456789",
             phone_numbers=["+60123456789", "+60129876543"],
-            category="dental",
             is_chain=True,
             is_very_important=True,
             shop_keyword="dentist",
@@ -205,21 +204,18 @@ class DashboardTagFilterTests(TestCase):
             name="Both Tags Clinic",
             address="1 Filter St",
             group=self.group,
-            category="dental",
         )
         self.both.tags.add(dental, gp)
         self.aes = Lead.objects.create(
             name="Aesthetic Only Clinic",
             address="2 Filter St",
             group=self.group,
-            category="aesthetic",
         )
         self.aes.tags.add(aesthetic)
         self.none = Lead.objects.create(
             name="No Tags Clinic",
             address="3 Filter St",
             group=self.group,
-            category="unknown",
         )
 
     def test_queryset_prefetches_tags(self):

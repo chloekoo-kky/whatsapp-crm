@@ -6,7 +6,6 @@ from leads.models import (
     CategoryRule,
     ChainBrandStatus,
     Lead,
-    LeadCategoryType,
     LeadConversationLog,
     LeadGroup,
     SearchQueryRecord,
@@ -63,14 +62,6 @@ class SearchQueryRecordAdmin(admin.ModelAdmin):
     ordering = ("-created_at",)
 
 
-@admin.register(LeadCategoryType)
-class LeadCategoryTypeAdmin(admin.ModelAdmin):
-    list_display = ("sort_order", "label", "slug", "is_system")
-    list_filter = ("is_system",)
-    search_fields = ("label", "slug")
-    ordering = ("sort_order", "label")
-
-
 @admin.register(Tag)
 class TagAdmin(admin.ModelAdmin):
     list_display = ("sort_order", "label", "slug", "is_system")
@@ -89,13 +80,11 @@ class CategoryRuleAdmin(admin.ModelAdmin):
 
 @admin.register(Lead)
 class LeadAdmin(admin.ModelAdmin):
-    # tags is schema-only for now; keep the Lead change form unchanged.
-    exclude = ("tags",)
     list_display = (
         "name",
         "assigned_to",
         "shop_keyword",
-        "category",
+        "tag_slugs",
         "is_chain",
         "is_very_important",
         "is_processed",
@@ -104,13 +93,14 @@ class LeadAdmin(admin.ModelAdmin):
         "created_at",
     )
     list_filter = (
-        "category",
+        "tags",
         "group",
         "assigned_to",
         "is_processed",
         "is_chain",
         "is_very_important",
     )
+    filter_horizontal = ("tags",)
     autocomplete_fields = ("assigned_to",)
     search_fields = (
         "name",
@@ -122,6 +112,10 @@ class LeadAdmin(admin.ModelAdmin):
         "search_query",
         "shop_keyword",
     )
+
+    @admin.display(description="Tags")
+    def tag_slugs(self, obj: Lead) -> str:
+        return ", ".join(obj.tags.values_list("slug", flat=True))
 
 
 @admin.register(LeadConversationLog)

@@ -29,6 +29,8 @@ class LeadOut(ModelSchema):
 
     tags: List[str] = []
 
+    category: str = ""
+
     class Meta:
 
         model = Lead
@@ -48,8 +50,6 @@ class LeadOut(ModelSchema):
             "website",
 
             "shop_keyword",
-
-            "category",
 
             "source_url",
 
@@ -83,8 +83,9 @@ class LeadOut(ModelSchema):
     def resolve_tags(obj: Lead) -> list[str]:
         return list(obj.tags.values_list("slug", flat=True))
 
-
-
+    @staticmethod
+    def resolve_category(obj: Lead) -> str:
+        return obj.primary_tag_slug
 
 
 class LeadListOut(Schema):
@@ -123,8 +124,9 @@ class LeadListOut(Schema):
     def resolve_tags(obj: Lead) -> list[str]:
         return list(obj.tags.values_list("slug", flat=True))
 
-
-
+    @staticmethod
+    def resolve_category(obj: Lead) -> str:
+        return obj.primary_tag_slug
 
 
 class LeadFilters(Schema):
@@ -135,7 +137,7 @@ class LeadFilters(Schema):
 
     )
 
-    category: Optional[str] = Field(None, description="Lead category slug (e.g. fitness, cafe, invalid)")
+    category: Optional[str] = Field(None, description="Filter by tag slug (e.g. fitness, cafe, invalid)")
 
     is_chain: Optional[bool] = Field(None, description="When true, only multi-location / chain rows")
 
@@ -259,7 +261,7 @@ def list_leads(request, filters: Query[LeadFilters]):
 
     if filters.category:
 
-        qs = qs.filter(category=filters.category.lower())
+        qs = qs.filter(tags__slug=filters.category.lower()).distinct()
 
     if filters.is_chain is not None:
 

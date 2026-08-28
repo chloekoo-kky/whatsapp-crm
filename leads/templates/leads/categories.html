@@ -22,18 +22,16 @@
     </header>
 
     <div class="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
-      <div class="mx-auto max-w-4xl space-y-6">
+      <div class="mx-auto max-w-6xl space-y-6">
         <div id="tags-manage-body">
           {% include "leads/partials/_tags_manage.html" %}
         </div>
-        {% include "leads/partials/_category_rules_manage.html" %}
       </div>
     </div>
   </main>
 
   <script>
     (function () {
-      var optionsFragmentUrl = "{{ category_options_fragment_url|escapejs }}";
       var body = document.getElementById("tags-manage-body");
 
       function getCsrfToken() {
@@ -43,15 +41,30 @@
         return match ? decodeURIComponent(match[1]) : "";
       }
 
-      async function refreshTagSelects() {
-        var res = await fetch(optionsFragmentUrl, { credentials: "same-origin" });
-        if (!res.ok) return;
-        var html = await res.text();
-        document.querySelectorAll("select.tag-select").forEach(function (sel) {
-          var prev = sel.value;
-          sel.innerHTML = html;
-          if (prev && sel.querySelector('option[value="' + prev + '"]')) sel.value = prev;
+      function bindMatchPhraseMirror(root) {
+        if (!root) return;
+        root.querySelectorAll('form[data-tag-form="save"]').forEach(function (form) {
+          var label = form.elements.namedItem("label");
+          var phrase = form.elements.namedItem("match_phrase");
+          if (!label || !phrase || phrase.dataset.mirrorBound === "1") return;
+          phrase.dataset.mirrorBound = "1";
+          if (!phrase.value) phrase.value = label.value;
+          var dirty = phrase.value !== label.value;
+          phrase.addEventListener("input", function () {
+            dirty = true;
+          });
+          label.addEventListener("input", function () {
+            if (dirty) return;
+            phrase.value = label.value;
+          });
         });
+      }
+
+      function submitControl(form) {
+        if (form.id) {
+          return document.querySelector('button[type="submit"][form="' + form.id + '"]');
+        }
+        return form.querySelector('[type="submit"]');
       }
 
       function bindTagForms(root) {
@@ -71,7 +84,7 @@
               });
               if (!ok) return;
             }
-            var submitBtn = form.querySelector('[type="submit"]');
+            var submitBtn = submitControl(form);
             if (submitBtn) submitBtn.disabled = true;
             try {
               var res = await fetch(form.action, {
@@ -89,7 +102,7 @@
               }
               body.innerHTML = await res.text();
               bindTagForms(body);
-              await refreshTagSelects();
+              bindMatchPhraseMirror(body);
             } catch (err) {
               console.error(err);
               await window.appAlert("Network error while saving tag.");
@@ -101,6 +114,7 @@
       }
 
       bindTagForms(body);
+      bindMatchPhraseMirror(body);
     })();
   </script>
   {% include "leads/partials/_htmx_setup.html" %}

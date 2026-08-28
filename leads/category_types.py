@@ -1,4 +1,4 @@
-"""Lead classification helpers. Live lookups use Tag; LeadCategoryType is legacy."""
+"""Lead classification helpers. Live lookups use Tag."""
 
 from __future__ import annotations
 
@@ -10,9 +10,9 @@ INVALID_SLUG = "invalid"
 DEFAULT_CATEGORY_TYPES: list[tuple[str, str, int, bool]] = [
     (UNKNOWN_SLUG, "Unknown", 0, True),
     (INVALID_SLUG, "Invalid / irrelevant", 1, True),
-    ("gp", "GP", 10, False),
+    ("dental", "Dental", 10, False),
     ("aesthetic", "Aesthetic", 20, False),
-    ("dental", "Dental", 30, False),
+    ("gp", "GP", 30, False),
     ("fitness", "Fitness / gym / yoga", 40, False),
     ("cafe", "Café / restaurant / F&B", 50, False),
     ("retail", "Retail / shop", 60, False),
@@ -55,17 +55,3 @@ def is_valid_category_slug(slug: str) -> bool:
     if not key:
         return False
     return Tag.objects.filter(slug=key).exists()
-
-
-def ensure_default_category_types() -> None:
-    from leads.models import LeadCategoryType
-
-    for slug, label, sort_order, is_system in DEFAULT_CATEGORY_TYPES:
-        LeadCategoryType.objects.update_or_create(
-            slug=slug,
-            defaults={
-                "label": label,
-                "sort_order": sort_order,
-                "is_system": is_system,
-            },
-        )

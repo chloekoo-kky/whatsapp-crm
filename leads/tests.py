@@ -2206,7 +2206,7 @@ class CategoryRuleManagementTests(TestCase):
     def test_category_rules_page_lists_rules(self):
         CategoryRule.objects.create(
             match_phrase="dental",
-            category=Lead.Category.DENTAL,
+            category="dental",
             priority=10,
         )
         client = staff_client()
@@ -2217,6 +2217,9 @@ class CategoryRuleManagementTests(TestCase):
         self.assertIn("Manage Tags", html)
         self.assertIn("Add tag", html)
         self.assertIn("Manage tags and import rules", html)
+        self.assertIn('name="match_phrase"', html)
+        self.assertNotIn("Add rule", html)
+        self.assertNotIn("Import rules", html)
         self.assertNotIn("Category types", html)
 
     def test_category_types_fragment_returns_manage_html(self):
@@ -2228,10 +2231,7 @@ class CategoryRuleManagementTests(TestCase):
         self.assertIn("Unknown", html)
 
     def test_category_type_save_via_fragment_header(self):
-        from leads.models import LeadCategoryType
-
         client = staff_client()
-        type_count = LeadCategoryType.objects.count()
         response = client.post(
             reverse("category_type_save"),
             data={
@@ -2244,14 +2244,9 @@ class CategoryRuleManagementTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Veterinary", response.content)
         self.assertTrue(Tag.objects.filter(slug="vet").exists())
-        self.assertFalse(LeadCategoryType.objects.filter(slug="vet").exists())
-        self.assertEqual(LeadCategoryType.objects.count(), type_count)
 
     def test_category_type_save_and_delete(self):
-        from leads.models import LeadCategoryType
-
         client = staff_client()
-        type_count = LeadCategoryType.objects.count()
         create = client.post(
             reverse("category_type_save"),
             data={
@@ -2263,8 +2258,6 @@ class CategoryRuleManagementTests(TestCase):
         self.assertEqual(create.status_code, 302)
         tag = Tag.objects.get(slug="pilates")
         self.assertEqual(tag.label, "Pilates")
-        self.assertFalse(LeadCategoryType.objects.filter(slug="pilates").exists())
-        self.assertEqual(LeadCategoryType.objects.count(), type_count)
 
         update = client.post(
             reverse("category_type_save"),
@@ -2282,7 +2275,6 @@ class CategoryRuleManagementTests(TestCase):
         delete = client.post(reverse("category_type_delete", kwargs={"pk": tag.pk}))
         self.assertEqual(delete.status_code, 302)
         self.assertFalse(Tag.objects.filter(pk=tag.pk).exists())
-        self.assertEqual(LeadCategoryType.objects.count(), type_count)
 
     def test_category_rule_save_and_delete(self):
         client = staff_client()
@@ -2290,20 +2282,20 @@ class CategoryRuleManagementTests(TestCase):
             reverse("category_rule_save"),
             data={
                 "match_phrase": "gym",
-                "category": Lead.Category.FITNESS,
+                "category": "fitness",
                 "priority": "50",
             },
         )
         self.assertEqual(create.status_code, 302)
         rule = CategoryRule.objects.get(match_phrase="gym")
-        self.assertEqual(rule.category, Lead.Category.FITNESS)
+        self.assertEqual(rule.category, "fitness")
 
         update = client.post(
             reverse("category_rule_save"),
             data={
                 "id": str(rule.pk),
                 "match_phrase": "fitness",
-                "category": Lead.Category.FITNESS,
+                "category": "fitness",
                 "priority": "20",
             },
         )

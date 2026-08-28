@@ -24,6 +24,7 @@ from leads.display import lead_phone_list, whatsapp_me_url
 from leads.models import (
     Lead,
     LeadConversationLog,
+    Tag,
     WhatsAppBatchSchedule,
     WhatsAppConfig,
     WhatsAppScriptTemplate,
@@ -534,9 +535,17 @@ def script_group_name_for_lead(lead: Lead) -> str:
         group_name = (lead.group.name or "").strip()
         if group_name and group_name not in SCRIPT_SYSTEM_GROUP_NAMES:
             return group_name
-    category = (lead.category or "").strip().lower()
-    if category and category != Lead.Category.UNKNOWN:
-        return lead.get_category_display()
+    from leads.category_types import UNKNOWN_SLUG
+
+    tags = list(lead.tags.all())
+    primary_slug = Tag.derived_category_slug(tags)
+    if primary_slug != UNKNOWN_SLUG:
+        for tag in tags:
+            if tag.slug == primary_slug:
+                label = (tag.label or "").strip()
+                if label:
+                    return label
+                break
     return SCRIPT_TEMPLATE_FALLBACK_GROUP
 
 

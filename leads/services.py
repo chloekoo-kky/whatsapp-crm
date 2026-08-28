@@ -121,10 +121,10 @@ def matching_category_slugs_from_name(name: str) -> list[str]:
 
 
 def _assign_classified_tags(lead: Lead, name: str) -> None:
-    """Set Lead.tags from all matching CategoryRules; fall back to the primary category slug."""
+    """Set Lead.tags from all matching CategoryRules; fall back to unknown."""
     from leads.category_types import UNKNOWN_SLUG
 
-    slugs = matching_category_slugs_from_name(name) or [lead.category or UNKNOWN_SLUG]
+    slugs = matching_category_slugs_from_name(name) or [UNKNOWN_SLUG]
     tags = list(Tag.objects.filter(slug__in=slugs))
     if tags:
         lead.tags.add(*tags)
@@ -699,7 +699,6 @@ def fetch_leads_from_serper(
             "website": normalized["website"],
             "source_url": normalized["source_url"],
             "shop_keyword": kw,
-            "category": classify_category_from_name(normalized["name"]),
             "group": uncategorized_group,
             "whatsapp_status": Lead.WhatsappStatus.IDLE,
             "is_processed": False,
@@ -732,7 +731,7 @@ def fetch_leads_from_serper(
         else:
             skipped_existing += 1
             update_fields: list[str] = []
-            # Existing row: never change group, category, tags, AI/processed flags, or shop_keyword here.
+            # Existing row: never change group, tags, AI/processed flags, or shop_keyword here.
             # Only refresh hunt provenance + fill in contact gaps from the new Serper payload.
             lead.search_city = search_city_db
             lead.search_state = search_state_db

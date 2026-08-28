@@ -25,6 +25,7 @@ from leads.models import (
     Lead,
     LeadConversationLog,
     LeadGroup,
+    Tag,
     WhatsAppConfig,
     WhatsAppScriptTemplate,
 )
@@ -58,6 +59,7 @@ LEAD_HEADERS = [
     "group",
     "display_order",
     "created_at",
+    "tags",
 ]
 
 CHAT_HEADERS = [
@@ -91,6 +93,8 @@ CONFIG_HEADERS = [
 ]
 
 SCRIPT_HEADERS = ["group_name", "template_text"]
+
+TAG_HEADERS = ["slug", "label", "sort_order", "is_system"]
 
 
 # --------------------------------------------------------------------------- #
@@ -191,6 +195,65 @@ def _p_json(value, default):
         return default
 
 
+def _parse_tag_slugs(raw) -> list[str]:
+    """Parse a tags cell: comma-separated slugs or a JSON list."""
+    if raw in (None, ""):
+        return []
+    if isinstance(raw, (list, tuple)):
+        items = raw
+    else:
+        text = str(raw).strip()
+        if text.startswith("["):
+            parsed = _p_json(text, None)
+            items = parsed if isinstance(parsed, list) else [text]
+        else:
+            items = text.replace(";", ",").split(",")
+    slugs: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        slug = str(item or "").strip().lower()[:32]
+        if not slug or slug in seen:
+            continue
+        seen.add(slug)
+        slugs.append(slug)
+    return slugs
+
+
+def _ensure_tags(slugs: list[str]) -> list[Tag]:
+    if not slugs:
+        return []
+    existing = {tag.slug: tag for tag in Tag.objects.filter(slug__in=slugs)}
+    tags: list[Tag] = []
+    for slug in slugs:
+        tag = existing.get(slug)
+        if tag is None:
+            tag = Tag.objects.create(
+                slug=slug,
+                label=slug.replace("_", " ").title()[:80],
+                sort_order=100,
+                is_system=False,
+            )
+            existing[slug] = tag
+        tags.append(tag)
+    return tags
+
+
+def _tags_and_category_for_row(row: dict) -> tuple[list[Tag], str]:
+    """Resolve tags for a lead row; fall back to the legacy category column."""
+    from leads.category_types import UNKNOWN_SLUG
+
+    slugs = _parse_tag_slugs(row.get("tags"))
+    if slugs:
+        tags = _ensure_tags(slugs)
+        return tags, Tag.derived_category_slug(tags)
+    category = _p_str(row.get("category")).strip().lower()
+    if category:
+        tags = _ensure_tags([category])
+        return tags, Tag.derived_category_slug(tags)
+    unknown = Tag.objects.filter(slug=UNKNOWN_SLUG).first()
+    return ([unknown] if unknown else []), UNKNOWN_SLUG
+
+
 # --------------------------------------------------------------------------- #
 # Export
 # --------------------------------------------------------------------------- #
@@ -205,14 +268,18 @@ def build_backup_workbook(lead_ids: list[int] | None = None):
     wb = Workbook()
     id_filter = [int(x) for x in (lead_ids or []) if int(x) > 0] if lead_ids else None
 
-    lead_qs = Lead.objects.select_related("group").order_by("display_order", "-created_at")
+    lead_qs = (
+        Lead.objects.select_related("group")
+        .prefetch_related("tags")
+        .order_by("display_order", "-created_at")
+    )
     if id_filter:
         lead_qs = lead_qs.filter(pk__in=id_filter)
 
     ws_leads = wb.active
     ws_leads.title = "Leads"
     ws_leads.append(LEAD_HEADERS)
-    for c in lead_qs.iterator(chunk_size=500):
+    for c in lead_qs:
         ws_leads.append(
             [
                 c.pk,
@@ -222,7 +289,7 @@ def build_backup_workbook(lead_ids: list[int] | None = None):
                 c.address or "",
                 c.website or "",
                 c.shop_keyword or "",
-                c.category,
+                Tag.derived_category_slug(list(c.tags.all())),
                 c.source_url or "",
                 bool(c.is_processed),
                 bool(c.is_chain),
@@ -242,8 +309,14 @@ def build_backup_workbook(lead_ids: list[int] | None = None):
                 c.group.name if c.group_id else "",
                 c.display_order,
                 _dump_dt(c.created_at),
+                ",".join(tag.slug for tag in c.tags.all()),
             ]
         )
+
+    ws_tags = wb.create_sheet("Tags")
+    ws_tags.append(TAG_HEADERS)
+    for tag in Tag.objects.order_by("sort_order", "label", "slug"):
+        ws_tags.append([tag.slug, tag.label, tag.sort_order, bool(tag.is_system)])
 
     ws_groups = wb.create_sheet("Groups")
     ws_groups.append(GROUP_HEADERS)
@@ -358,10 +431,25 @@ def restore_from_workbook(file_obj) -> dict:
         "scripts_created": 0,
     }
 
-    from leads.category_types import UNKNOWN_SLUG, lead_category_choices
-
-    valid_categories = {c[0] for c in lead_category_choices()}
     valid_statuses = {s[0] for s in Lead.WhatsappStatus.choices}
+
+    # Tag catalog first so lead M2M slugs resolve on a fresh database.
+    ws_tags = _sheet(wb, "Tags")
+    if ws_tags is not None:
+        for row in _iter_sheet_dicts(ws_tags):
+            slug = _p_str(row.get("slug")).strip().lower()[:32]
+            if not slug:
+                continue
+            label = (_p_str(row.get("label")).strip() or slug.replace("_", " ").title())[:80]
+            sort_order = _p_int(row.get("sort_order"))
+            Tag.objects.get_or_create(
+                slug=slug,
+                defaults={
+                    "label": label,
+                    "sort_order": 100 if sort_order is None else max(0, min(sort_order, 32767)),
+                    "is_system": _p_bool(row.get("is_system")),
+                },
+            )
 
     # Groups first so lead FKs can be linked by name.
     group_map: dict[str, LeadGroup] = {}
@@ -400,9 +488,6 @@ def restore_from_workbook(file_obj) -> dict:
             if not name:
                 continue
             address = _p_str(row.get("address"))
-            category = _p_str(row.get("category")).strip().lower()
-            if category not in valid_categories:
-                category = UNKNOWN_SLUG
             status = _p_str(row.get("whatsapp_status")).strip().lower()
             if status not in valid_statuses:
                 status = Lead.WhatsappStatus.IDLE
@@ -415,7 +500,6 @@ def restore_from_workbook(file_obj) -> dict:
                 "phone_numbers": _p_json(row.get("phone_numbers"), []),
                 "website": _p_str(row.get("website"))[:500],
                 "shop_keyword": _p_str(row.get("shop_keyword"))[:160],
-                "category": category,
                 "source_url": _p_str(row.get("source_url")),
                 "is_processed": _p_bool(row.get("is_processed")),
                 "is_chain": _p_bool(row.get("is_chain")),
@@ -450,6 +534,9 @@ def restore_from_workbook(file_obj) -> dict:
                 created_at = _p_dt(row.get("created_at"))
                 if created_at:
                     Lead.objects.filter(pk=lead.pk).update(created_at=created_at)
+                tags, _derived = _tags_and_category_for_row(row)
+                if tags:
+                    lead.tags.set(tags)
             else:
                 summary["leads_skipped"] += 1
 

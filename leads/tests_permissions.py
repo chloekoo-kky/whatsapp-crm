@@ -85,14 +85,12 @@ class BulkIdorTests(TestCase):
             name="Idor Mine",
             address="10 Sales Rd",
             group=group,
-            category="unknown",
             assigned_to=self.sales,
         )
         self.theirs = Lead.objects.create(
             name="Idor Theirs",
             address="11 Other Rd",
             group=group,
-            category="unknown",
             assigned_to=self.other,
         )
         self.client = Client()
@@ -106,7 +104,7 @@ class BulkIdorTests(TestCase):
         )
         self.assertEqual(response.status_code, 404)
         self.theirs.refresh_from_db()
-        self.assertEqual(self.theirs.category, "unknown")
+        self.assertEqual(list(self.theirs.tags.values_list("slug", flat=True)), [])
 
     def test_bulk_queue_ignores_foreign_lead_id(self):
         response = self.client.post(
