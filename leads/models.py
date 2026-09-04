@@ -60,7 +60,7 @@ class ShopType(models.Model):
 
 
 class SearchQueryRecord(models.Model):
-    """One row per Serper hunt from the dashboard (for history and filtering)."""
+    """One row per Maps hunt from the dashboard (for history and filtering)."""
 
     keyword = models.CharField(max_length=160, help_text="Hunt keyword (e.g. Fitness Center).")
     maps_search_query = models.CharField(
@@ -88,6 +88,28 @@ class SearchQueryRecord(models.Model):
         help_text="Optional country to disambiguate the Serper hunt.",
     )
     created_at = models.DateTimeField(auto_now_add=True)
+    PROVIDER_SERPER = "serper"
+    PROVIDER_OUTSCRAPER = "outscraper"
+    PROVIDER_CHOICES = [
+        (PROVIDER_SERPER, "Serper"),
+        (PROVIDER_OUTSCRAPER, "Outscraper"),
+    ]
+    provider = models.CharField(
+        max_length=20,
+        choices=PROVIDER_CHOICES,
+        default=PROVIDER_SERPER,
+        db_index=True,
+        help_text="Maps provider used for this hunt (serper or outscraper).",
+    )
+    exclude_keywords = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="Exclude terms applied locally after the hunt (not sent to Maps).",
+    )
+    leads_created = models.PositiveIntegerField(
+        default=0,
+        help_text="New leads created by this hunt (snapshot at hunt time).",
+    )
 
     class Meta:
         ordering = ["-created_at"]
@@ -96,6 +118,13 @@ class SearchQueryRecord(models.Model):
 
     def __str__(self) -> str:
         return f"{self.keyword} @ {self.search_city or '—'}"
+
+    @property
+    def exclude_keyword_list(self) -> list[str]:
+        raw = self.exclude_keywords
+        if isinstance(raw, list):
+            return [str(item).strip() for item in raw if str(item).strip()]
+        return []
 
 
 class LeadGroup(models.Model):
@@ -299,6 +328,11 @@ class Lead(models.Model):
         related_name="assigned_leads",
         help_text="Sales owner. Sales-role users only see leads assigned to them.",
     )
+    assigned_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When assigned_to was last set. Cleared when the lead is unassigned.",
+    )
     display_order = models.PositiveIntegerField(
         default=0,
         help_text="Manual sort in list/grid within a folder; ties break by created_at.",
@@ -324,6 +358,32 @@ class Lead(models.Model):
 
     def __str__(self) -> str:
         return self.name
+
+    @classmethod
+    def from_db(cls, db, field_names, values):
+        instance = super().from_db(db, field_names, values)
+        instance._loaded_assigned_to_id = instance.assigned_to_id
+        return instance
+
+    def save(self, *args, **kwargs):
+        from django.utils import timezone
+
+        update_fields = kwargs.get("update_fields")
+        should_check = update_fields is None or "assigned_to" in update_fields
+        if should_check:
+            prev = getattr(self, "_loaded_assigned_to_id", None)
+            is_create = self.pk is None
+            if is_create:
+                if self.assigned_to_id and not self.assigned_at:
+                    self.assigned_at = timezone.now()
+                    if update_fields is not None:
+                        kwargs["update_fields"] = list(set(update_fields) | {"assigned_at"})
+            elif prev != self.assigned_to_id:
+                self.assigned_at = timezone.now() if self.assigned_to_id else None
+                if update_fields is not None:
+                    kwargs["update_fields"] = list(set(update_fields) | {"assigned_at"})
+        super().save(*args, **kwargs)
+        self._loaded_assigned_to_id = self.assigned_to_id
 
     @property
     def primary_tag_slug(self) -> str:
@@ -593,6 +653,8 @@ class LeadConversationLog(models.Model):
 class Tag(models.Model):
     """User-managed lead tags (dropdown/filter values and import-rule targets)."""
 
+    DEFAULT_MATCH_RULE_PRIORITY = 100
+
     slug = models.SlugField(
         max_length=32,
         unique=True,
@@ -602,7 +664,7 @@ class Tag(models.Model):
     sort_order = models.PositiveSmallIntegerField(default=100)
     is_system = models.BooleanField(
         default=False,
-        help_text="System tags (Unknown, Invalid) cannot be deleted.",
+        help_text="System tags (Unknown) cannot be deleted.",
     )
 
     class Meta:
@@ -640,20 +702,44 @@ class Tag(models.Model):
     def derived_category_slug(tags: list["Tag"]) -> str:
         """Primary tag slug for display, API, and script-group fallback.
 
-        Prefer the first non-system tag (by sort_order). If only system tags are
-        selected, Invalid wins over Unknown. Empty selection → unknown.
+        Prefer the first non-system tag (by sort_order). Empty selection or
+        only Unknown → unknown.
         """
-        from leads.category_types import INVALID_SLUG, UNKNOWN_SLUG
+        from leads.category_types import UNKNOWN_SLUG
 
         if not tags:
             return UNKNOWN_SLUG
         preferred = [tag for tag in tags if not tag.is_system]
         if preferred:
             return preferred[0].slug
-        slugs = {tag.slug for tag in tags}
-        if INVALID_SLUG in slugs:
-            return INVALID_SLUG
         return UNKNOWN_SLUG
+
+    def ensure_default_match_rule(self) -> "CategoryRule | None":
+        """Create a label-based CategoryRule when this slug has none.
+
+        System tags (Unknown) are a fallback only and never get a match rule.
+        Runtime Tag.objects.create / admin add go through save() and call this.
+        Historical models in migrations do not; those paths need an explicit
+        backfill (see 0049_seed_missing_tag_match_rules).
+        """
+        if self.is_system:
+            return None
+        phrase = (self.label or "").strip()[:200]
+        if not self.slug or not phrase:
+            return None
+        if CategoryRule.objects.filter(category=self.slug).exists():
+            return None
+        return CategoryRule.objects.create(
+            match_phrase=phrase,
+            category=self.slug,
+            priority=self.DEFAULT_MATCH_RULE_PRIORITY,
+        )
+
+    def save(self, *args, **kwargs):
+        creating = self._state.adding
+        super().save(*args, **kwargs)
+        if creating:
+            self.ensure_default_match_rule()
 
 
 class CategoryRule(models.Model):

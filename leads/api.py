@@ -11,11 +11,11 @@ from ninja.security import django_auth
 
 
 
-from leads.models import Lead, SearchQueryRecord, Tag
+from leads.models import Lead, Tag
 
 from leads.permissions import get_visible_lead_or_404, hunt_owner_for_request, visible_leads
 
-from leads.services import fetch_leads_from_serper
+from leads.services import create_search_query_record, fetch_leads, normalize_hunt_provider, record_search_query_outcome
 
 
 
@@ -137,7 +137,7 @@ class LeadFilters(Schema):
 
     )
 
-    category: Optional[str] = Field(None, description="Filter by tag slug (e.g. fitness, cafe, invalid)")
+    category: Optional[str] = Field(None, description="Filter by tag slug (e.g. fitness, cafe, dental)")
 
     is_chain: Optional[bool] = Field(None, description="When true, only multi-location / chain rows")
 
@@ -213,7 +213,15 @@ class HuntIn(Schema):
 
         default=None,
 
-        description="Skip listings whose name/address contains any of these terms (applied locally after Serper import).",
+        description="Skip listings whose name/address contains any of these terms (applied locally after import).",
+
+    )
+
+    provider: str = Field(
+
+        default="serper",
+
+        description="Maps provider for this hunt: serper or outscraper.",
 
     )
 
@@ -287,7 +295,11 @@ def list_leads(request, filters: Query[LeadFilters]):
 
 def hunt_leads(request, body: HuntIn):
 
-    """Run Serper Maps hunt for a city + query and persist new leads."""
+    """Run a Maps hunt (Serper or Outscraper) and persist new leads. Superuser only."""
+
+    if not getattr(request.user, "is_superuser", False):
+
+        raise HttpError(403, "Superuser required.")
 
     try:
 
@@ -317,27 +329,41 @@ def hunt_leads(request, body: HuntIn):
 
         ctry = (body.country or "").strip()
 
+        try:
+
+            provider = normalize_hunt_provider(body.provider)
+
+        except ValueError as exc:
+
+            raise HttpError(400, str(exc)) from exc
+
         if body.log_search:
 
-            rec = SearchQueryRecord.objects.create(
+            rec = create_search_query_record(
 
-                keyword=kw[:160],
+                keyword=kw,
 
-                maps_search_query=((body.query or "").strip() or kw)[:255],
+                maps_query=(body.query or "").strip(),
 
-                search_city=(body.city or "").strip()[:255],
+                city=body.city or "",
 
-                search_state=(body.state or "").strip()[:255],
+                state=body.state or "",
 
-                search_country=ctry[:255],
+                country=ctry,
+
+                provider=provider,
+
+                exclude_keywords=body.exclude_keywords,
 
             )
 
-        result = fetch_leads_from_serper(
+        result = fetch_leads(
 
             body.city,
 
             body.query,
+
+            provider=provider,
 
             num=num,
 
@@ -362,6 +388,12 @@ def hunt_leads(request, body: HuntIn):
         raise HttpError(400, str(exc)) from exc
 
 
+
+    record_search_query_outcome(
+
+        rec, created=result.created, exclude_keywords=body.exclude_keywords
+
+    )
 
     if result.errors and result.places_seen == 0 and result.created == 0:
 

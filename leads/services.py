@@ -1,5 +1,5 @@
 """
-Serper Maps scraping for business leads (any category).
+Maps hunt: Serper and Outscraper collect listings; one persist pipeline imports them.
 """
 
 from __future__ import annotations
@@ -12,14 +12,24 @@ from typing import Any
 
 import requests
 from django.conf import settings
+from django.db import transaction
 
 from leads.display import normalize_manual_phone
 from leads.models import CategoryRule, Lead, SearchQueryRecord, Tag
+from leads.outscraper import collect_outscraper_maps_places, outscraper_api_key
 from leads.pipeline import (
     ensure_pipeline_system_groups,
     get_or_create_uncategorized_group,
     phone_exists_in_database,
 )
+
+HUNT_PROVIDER_SERPER = "serper"
+HUNT_PROVIDER_OUTSCRAPER = "outscraper"
+HUNT_PROVIDERS = frozenset({HUNT_PROVIDER_SERPER, HUNT_PROVIDER_OUTSCRAPER})
+HUNT_PROVIDER_LABELS = {
+    HUNT_PROVIDER_SERPER: "Serper",
+    HUNT_PROVIDER_OUTSCRAPER: "Outscraper",
+}
 
 logger = logging.getLogger(__name__)
 
@@ -34,14 +44,23 @@ def _hunt_max_results() -> int:
     return max(1, min(int(getattr(settings, "HUNT_MAX_LIMIT", 100)), 100))
 
 
+def normalize_hunt_provider(raw: str | None) -> str:
+    p = (raw or "").strip().lower()
+    if not p:
+        return HUNT_PROVIDER_SERPER
+    if p in HUNT_PROVIDERS:
+        return p
+    raise ValueError(f"Unknown hunt provider {raw!r}. Use serper or outscraper.")
+
+
 def _place_dedupe_key(raw: dict[str, Any]) -> str:
-    """Stable key to dedupe the same listing across Serper result pages."""
-    for key in ("cid", "placeId", "place_id"):
+    """Stable key to dedupe the same listing across provider result pages."""
+    for key in ("cid", "placeId", "place_id", "google_id"):
         v = raw.get(key)
         if v is not None and str(v).strip():
             return f"id:{str(v).strip()}"
     title = (raw.get("title") or raw.get("name") or "").strip().lower()
-    addr = (raw.get("address") or "").strip().lower()
+    addr = (raw.get("address") or raw.get("full_address") or "").strip().lower()
     if title or addr:
         return f"na:{title}|{addr}"
     return ""
@@ -120,6 +139,88 @@ def matching_category_slugs_from_name(name: str) -> list[str]:
     return slugs
 
 
+@dataclass
+class AutoClassifyFromNameResult:
+    updated: int = 0
+    skipped_tagged: int = 0
+    skipped_no_match: int = 0
+    skipped_unchanged: int = 0
+    updated_ids: list[int] | None = None
+
+    def __post_init__(self):
+        if self.updated_ids is None:
+            self.updated_ids = []
+
+    def message(self) -> str:
+        parts = [
+            f"Updated {self.updated} lead{'s' if self.updated != 1 else ''} from name."
+        ]
+        if self.skipped_tagged:
+            parts.append(
+                f"Skipped {self.skipped_tagged} already tagged (left unchanged)."
+            )
+        if self.skipped_no_match:
+            parts.append(
+                f"Skipped {self.skipped_no_match} with no name match."
+            )
+        if self.skipped_unchanged:
+            parts.append(
+                f"Skipped {self.skipped_unchanged} already matching the name."
+            )
+        return " ".join(parts)
+
+
+def _lead_tag_slugs_set(lead: Lead) -> set[str]:
+    return {tag.slug for tag in lead.tags.all()}
+
+
+def auto_classify_unknown_leads_from_names(
+    leads: list[Lead],
+) -> AutoClassifyFromNameResult:
+    """Re-tag unknown-only leads using ``matching_category_slugs_from_name``.
+
+    A lead is eligible only when its tags are empty or exactly ``{unknown}``.
+    Any lead with a real (non-unknown) tag is skipped, not an error.
+    """
+    from leads.category_types import UNKNOWN_SLUG
+
+    result = AutoClassifyFromNameResult()
+    planned: list[tuple[Lead, list[Tag]]] = []
+    tags_by_slug = {
+        tag.slug: tag for tag in Tag.objects.filter(is_system=False)
+    }
+    for lead in leads:
+        current = _lead_tag_slugs_set(lead)
+        if current - {UNKNOWN_SLUG}:
+            result.skipped_tagged += 1
+            continue
+        matched = [
+            slug
+            for slug in matching_category_slugs_from_name(lead.name)
+            if slug and slug != UNKNOWN_SLUG
+        ]
+        tags = [tags_by_slug[slug] for slug in matched if slug in tags_by_slug]
+        if not tags:
+            result.skipped_no_match += 1
+            continue
+        new_slugs = {tag.slug for tag in tags}
+        if new_slugs == current:
+            result.skipped_unchanged += 1
+            continue
+        planned.append((lead, tags))
+
+    if planned:
+        with transaction.atomic():
+            for lead, tags in planned:
+                lead.tags.set(tags)
+                if not lead.is_processed:
+                    lead.is_processed = True
+                    lead.save(update_fields=["is_processed"])
+                result.updated_ids.append(lead.pk)
+        result.updated = len(result.updated_ids)
+    return result
+
+
 def _assign_classified_tags(lead: Lead, name: str) -> None:
     """Set Lead.tags from all matching CategoryRules; fall back to unknown."""
     from leads.category_types import UNKNOWN_SLUG
@@ -156,6 +257,43 @@ def _normalize_exclude_keywords(raw) -> list[str]:
         seen.add(term)
         out.append(term[:80])
     return out[:12]
+
+
+def create_search_query_record(
+    *,
+    keyword: str,
+    maps_query: str = "",
+    city: str = "",
+    state: str = "",
+    country: str = "",
+    provider: str | None = None,
+    exclude_keywords=None,
+) -> SearchQueryRecord:
+    """Persist one hunt history row before listings are collected."""
+    kw = (keyword or "").strip()[:160]
+    return SearchQueryRecord.objects.create(
+        keyword=kw,
+        maps_search_query=((maps_query or "").strip() or kw)[:255],
+        search_city=(city or "").strip()[:255],
+        search_state=(state or "").strip()[:255],
+        search_country=(country or "").strip()[:255],
+        provider=normalize_hunt_provider(provider),
+        exclude_keywords=_normalize_exclude_keywords(exclude_keywords),
+    )
+
+
+def record_search_query_outcome(
+    rec: SearchQueryRecord | None,
+    *,
+    created: int = 0,
+    exclude_keywords=None,
+) -> None:
+    """Store leads produced (and exclude terms) on the hunt history row."""
+    if rec is None:
+        return
+    rec.leads_created = max(0, int(created or 0))
+    rec.exclude_keywords = _normalize_exclude_keywords(exclude_keywords)
+    rec.save(update_fields=["leads_created", "exclude_keywords"])
 
 
 def _strip_serper_query_operators(search_q: str) -> str:
@@ -466,12 +604,12 @@ def _collect_serper_maps_places(
 
 
 def _place_maps_url(raw: dict[str, Any]) -> str:
-    for key in ("link", "url", "placeUrl", "googleMapsUri"):
+    for key in ("link", "url", "placeUrl", "googleMapsUri", "location_link"):
         v = raw.get(key)
         if isinstance(v, str) and v.startswith("http"):
             return v.strip()
-    title = (raw.get("title") or "").strip()
-    addr = (raw.get("address") or "").strip()
+    title = (raw.get("title") or raw.get("name") or "").strip()
+    addr = (raw.get("address") or raw.get("full_address") or "").strip()
     if title or addr:
         from urllib.parse import quote
 
@@ -538,27 +676,39 @@ def _is_meaningful_online_presence(url: str) -> bool:
     return not any(m in u for m in _MAPS_ONLY_URL_MARKERS)
 
 
+_SOCIAL_URL_KEYS = (
+    "facebook",
+    "instagram",
+    "twitter",
+    "linkedin",
+    "youtube",
+    "tiktok",
+    "Facebook",
+    "Instagram",
+    "Twitter",
+    "LinkedIn",
+    "Linkedin",
+    "Youtube",
+)
+
+
 def _extract_public_website(raw: dict[str, Any]) -> str:
-    """Prefer Maps `website` and structured `links` (Facebook, Instagram, etc.) when present."""
+    """Prefer a real site (Serper ``website``, Outscraper ``site``) then social URLs."""
     candidates: list[str] = []
-    for key in ("website", "webUrl"):
+    for key in ("website", "webUrl", "site"):
         v = raw.get(key)
         if isinstance(v, str) and v.strip():
             candidates.append(v.strip())
     links = raw.get("links")
     if isinstance(links, dict):
-        for lk in (
-            "website",
-            "facebook",
-            "instagram",
-            "twitter",
-            "linkedin",
-            "youtube",
-            "tiktok",
-        ):
+        for lk in ("website",) + _SOCIAL_URL_KEYS:
             v = links.get(lk)
             if isinstance(v, str) and v.strip():
                 candidates.append(v.strip())
+    for key in _SOCIAL_URL_KEYS:
+        v = raw.get(key)
+        if isinstance(v, str) and v.strip():
+            candidates.append(v.strip())
     for c in candidates:
         u = _coerce_http_url(c)
         if _is_meaningful_online_presence(u):
@@ -574,10 +724,10 @@ def _normalize_place_item(raw: dict[str, Any]) -> dict[str, Any] | None:
         return None
     phone = raw.get("phoneNumber") or raw.get("phone") or raw.get("phone_number") or ""
     phone = str(phone).strip() if phone is not None else ""
-    address = (raw.get("address") or "").strip()
+    address = (raw.get("address") or raw.get("full_address") or "").strip()
     website = _extract_public_website(raw)
     if not website:
-        w = (raw.get("website") or raw.get("webUrl") or "").strip()
+        w = (raw.get("website") or raw.get("webUrl") or raw.get("site") or "").strip()
         website = _coerce_http_url(w) if w else ""
     return {
         "name": name[:255],
@@ -588,86 +738,22 @@ def _normalize_place_item(raw: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
-def fetch_leads_from_serper(
-    city: str,
-    query: str,
+def _persist_imported_places(
+    places: list[Any],
     *,
-    num: int = 100,
-    shop_keyword: str = "",
-    state: str = "",
-    country: str = "",
-    search_query_record: SearchQueryRecord | None = None,
-    require_website: bool = False,
-    exclude_keywords: list[str] | None = None,
+    collect_errors: list[str],
+    shop_keyword: str,
+    exclude_terms: list[str],
+    require_website: bool,
+    search_city_db: str | None,
+    search_state_db: str | None,
+    search_query_db: str | None,
+    search_country_db: str | None,
+    search_query_record: SearchQueryRecord | None,
     assigned_to=None,
 ) -> FetchLeadsResult:
-    """
-    Call Serper Maps API (paginated) and persist leads. Uniqueness is (name, address); phone
-    numbers are deduplicated globally before insert. New rows land in the Uncategorized folder
-    with ``whatsapp_status=idle``.
-
-    Serper Maps returns ~20 listings per page; when ``num`` > 20, additional pages are fetched
-    automatically until the target count or Serper runs out of results.
-
-    When ``require_website`` is true, skip listings whose Maps payload has no non-Maps website
-    or social profile URL (Facebook, Instagram, etc.).
-
-    ``exclude_keywords`` are used to skip listings whose name or address contains any excluded
-    phrase (not sent to Serper — free-tier accounts reject ``-term`` query operators).
-    """
-    kw = (shop_keyword or "").strip()
-    if not kw:
-        raise ValueError("shop_keyword is required (non-empty).")
-    kw = kw[:160]
-    exclude_terms = _normalize_exclude_keywords(exclude_keywords)
-
-    search_q = _build_search_q(
-        city,
-        query,
-        shop_keyword=kw,
-        state=state,
-        country=country,
-        exclude_keywords=exclude_terms,
-    )
-    city_clean = city.strip()[:255]
-    state_clean = (state or "").strip()[:255]
-    query_clean = ((query or "").strip() or kw)[:255]
-    country_clean = (country or "").strip()[:255]
-    search_city_db = city_clean or None
-    search_state_db = state_clean or None
-    search_query_db = query_clean or None
-    search_country_db = country_clean or None
-    errors: list[str] = []
-    created = 0
-    skipped_existing = 0
-    skipped_duplicate_phone = 0
-    skipped_no_website = 0
-    skipped_excluded = 0
-    places_seen = 0
-    created_ids: list[int] = []
-    record_pk = search_query_record.pk if search_query_record else None
-    uncategorized_group = get_or_create_uncategorized_group()
-
-    try:
-        api_key = _serper_api_key()
-    except ValueError as exc:
-        return FetchLeadsResult(
-            created=0,
-            skipped_existing=0,
-            errors=[str(exc)],
-            places_seen=0,
-            created_ids=[],
-        )
-
-    target = max(1, min(int(num), _hunt_max_results()))
-    places, errors = _collect_serper_maps_places(
-        search_q,
-        target=target,
-        country=country_clean,
-        api_key=api_key,
-        city=city_clean,
-        state=state_clean,
-    )
+    """Shared import path: name+address dedup, phone dedup, filters, tags, chain flags."""
+    errors = list(collect_errors)
     if not places:
         return FetchLeadsResult(
             created=0,
@@ -677,7 +763,17 @@ def fetch_leads_from_serper(
             created_ids=[],
         )
 
+    created = 0
+    skipped_existing = 0
+    skipped_duplicate_phone = 0
+    skipped_no_website = 0
+    skipped_excluded = 0
+    places_seen = 0
+    created_ids: list[int] = []
+    record_pk = search_query_record.pk if search_query_record else None
+    uncategorized_group = get_or_create_uncategorized_group()
     raw_places_count = len(places)
+
     for raw in places:
         normalized = _normalize_place_item(raw)
         if not normalized:
@@ -698,7 +794,7 @@ def fetch_leads_from_serper(
             "phone_numbers": [pn] if pn else [],
             "website": normalized["website"],
             "source_url": normalized["source_url"],
-            "shop_keyword": kw,
+            "shop_keyword": shop_keyword,
             "group": uncategorized_group,
             "whatsapp_status": Lead.WhatsappStatus.IDLE,
             "is_processed": False,
@@ -731,8 +827,8 @@ def fetch_leads_from_serper(
         else:
             skipped_existing += 1
             update_fields: list[str] = []
-            # Existing row: never change group, tags, AI/processed flags, or shop_keyword here.
-            # Only refresh hunt provenance + fill in contact gaps from the new Serper payload.
+            # Existing row: never change group, tags, processed flags, or shop_keyword here.
+            # Only refresh hunt provenance + fill in contact gaps from the new payload.
             lead.search_city = search_city_db
             lead.search_state = search_state_db
             lead.search_query = search_query_db
@@ -764,13 +860,13 @@ def fetch_leads_from_serper(
 
     if require_website and raw_places_count > 0 and places_seen == 0:
         errors.append(
-            f"All {raw_places_count} Serper listing(s) had no website/social URL in the payload. "
+            f"All {raw_places_count} listing(s) had no website/social URL in the payload. "
             'Uncheck "Website/social only" to import Maps-only rows, or widen the hunt.'
         )
 
     if exclude_terms and raw_places_count > 0 and places_seen == 0 and not errors:
         errors.append(
-            f"All {raw_places_count} Serper listing(s) matched exclude keyword(s): "
+            f"All {raw_places_count} listing(s) matched exclude keyword(s): "
             f"{', '.join(exclude_terms[:5])}."
         )
 
@@ -784,3 +880,135 @@ def fetch_leads_from_serper(
         skipped_duplicate_phone=skipped_duplicate_phone,
         skipped_excluded=skipped_excluded,
     )
+
+
+def fetch_leads(
+    city: str,
+    query: str,
+    *,
+    provider: str = HUNT_PROVIDER_SERPER,
+    num: int = 100,
+    shop_keyword: str = "",
+    state: str = "",
+    country: str = "",
+    search_query_record: SearchQueryRecord | None = None,
+    require_website: bool = False,
+    exclude_keywords: list[str] | None = None,
+    assigned_to=None,
+) -> FetchLeadsResult:
+    """
+    Collect listings from the chosen Maps provider, then persist through one pipeline.
+
+    Uniqueness is (name, address); phone numbers are deduplicated globally before insert.
+    New rows land in the Uncategorized folder with ``whatsapp_status=idle``.
+
+    When ``require_website`` is true, skip listings with no non-Maps website or social URL.
+    ``exclude_keywords`` skip listings whose name or address contains any excluded phrase
+    (applied locally — not sent in the Maps query).
+    """
+    provider = normalize_hunt_provider(provider)
+    kw = (shop_keyword or "").strip()
+    if not kw:
+        raise ValueError("shop_keyword is required (non-empty).")
+    kw = kw[:160]
+    exclude_terms = _normalize_exclude_keywords(exclude_keywords)
+
+    search_q = _build_search_q(
+        city,
+        query,
+        shop_keyword=kw,
+        state=state,
+        country=country,
+        exclude_keywords=exclude_terms,
+    )
+    city_clean = city.strip()[:255]
+    state_clean = (state or "").strip()[:255]
+    query_clean = ((query or "").strip() or kw)[:255]
+    country_clean = (country or "").strip()[:255]
+    target = max(1, min(int(num), _hunt_max_results()))
+
+    def _finish(result: FetchLeadsResult) -> FetchLeadsResult:
+        record_search_query_outcome(
+            search_query_record,
+            created=result.created,
+            exclude_keywords=exclude_terms,
+        )
+        return result
+
+    if provider == HUNT_PROVIDER_OUTSCRAPER:
+        try:
+            api_key = outscraper_api_key()
+        except ValueError as exc:
+            return _finish(
+                FetchLeadsResult(
+                    created=0,
+                    skipped_existing=0,
+                    errors=[str(exc)],
+                    places_seen=0,
+                    created_ids=[],
+                )
+            )
+        gl = _country_hint_to_gl(country_clean)
+        places, collect_errors = collect_outscraper_maps_places(
+            search_q,
+            target=target,
+            api_key=api_key,
+            region=(gl or "").upper(),
+        )
+    else:
+        try:
+            api_key = _serper_api_key()
+        except ValueError as exc:
+            return _finish(
+                FetchLeadsResult(
+                    created=0,
+                    skipped_existing=0,
+                    errors=[str(exc)],
+                    places_seen=0,
+                    created_ids=[],
+                )
+            )
+        places, collect_errors = _collect_serper_maps_places(
+            search_q,
+            target=target,
+            country=country_clean,
+            api_key=api_key,
+            city=city_clean,
+            state=state_clean,
+        )
+
+    return _finish(
+        _persist_imported_places(
+            places,
+            collect_errors=collect_errors,
+            shop_keyword=kw,
+            exclude_terms=exclude_terms,
+            require_website=require_website,
+            search_city_db=city_clean or None,
+            search_state_db=state_clean or None,
+            search_query_db=query_clean or None,
+            search_country_db=country_clean or None,
+            search_query_record=search_query_record,
+            assigned_to=assigned_to,
+        )
+    )
+
+
+def fetch_leads_from_serper(
+    city: str,
+    query: str,
+    **kwargs,
+) -> FetchLeadsResult:
+    """Serper Maps hunt (paginated). Same persist pipeline as Outscraper."""
+    kwargs.pop("provider", None)
+    return fetch_leads(city, query, provider=HUNT_PROVIDER_SERPER, **kwargs)
+
+
+def fetch_leads_from_outscraper(
+    city: str,
+    query: str,
+    **kwargs,
+) -> FetchLeadsResult:
+    """Outscraper Google Maps hunt. Same persist pipeline as Serper."""
+    kwargs.pop("provider", None)
+    return fetch_leads(city, query, provider=HUNT_PROVIDER_OUTSCRAPER, **kwargs)

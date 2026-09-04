@@ -35,28 +35,39 @@
         });
       });
       setLimit(huntLimitInput ? huntLimitInput.value : dashboardJsConfig.defaultLimit, true);
+      document.querySelectorAll('.hunt-provider-btn').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          setHuntProvider(btn.getAttribute('data-provider'), true);
+        });
+      });
+      (function initHuntProvider() {
+        var stored = '';
+        try { stored = localStorage.getItem(HUNT_PROVIDER_KEY) || ''; } catch (e) { stored = ''; }
+        var flags = (dashboardJsConfig && dashboardJsConfig.huntProviders) || {};
+        var initial = stored;
+        if (initial !== 'serper' && initial !== 'outscraper') {
+          initial = flags.outscraper && !flags.serper ? 'outscraper' : 'serper';
+        }
+        setHuntProvider(initial, true);
+      })();
       window.requireWebsiteToggle = document.getElementById('hunt-require-website');
       bindHuntOptionToggle(requireWebsiteToggle, REQUIRE_WEBSITE_KEY);
-      window.chatIndicatorPollToggle = document.getElementById('chat-indicator-poll-toggle');
-      bindHuntOptionToggle(chatIndicatorPollToggle, CHAT_INDICATOR_POLL_KEY);
       window.clinicSaveStatusTimer = null;
       window.selectAll = document.getElementById('select-all-clinics');
       window.currentLeadPage = 1;
       window.folderTotalPipelineCount = 0;
       window.leadChatIndicatorPollTimer = null;
       window.leadChatIndicatorSnapshot = '';
-      if (chatIndicatorPollToggle) {
-        chatIndicatorPollToggle.addEventListener('change', function () {
-          window.__syncLeadChatIndicatorPolling();
-        });
-      }
+      document.getElementById('bulk-move-ready-btn')?.addEventListener('click', function () {
+        bulkMoveSelectedToReady();
+      });
       document.getElementById('bulk-wa-queue-btn')?.addEventListener('click', function () {
         bulkPushSelectedToWhatsappQueue();
       });
       document.getElementById('bulk-dequeue-btn')?.addEventListener('click', function () {
         bulkDequeueSelectedFromQueue();
       });
-      // --- Choose batch (assign selected Queue leads to a WhatsApp batch) ---
+      // --- Choose batch (assign selected Ready / Queue leads to a WhatsApp batch) ---
       window.chooseBatchDialog = document.getElementById('choose-batch-dialog');
       document.getElementById('bulk-choose-batch-btn')?.addEventListener('click', openChooseBatchDialog);
       document.getElementById('choose-batch-select')?.addEventListener('change', toggleChooseBatchNewFields);
@@ -68,6 +79,9 @@
       });
       chooseBatchDialog?.addEventListener('click', function (e) {
         if (e.target === chooseBatchDialog) closeChooseBatchDialog();
+      });
+      chooseBatchDialog?.addEventListener('close', function () {
+        window.chooseBatchTargetIds = null;
       });
       /** Unique lead ids among checked boxes in the current visible filter/view. */
       // Lead id of the last plainly-selected card; anchor for shift+click ranges.
@@ -138,6 +152,72 @@
             .finally(function () {
               exportXlsxSetBusy(false);
             });
+        });
+      }
+      // ----- Import from Excel (Export to Excel format) -----
+      window.importXlsxBtn = document.getElementById('import-xlsx-btn');
+      window.importXlsxInput = document.getElementById('import-xlsx-input');
+      window.importXlsxIcon = document.getElementById('import-xlsx-icon');
+      window.importXlsxSpinner = document.getElementById('import-xlsx-spinner');
+      if (importXlsxBtn && importXlsxInput) {
+        importXlsxBtn.addEventListener('click', function () {
+          exportXlsxShowErr('');
+          importXlsxInput.click();
+        });
+        importXlsxInput.addEventListener('change', function () {
+          var file = importXlsxInput.files && importXlsxInput.files[0];
+          if (!file) return;
+          window.appConfirm({
+            title: 'Import from Excel?',
+            message: 'Import leads from "' + file.name + '"?\n\nThis accepts files from Export to Excel. Existing leads (same name & address) are skipped. New rows are added to the current view.',
+            confirmLabel: 'Import',
+          }).then(function (ok) {
+            if (!ok) {
+              importXlsxInput.value = '';
+              return;
+            }
+            var fd = new FormData();
+            fd.append('xlsx', file);
+            var gid = typeof currentLeadGroupTabId !== 'undefined' && currentLeadGroupTabId != null
+              ? String(currentLeadGroupTabId)
+              : 'uncategorized';
+            fd.append('group_id', gid);
+            importXlsxSetBusy(true);
+            fetch(dashboardJsConfig.importXlsxUrl || '/leads/import/xlsx/', {
+              method: 'POST',
+              credentials: 'same-origin',
+              headers: { 'X-CSRFToken': getCsrfToken() },
+              body: fd,
+            })
+              .then(function (res) {
+                return res.json().then(function (data) {
+                  return { ok: res.ok, data: data };
+                }).catch(function () {
+                  return { ok: res.ok, data: {} };
+                });
+              })
+              .then(function (o) {
+                if (!o.ok || !o.data.ok) {
+                  throw new Error((o.data && o.data.detail) || 'Import failed.');
+                }
+                var d = o.data;
+                return window.appAlert({
+                  title: 'Import complete',
+                  message:
+                    '• ' + (d.leads_created || 0) + ' leads added\n' +
+                    '• ' + (d.leads_skipped || 0) + ' already existed',
+                }).then(function () {
+                  window.location.reload();
+                });
+              })
+              .catch(function (err) {
+                exportXlsxShowErr((err && err.message ? err.message : String(err)) || 'Import failed.');
+              })
+              .finally(function () {
+                importXlsxSetBusy(false);
+                importXlsxInput.value = '';
+              });
+          });
         });
       }
       // ----- Full backup (all folders) download -----
@@ -288,7 +368,7 @@
         });
         panel.addEventListener('click', function (e) {
           var item = e.target.closest && e.target.closest('button[role="menuitem"]');
-          if (!item || item.id === 'restore-backup-btn') return;
+          if (!item || item.id === 'restore-backup-btn' || item.id === 'import-xlsx-btn') return;
           closeMore();
         });
       })();
@@ -309,6 +389,357 @@
       refreshSelectAllState();
       refreshSelectionVisuals();
       window.leadSortMode = readLeadSortMode();
+      function manageTagsDialogEl() {
+        return document.getElementById('manage-tags-dialog');
+      }
+      function tagDeleteUrl(id) {
+        var tmpl = dashboardJsConfig.categoryTypeDeleteUrlTemplate || '/categories/types/__ID__/delete/';
+        return tmpl.replace('__ID__', String(id));
+      }
+      function setManageTagsError(message) {
+        var err = document.getElementById('manage-tags-error');
+        if (!err) return;
+        var text = String(message || '').trim();
+        err.textContent = text;
+        err.classList.toggle('hidden', !text);
+      }
+      function closeManageTagsDialog() {
+        var dialog = manageTagsDialogEl();
+        if (dialog && dialog.open) dialog.close();
+      }
+      async function postTagJson(url, body) {
+        var res = await fetch(url, {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: {
+            Accept: 'application/json',
+            'X-Tag-Json': '1',
+            'X-CSRFToken': getCsrfToken(),
+            'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+          },
+          body: body ? body.toString() : '',
+        });
+        var data = {};
+        var raw = await res.text();
+        try { data = JSON.parse(raw); } catch (err) { data = {}; }
+        if (!res.ok || !data.ok) {
+          throw new Error((data.detail && String(data.detail)) || raw.slice(0, 160) || ('HTTP ' + res.status));
+        }
+        return data;
+      }
+      function appendCreatedTagToUi(slug, label) {
+        if (!slug) return;
+        var filter = document.getElementById('lead-tag-filter');
+        if (filter && !filter.querySelector('.lead-tag-filter-chip[data-tag-slug="' + slug + '"]')) {
+          var empty = filter.querySelector('.lead-tag-filter-empty');
+          if (empty) empty.remove();
+          var chip = document.createElement('button');
+          chip.type = 'button';
+          chip.className = 'lead-tag-filter-chip';
+          chip.setAttribute('data-tag-slug', slug);
+          chip.setAttribute('aria-pressed', 'false');
+          chip.title = label + ' · 0 lead(s)';
+          var labelEl = document.createElement('span');
+          labelEl.className = 'lead-tag-filter-label';
+          labelEl.textContent = label;
+          var countEl = document.createElement('span');
+          countEl.className = 'lead-tag-filter-count';
+          countEl.setAttribute('aria-hidden', 'true');
+          countEl.textContent = '0';
+          chip.appendChild(labelEl);
+          chip.appendChild(countEl);
+          var manageBtn = document.getElementById('lead-tag-filter-manage');
+          if (manageBtn) filter.insertBefore(chip, manageBtn);
+          else filter.appendChild(chip);
+        }
+        document.querySelectorAll('.lead-tag-picker').forEach(function (picker) {
+          if (picker.querySelector('.lead-tag-picker-cb[value="' + slug + '"]')) return;
+          var emptyP = picker.querySelector('p');
+          if (emptyP) emptyP.remove();
+          var wrap = document.createElement('label');
+          wrap.className = 'lead-tag-picker-chip';
+          var cb = document.createElement('input');
+          cb.type = 'checkbox';
+          cb.className = 'lead-tag-picker-cb';
+          cb.value = slug;
+          var span = document.createElement('span');
+          span.className = 'lead-tag-picker-chip-label';
+          span.textContent = label;
+          wrap.appendChild(cb);
+          wrap.appendChild(span);
+          picker.appendChild(wrap);
+        });
+        if (typeof window.syncLeadTagFilterUi === 'function') window.syncLeadTagFilterUi();
+      }
+      function renameTagInUi(oldSlug, newSlug, label) {
+        document.querySelectorAll('.lead-tag-filter-chip[data-tag-slug="' + oldSlug + '"]').forEach(function (chip) {
+          chip.setAttribute('data-tag-slug', newSlug);
+          var labelEl = chip.querySelector('.lead-tag-filter-label');
+          if (labelEl) labelEl.textContent = label;
+          else chip.textContent = label;
+          var countEl = chip.querySelector('.lead-tag-filter-count');
+          var n = countEl ? String(countEl.textContent || '0').trim() : '0';
+          chip.title = label + ' · ' + n + ' lead(s)';
+        });
+        document.querySelectorAll('.lead-tag-picker-cb[value="' + oldSlug + '"]').forEach(function (cb) {
+          cb.value = newSlug;
+          var span = cb.parentElement && cb.parentElement.querySelector('.lead-tag-picker-chip-label');
+          if (span) span.textContent = label;
+        });
+        if (oldSlug !== newSlug && typeof window.getLeadTagFilterSlugs === 'function' && typeof window.saveLeadTagFilterSlugs === 'function') {
+          var slugs = window.getLeadTagFilterSlugs();
+          var idx = slugs.indexOf(oldSlug);
+          if (idx !== -1) {
+            slugs[idx] = newSlug;
+            window.saveLeadTagFilterSlugs(slugs);
+          }
+        }
+        if (typeof window.syncLeadTagFilterUi === 'function') window.syncLeadTagFilterUi();
+      }
+      function removeTagFromUi(slug) {
+        document.querySelectorAll('.lead-tag-filter-chip[data-tag-slug="' + slug + '"]').forEach(function (chip) {
+          chip.remove();
+        });
+        var filter = document.getElementById('lead-tag-filter');
+        if (filter && !filter.querySelector('.lead-tag-filter-chip') && !filter.querySelector('.lead-tag-filter-empty')) {
+          var empty = document.createElement('span');
+          empty.className = 'lead-tag-filter-empty px-1 text-xs font-medium text-slate-400';
+          empty.textContent = 'No tags yet';
+          var manageBtn = document.getElementById('lead-tag-filter-manage');
+          if (manageBtn) filter.insertBefore(empty, manageBtn);
+          else filter.prepend(empty);
+        }
+        document.querySelectorAll('.lead-tag-picker-cb[value="' + slug + '"]').forEach(function (cb) {
+          var wrap = cb.closest('.lead-tag-picker-chip');
+          if (wrap) wrap.remove();
+        });
+        document.querySelectorAll('.lead-tag-picker').forEach(function (picker) {
+          if (picker.querySelector('.lead-tag-picker-cb')) return;
+          if (picker.querySelector('p')) return;
+          var emptyP = document.createElement('p');
+          emptyP.className = 'text-xs text-slate-400';
+          emptyP.textContent = 'No tags yet';
+          picker.appendChild(emptyP);
+        });
+        if (typeof window.getLeadTagFilterSlugs === 'function' && typeof window.saveLeadTagFilterSlugs === 'function') {
+          var slugs = window.getLeadTagFilterSlugs().filter(function (item) { return item !== slug; });
+          window.saveLeadTagFilterSlugs(slugs);
+        }
+        if (typeof window.syncLeadTagFilterUi === 'function') window.syncLeadTagFilterUi();
+        if (typeof window.applyTableFilter === 'function') window.applyTableFilter({ resetPage: true });
+      }
+      function renderManageTagsList(tags) {
+        var list = document.getElementById('manage-tags-list');
+        if (!list) return;
+        list.replaceChildren();
+        if (!tags.length) {
+          var empty = document.createElement('p');
+          empty.className = 'px-1 py-6 text-center text-xs text-slate-400';
+          empty.textContent = 'No tags yet';
+          list.appendChild(empty);
+          return;
+        }
+        tags.forEach(function (tag) {
+          var row = document.createElement('div');
+          row.className = 'manage-tags-row';
+          row.setAttribute('role', 'listitem');
+          row.setAttribute('data-tag-id', String(tag.id));
+          row.setAttribute('data-tag-slug', tag.slug || '');
+          row.setAttribute('data-sort-order', String(tag.sort_order != null ? tag.sort_order : 100));
+          row.setAttribute('data-is-system', tag.is_system ? '1' : '0');
+          var input = document.createElement('input');
+          input.type = 'text';
+          input.className = 'manage-tags-label';
+          input.maxLength = 80;
+          input.value = tag.label || '';
+          input.setAttribute('aria-label', 'Tag name');
+          var save = document.createElement('button');
+          save.type = 'button';
+          save.className = 'manage-tags-save';
+          save.textContent = 'Save';
+          row.appendChild(input);
+          row.appendChild(save);
+          if (tag.is_system) {
+            var sys = document.createElement('span');
+            sys.className = 'manage-tags-system';
+            sys.textContent = 'System';
+            sys.title = 'System tags cannot be deleted';
+            row.appendChild(sys);
+          } else {
+            var del = document.createElement('button');
+            del.type = 'button';
+            del.className = 'manage-tags-delete';
+            del.textContent = 'Delete';
+            if (tag.lead_count) {
+              del.title = tag.lead_count + ' lead(s) still use this tag';
+            }
+            row.appendChild(del);
+          }
+          list.appendChild(row);
+        });
+      }
+      async function loadManageTagsList() {
+        var list = document.getElementById('manage-tags-list');
+        if (list) {
+          list.replaceChildren();
+          var loading = document.createElement('p');
+          loading.className = 'px-1 py-6 text-center text-xs text-slate-400';
+          loading.textContent = 'Loading…';
+          list.appendChild(loading);
+        }
+        var res = await fetch(dashboardJsConfig.tagsJsonUrl || '/categories/types/json/', {
+          credentials: 'same-origin',
+          headers: { Accept: 'application/json' },
+        });
+        var data = {};
+        var raw = await res.text();
+        try { data = JSON.parse(raw); } catch (err) { data = {}; }
+        if (!res.ok || !data.ok) {
+          throw new Error((data.detail && String(data.detail)) || raw.slice(0, 160) || ('HTTP ' + res.status));
+        }
+        renderManageTagsList(Array.isArray(data.tags) ? data.tags : []);
+      }
+      async function openManageTagsDialog() {
+        var dialog = manageTagsDialogEl();
+        if (!dialog || typeof dialog.showModal !== 'function') return;
+        setManageTagsError('');
+        var createInput = document.getElementById('manage-tags-create-label');
+        if (createInput) createInput.value = '';
+        bindManageTagsDialog();
+        if (!dialog.open) dialog.showModal();
+        try {
+          await loadManageTagsList();
+        } catch (err) {
+          setManageTagsError((err && err.message) || 'Could not load tags.');
+        }
+        if (createInput) window.setTimeout(function () { createInput.focus(); }, 0);
+      }
+      async function createTagFromModal() {
+        var input = document.getElementById('manage-tags-create-label');
+        var submitBtn = document.getElementById('manage-tags-create-submit');
+        var label = input ? String(input.value || '').trim() : '';
+        if (!label) {
+          setManageTagsError('Enter a tag name.');
+          if (input) input.focus();
+          return;
+        }
+        setManageTagsError('');
+        if (submitBtn) submitBtn.disabled = true;
+        try {
+          var body = new URLSearchParams();
+          body.set('label', label);
+          var data = await postTagJson(dashboardJsConfig.categoryTypeSaveUrl, body);
+          appendCreatedTagToUi(String(data.slug || ''), String(data.label || label));
+          if (input) input.value = '';
+          await loadManageTagsList();
+        } catch (err) {
+          setManageTagsError((err && err.message) || 'Could not create tag.');
+        } finally {
+          if (submitBtn) submitBtn.disabled = false;
+        }
+      }
+      async function saveManageTagsRow(row) {
+        if (!row) return;
+        var input = row.querySelector('.manage-tags-label');
+        var saveBtn = row.querySelector('.manage-tags-save');
+        var label = input ? String(input.value || '').trim() : '';
+        var tagId = row.getAttribute('data-tag-id') || '';
+        var slug = row.getAttribute('data-tag-slug') || '';
+        if (!label) {
+          setManageTagsError('Enter a tag name.');
+          if (input) input.focus();
+          return;
+        }
+        setManageTagsError('');
+        if (saveBtn) saveBtn.disabled = true;
+        try {
+          var body = new URLSearchParams();
+          body.set('id', tagId);
+          body.set('label', label);
+          if (slug) body.set('slug', slug);
+          body.set('sort_order', row.getAttribute('data-sort-order') || '100');
+          var data = await postTagJson(dashboardJsConfig.categoryTypeSaveUrl, body);
+          var newSlug = String(data.slug || slug);
+          var newLabel = String(data.label || label);
+          row.setAttribute('data-tag-slug', newSlug);
+          if (input) input.value = newLabel;
+          renameTagInUi(slug, newSlug, newLabel);
+        } catch (err) {
+          setManageTagsError((err && err.message) || 'Could not save tag.');
+        } finally {
+          if (saveBtn) saveBtn.disabled = false;
+        }
+      }
+      async function deleteManageTagsRow(row) {
+        if (!row || row.getAttribute('data-is-system') === '1') return;
+        var tagId = row.getAttribute('data-tag-id') || '';
+        var slug = row.getAttribute('data-tag-slug') || '';
+        var input = row.querySelector('.manage-tags-label');
+        var label = input ? String(input.value || '').trim() : slug;
+        var ok = true;
+        if (typeof window.appConfirm === 'function') {
+          ok = await window.appConfirm({
+            title: 'Delete tag?',
+            message: 'Delete “' + label + '”? This cannot be undone.',
+            confirmLabel: 'Delete',
+            danger: true,
+          });
+        }
+        if (!ok) return;
+        setManageTagsError('');
+        var delBtn = row.querySelector('.manage-tags-delete');
+        if (delBtn) delBtn.disabled = true;
+        try {
+          await postTagJson(tagDeleteUrl(tagId), new URLSearchParams());
+          removeTagFromUi(slug);
+          row.remove();
+          var list = document.getElementById('manage-tags-list');
+          if (list && !list.querySelector('.manage-tags-row')) {
+            renderManageTagsList([]);
+          }
+        } catch (err) {
+          setManageTagsError((err && err.message) || 'Could not delete tag.');
+          if (delBtn) delBtn.disabled = false;
+        }
+      }
+      function bindManageTagsDialog() {
+        if (window.__manageTagsDialogBound) return;
+        window.__manageTagsDialogBound = true;
+        document.body.addEventListener('submit', function (e) {
+          if (!e.target || e.target.id !== 'manage-tags-create') return;
+          e.preventDefault();
+          createTagFromModal();
+        }, true);
+        document.body.addEventListener('click', function (e) {
+          if (e.target.closest('#manage-tags-close-x') || e.target.closest('#manage-tags-done')) {
+            closeManageTagsDialog();
+            return;
+          }
+          var dialog = manageTagsDialogEl();
+          if (dialog && e.target === dialog) {
+            closeManageTagsDialog();
+            return;
+          }
+          var saveBtn = e.target.closest('.manage-tags-save');
+          if (saveBtn) {
+            saveManageTagsRow(saveBtn.closest('.manage-tags-row'));
+            return;
+          }
+          var delBtn = e.target.closest('.manage-tags-delete');
+          if (delBtn) {
+            deleteManageTagsRow(delBtn.closest('.manage-tags-row'));
+          }
+        });
+        document.body.addEventListener('keydown', function (e) {
+          if (e.key !== 'Enter') return;
+          var input = e.target.closest('.manage-tags-label');
+          if (!input) return;
+          e.preventDefault();
+          saveManageTagsRow(input.closest('.manage-tags-row'));
+        });
+      }
+      window.openManageTagsDialog = openManageTagsDialog;
+      window.closeManageTagsDialog = closeManageTagsDialog;
       if (!window.__leadsToolbarDelegated) {
         window.__leadsToolbarDelegated = true;
         document.body.addEventListener('click', function (e) {
@@ -319,32 +750,48 @@
           }
           var vipBtn = e.target.closest('#filter-very-important-only');
           if (vipBtn) {
-            setLeadTagFilterMenuOpen(false);
-            toggleLeadFilterButton(vipBtn, 'amber');
+            toggleLeadFilterButton(vipBtn);
+            return;
+          }
+          var queuedBtn = e.target.closest('#filter-queued-only');
+          if (queuedBtn) {
+            toggleLeadFilterButton(queuedBtn);
+            if (typeof window.__refreshCurrentLeadFolder === 'function') {
+              window.__refreshCurrentLeadFolder();
+            }
             return;
           }
           var sentBtn = e.target.closest('#filter-sent-message-only');
           if (sentBtn) {
-            setLeadTagFilterMenuOpen(false);
-            toggleLeadFilterButton(sentBtn, 'emerald');
+            toggleLeadFilterButton(sentBtn);
             return;
           }
-          var tagFilterToggle = e.target.closest('#lead-tag-filter-toggle');
-          if (tagFilterToggle) {
-            toggleLeadTagFilterMenu();
-            return;
-          }
-          var tagFilterClear = e.target.closest('#lead-tag-filter-clear');
-          if (tagFilterClear) {
-            saveLeadTagFilterSlugs([]);
-            setLeadTagFilterMenuOpen(false);
+          var tagChip = e.target.closest('.lead-tag-filter-chip');
+          if (tagChip) {
+            var slug = tagChip.getAttribute('data-tag-slug') || '';
+            var slugs = getLeadTagFilterSlugs();
+            var idx = slugs.indexOf(slug);
+            if (!slug) return;
+            if (idx === -1) slugs.push(slug);
+            else slugs.splice(idx, 1);
+            saveLeadTagFilterSlugs(slugs);
             applyTableFilter({ resetPage: true });
             refreshSelectAllState();
             refreshSelectionVisuals();
             return;
           }
-          if (!e.target.closest('#lead-tag-filter')) {
-            setLeadTagFilterMenuOpen(false);
+          var tagManageBtn = e.target.closest('#lead-tag-filter-manage');
+          if (tagManageBtn) {
+            openManageTagsDialog();
+            return;
+          }
+          var tagFilterClear = e.target.closest('#lead-tag-filter-clear');
+          if (tagFilterClear) {
+            saveLeadTagFilterSlugs([]);
+            applyTableFilter({ resetPage: true });
+            refreshSelectAllState();
+            refreshSelectionVisuals();
+            return;
           }
           if (e.target.closest('#leads-page-prev')) {
             e.preventDefault();
@@ -368,15 +815,6 @@
             } catch (err) { /* ignore */ }
             currentLeadPage = 1;
             applyLeadPagination(false);
-          }
-          if (e.target && e.target.classList && e.target.classList.contains('lead-tag-filter-cb')) {
-            var slugs = Array.from(document.querySelectorAll('.lead-tag-filter-cb:checked')).map(function (cb) {
-              return cb.value;
-            });
-            saveLeadTagFilterSlugs(slugs);
-            applyTableFilter({ resetPage: true });
-            refreshSelectAllState();
-            refreshSelectionVisuals();
           }
         });
       }
@@ -487,7 +925,7 @@
       window.GLOBAL_SEARCH_MIN_LEN = 2;
       window.globalSearchActive = false;
       window.globalSearchQuery = '';
-      window.tabBeforeGlobalSearch = 'uncategorized';
+      window.tabBeforeGlobalSearch = dashboardJsConfig.readyGroupTabId || 'uncategorized';
       window.globalSearchDebounceTimer = null;
       window.globalSearchRequestId = 0;
       window.pendingHighlightLeadId = null;
@@ -496,7 +934,7 @@
         searchInput.addEventListener('input', handleLeadSearchInput);
       }
       document.getElementById('table-search-clear')?.addEventListener('click', function () {
-        exitGlobalSearchMode({ clearInput: true });
+        clearLeadToolbarQuickFilters();
       });
       document.getElementById('global-search-banner-exit')?.addEventListener('click', function () {
         exitGlobalSearchMode({ clearInput: true });
@@ -516,155 +954,13 @@
       window.currentLeadGroupTabId = normalizeLeadGroupTabId(
         typeof dashboardJsConfig.initialLeadGroupTabIdFromPage === 'string' && dashboardJsConfig.initialLeadGroupTabIdFromPage
           ? dashboardJsConfig.initialLeadGroupTabIdFromPage
-          : 'uncategorized'
+          : (dashboardJsConfig.readyGroupTabId || 'uncategorized')
       );
       document.addEventListener('visibilitychange', function () {
         if (typeof window.__syncLeadChatIndicatorPolling === 'function') {
           window.__syncLeadChatIndicatorPolling();
         }
       });
-      (function bindLeadGroupTabDragDrop() {
-        var wrap = document.getElementById('lead-group-tabs');
-        if (!wrap) return;
-        var dragTabEl = null;
-
-        function enforceTabAfterUncategorized() {
-          var unc = wrap.querySelector('.lead-group-tab[data-group-id="uncategorized"]');
-          if (!unc || !dragTabEl) return;
-          var uncIdx = Array.prototype.indexOf.call(wrap.children, unc);
-          var dragIdx = Array.prototype.indexOf.call(wrap.children, dragTabEl);
-          if (dragIdx !== -1 && dragIdx < uncIdx) {
-            wrap.insertBefore(dragTabEl, unc.nextElementSibling);
-          }
-        }
-
-        function placeDragTabByPointer(clientX) {
-          var newBtn = document.getElementById('lead-group-new-btn');
-          var unc = wrap.querySelector('.lead-group-tab[data-group-id="uncategorized"]');
-          var list = wrap.querySelectorAll('.lead-group-tab--draggable');
-          if (!list.length) return;
-          var firstOther = null;
-          for (var j = 0; j < list.length; j++) {
-            if (list[j] !== dragTabEl) {
-              firstOther = list[j];
-              break;
-            }
-          }
-          if (firstOther) {
-            var r0 = firstOther.getBoundingClientRect();
-            if (clientX < r0.left + r0.width / 2) {
-              wrap.insertBefore(dragTabEl, firstOther);
-              return;
-            }
-          }
-          for (var i = 0; i < list.length; i++) {
-            var btn = list[i];
-            if (btn === dragTabEl) continue;
-            var rect = btn.getBoundingClientRect();
-            if (clientX < rect.left + rect.width / 2) {
-              wrap.insertBefore(dragTabEl, btn);
-              return;
-            }
-          }
-          if (newBtn) wrap.insertBefore(dragTabEl, newBtn);
-          else if (unc) {
-            var ref = unc.nextElementSibling;
-            while (ref && ref === dragTabEl) ref = ref.nextElementSibling;
-            if (ref) wrap.insertBefore(dragTabEl, ref);
-          }
-        }
-
-        wrap.addEventListener('dragstart', function (e) {
-          var t = e.target.closest('.lead-group-tab--draggable');
-          if (!t || !wrap.contains(t)) return;
-          dragTabEl = t;
-          e.dataTransfer.effectAllowed = 'move';
-          e.dataTransfer.setData('text/plain', t.getAttribute('data-group-id') || '');
-          t.classList.add('lead-group-tab--dragging');
-        });
-        wrap.addEventListener('dragend', function () {
-          if (dragTabEl) dragTabEl.classList.remove('lead-group-tab--dragging');
-          dragTabEl = null;
-        });
-        wrap.addEventListener('dragover', function (e) {
-          if (!dragTabEl) return;
-          e.preventDefault();
-          e.dataTransfer.dropEffect = 'move';
-
-          var newBtn = document.getElementById('lead-group-new-btn');
-          var unc = wrap.querySelector('.lead-group-tab[data-group-id="uncategorized"]');
-
-          if (newBtn && (e.target === newBtn || newBtn.contains(e.target))) {
-            wrap.insertBefore(dragTabEl, newBtn);
-            enforceTabAfterUncategorized();
-            return;
-          }
-
-          var t = e.target.closest('.lead-group-tab[data-group-id]');
-          if (t && wrap.contains(t) && t !== dragTabEl) {
-            if (t.getAttribute('data-group-id') === 'uncategorized' && unc) {
-              var refU = unc.nextElementSibling;
-              while (refU && refU === dragTabEl) refU = refU.nextElementSibling;
-              if (refU) wrap.insertBefore(dragTabEl, refU);
-              else if (newBtn) wrap.insertBefore(dragTabEl, newBtn);
-              enforceTabAfterUncategorized();
-              return;
-            }
-            if (t.classList.contains('lead-group-tab--draggable')) {
-              var rect = t.getBoundingClientRect();
-              var before = e.clientX < rect.left + rect.width / 2;
-              if (before) {
-                wrap.insertBefore(dragTabEl, t);
-              } else {
-                var nextEl = t.nextElementSibling;
-                while (nextEl && nextEl !== newBtn && nextEl.classList && !nextEl.classList.contains('lead-group-tab--draggable')) {
-                  nextEl = nextEl.nextElementSibling;
-                }
-                if (!nextEl || nextEl === newBtn) wrap.insertBefore(dragTabEl, newBtn);
-                else wrap.insertBefore(dragTabEl, nextEl);
-              }
-            }
-          } else {
-            placeDragTabByPointer(e.clientX);
-          }
-          enforceTabAfterUncategorized();
-        });
-        wrap.addEventListener('drop', function (e) {
-          e.preventDefault();
-          var ids = [];
-          wrap.querySelectorAll('.lead-group-tab--draggable').forEach(function (btn) {
-            var id = parseInt(btn.getAttribute('data-group-id'), 10);
-            if (!isNaN(id)) ids.push(id);
-          });
-          if (!ids.length) return;
-          fetch(dashboardJsConfig.reorderLeadGroupsUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
-            credentials: 'same-origin',
-            body: JSON.stringify({ order: ids }),
-          })
-            .then(function (res) {
-              return res.json().then(function (data) {
-                return { res: res, data: data };
-              });
-            })
-            .then(function (o) {
-              if (!o.res.ok) {
-                window.appAlert({
-                  title: 'Could not save tab order',
-                  message: typeof o.data.detail === 'string' ? o.data.detail : 'Could not save tab order.',
-                }).then(function () {
-                  window.location.reload();
-                });
-              }
-            })
-            .catch(function () {
-              window.appAlert('Could not save tab order.').then(function () {
-                window.location.reload();
-              });
-            });
-        });
-      })();
       (function bindGridCardDragDrop() {
         var inner = document.getElementById('clinics-grid-inner');
         if (!inner) return;
@@ -744,7 +1040,7 @@
       window.leadGroupTabBusy = false;
       document.getElementById('lead-group-tabs')?.addEventListener('click', function (e) {
         var tab = e.target.closest('.lead-group-tab[data-group-id]');
-        if (!tab || tab.id === 'lead-group-new-btn') return;
+        if (!tab) return;
         e.preventDefault();
         e.stopPropagation();
         var gid = normalizeLeadGroupTabId(tab.getAttribute('data-group-id') || 'uncategorized');
@@ -752,78 +1048,6 @@
         switchLeadGroupTab(gid, { historyMode: 'push' });
       });
       replaceDashboardUrlForCurrentTab('replace');
-      document.getElementById('lead-group-new-btn')?.addEventListener('click', async function (e) {
-        e.preventDefault();
-        var name = window.prompt('Name for the new group');
-        if (name == null) return;
-        name = String(name).trim().slice(0, 100);
-        if (!name) return;
-        try {
-          var res = await fetch(dashboardJsConfig.createLeadGroupUrl, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'X-CSRFToken': getCsrfToken(),
-            },
-            credentials: 'same-origin',
-            body: JSON.stringify({ name: name }),
-          });
-          var data = await res.json().catch(function () { return {}; });
-          if (!res.ok || !data.ok) {
-            await window.appAlert(typeof data.detail === 'string' ? data.detail : 'Could not create group.');
-            return;
-          }
-          var wrap = document.getElementById('lead-group-tabs');
-          var newBtn = document.getElementById('lead-group-new-btn');
-          if (wrap && newBtn) {
-            var b = document.createElement('button');
-            b.type = 'button';
-            b.setAttribute('role', 'tab');
-            b.className = 'lead-group-tab lead-group-tab--draggable rounded-t-md';
-            b.setAttribute('draggable', 'true');
-            b.setAttribute('data-group-id', String(data.id));
-            b.setAttribute('aria-selected', 'false');
-            var label = document.createElement('span');
-            label.className = 'relative inline-flex';
-            label.textContent = data.name;
-            var cnt = document.createElement('span');
-            cnt.className = 'lead-group-count absolute -right-3.5 -top-2.5 inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-slate-200 px-1.5 py-0.5 text-[11px] font-bold leading-none text-slate-600 ring-1 ring-white';
-            cnt.title = '0 lead(s) in this group';
-            cnt.textContent = '0';
-            label.appendChild(cnt);
-            b.appendChild(label);
-            wrap.insertBefore(b, newBtn);
-          }
-          var moveMenuWrap = document.getElementById('lead-group-move-menu-groups');
-          if (moveMenuWrap) {
-            var mb = document.createElement('button');
-            mb.type = 'button';
-            mb.setAttribute('role', 'menuitem');
-            mb.className =
-              'lead-group-move-pick flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm font-medium text-slate-800 transition hover:bg-violet-50/90 focus:bg-violet-50/90 focus:outline-none disabled:cursor-wait disabled:opacity-60';
-            mb.setAttribute('data-group-id', String(data.id));
-            mb.innerHTML =
-              '<svg class="h-5 w-5 shrink-0 text-amber-500" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z"/></svg><span class="min-w-0 flex-1 truncate"></span>';
-            mb.querySelector('span').textContent = data.name;
-            moveMenuWrap.appendChild(mb);
-          }
-          refreshBulkAssignGroupButtonState();
-          switchLeadGroupTab(String(data.id));
-        } catch (err) {
-          console.error(err);
-          await window.appAlert('Network error creating group.');
-        }
-      });
-      window.pendingMoveLeadIds = [];
-      window.leadGroupMoveMenuOpen = false;
-      window.leadGroupMoveMenuAnchor = null;
-      document.getElementById('bulk-assign-group-open')?.addEventListener('click', function (e) {
-        e.preventDefault();
-        e.stopPropagation();
-        var ids = getUniqueSelectedLeadIds();
-        if (ids.length < 1) return;
-        toggleLeadGroupMoveMenu(this, ids);
-      });
       document.getElementById('bulk-assign-owner-open')?.addEventListener('click', function (e) {
         e.preventDefault();
         e.stopPropagation();
@@ -831,18 +1055,6 @@
         if (ids.length < 1) return;
         toggleLeadOwnerAssignMenu(this, ids);
       });
-      document.addEventListener(
-        'click',
-        function (e) {
-          if (!leadGroupMoveMenuOpen) return;
-          var t = e.target;
-          if (t.closest && t.closest('#lead-group-move-menu')) return;
-          if (t.closest && t.closest('#bulk-assign-group-open')) return;
-          if (t.closest && t.closest('.move-to-group-btn')) return;
-          closeLeadGroupMoveMenu();
-        },
-        true
-      );
       document.addEventListener(
         'click',
         function (e) {
@@ -856,67 +1068,10 @@
         true
       );
       document.addEventListener('keydown', function (e) {
-        if (e.key === 'Escape' && leadGroupMoveMenuOpen) closeLeadGroupMoveMenu();
         if (e.key === 'Escape' && leadOwnerAssignMenuOpen) closeLeadOwnerAssignMenu();
       });
       window.addEventListener('resize', function () {
-        if (leadGroupMoveMenuOpen && leadGroupMoveMenuAnchor) positionLeadGroupMoveMenu(leadGroupMoveMenuAnchor);
         if (leadOwnerAssignMenuOpen && leadOwnerAssignMenuAnchor) positionLeadOwnerAssignMenu(leadOwnerAssignMenuAnchor);
-      });
-      document.getElementById('lead-group-move-menu')?.addEventListener('click', async function (e) {
-        var pick = e.target.closest('.lead-group-move-pick');
-        if (!pick || !this.contains(pick)) return;
-        e.preventDefault();
-        e.stopPropagation();
-        var raw = pick.getAttribute('data-group-id');
-        var groupId = raw === '' || raw === null ? null : parseInt(raw, 10);
-        if (groupId !== null && isNaN(groupId)) return;
-        var ids = pendingMoveLeadIds.map(function (v) { return parseInt(v, 10); }).filter(function (n) { return !isNaN(n); });
-        if (!ids.length) {
-          closeLeadGroupMoveMenu();
-          return;
-        }
-        var menu = document.getElementById('lead-group-move-menu');
-        var picks = menu ? menu.querySelectorAll('.lead-group-move-pick') : [];
-        picks.forEach(function (b) {
-          b.disabled = true;
-        });
-        clearLeadGroupMoveMenuErr();
-        try {
-          var res = await fetch(dashboardJsConfig.bulkAssignGroupUrl, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'X-CSRFToken': getCsrfToken(),
-            },
-            credentials: 'same-origin',
-            body: JSON.stringify({ ids: ids, group_id: groupId }),
-          });
-          var data = await res.json().catch(function () { return {}; });
-          if (!res.ok) {
-            var errEl = document.getElementById('lead-group-move-menu-error');
-            if (errEl) {
-              errEl.textContent =
-                typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail || res.statusText);
-              errEl.classList.remove('hidden');
-              positionLeadGroupMoveMenu(leadGroupMoveMenuAnchor);
-            }
-            return;
-          }
-          closeLeadGroupMoveMenu();
-          await switchLeadGroupTab(currentLeadGroupTabId, { force: true, skipHistory: true });
-        } catch (err) {
-          var errEl2 = document.getElementById('lead-group-move-menu-error');
-          if (errEl2) {
-            errEl2.textContent = 'Network error: ' + err;
-            errEl2.classList.remove('hidden');
-            positionLeadGroupMoveMenu(leadGroupMoveMenuAnchor);
-          }
-        } finally {
-          picks.forEach(function (b) {
-            b.disabled = false;
-          });
-        }
       });
       document.getElementById('lead-owner-assign-menu')?.addEventListener('click', async function (e) {
         var pick = e.target.closest('.lead-owner-assign-pick');
@@ -986,14 +1141,6 @@
           e.preventDefault();
           e.stopPropagation();
           handleLeadDequeueClick(dequeueBtn);
-          return;
-        }
-        var moveGrpBtn = e.target.closest('.move-to-group-btn');
-        if (moveGrpBtn && this.contains(moveGrpBtn)) {
-          e.preventDefault();
-          e.stopPropagation();
-          var rawM = moveGrpBtn.getAttribute('data-clinic-id');
-          if (rawM) toggleLeadGroupMoveMenu(moveGrpBtn, [rawM]);
           return;
         }
         var assignUserBtn = e.target.closest('.assign-to-user-btn');
@@ -1513,6 +1660,70 @@
           if (bulkManualSubmit) bulkManualSubmit.disabled = false;
           if (bulkManualSpinner) bulkManualSpinner.classList.add('hidden');
           if (bulkManualSubmitLabel) bulkManualSubmitLabel.textContent = 'Apply to selected';
+        }
+      });
+      document.getElementById('bulk-auto-classify')?.addEventListener('click', async function () {
+        clearBulkManualErr();
+        const ids = getUniqueSelectedLeadIds().map(function (v) {
+          return parseInt(v, 10);
+        }).filter(function (n) { return !isNaN(n); });
+        if (!ids.length) {
+          if (bulkManualErr) {
+            bulkManualErr.textContent = 'No rows selected.';
+            bulkManualErr.classList.remove('hidden');
+          }
+          return;
+        }
+        const ok = await window.appConfirm({
+          title: 'Auto-classify from name?',
+          message: 'Re-tag selected leads that currently have only the Unknown tag, using match phrases. Leads that already have a real tag are skipped.',
+          confirmLabel: 'Auto-classify',
+        });
+        if (!ok) return;
+        const classifyBtn = document.getElementById('bulk-auto-classify');
+        const classifyLabel = document.getElementById('bulk-auto-classify-label');
+        const classifySpinner = document.getElementById('bulk-auto-classify-spinner');
+        if (classifyBtn) classifyBtn.disabled = true;
+        if (bulkManualSubmit) bulkManualSubmit.disabled = true;
+        if (classifySpinner) classifySpinner.classList.remove('hidden');
+        if (classifyLabel) classifyLabel.textContent = 'Classifying…';
+        try {
+          const res = await fetch(dashboardJsConfig.bulkAutoClassifyUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-CSRFToken': getCsrfToken(),
+            },
+            credentials: 'same-origin',
+            body: JSON.stringify({ ids: ids }),
+          });
+          const data = await res.json().catch(function () { return {}; });
+          if (!res.ok) {
+            if (bulkManualErr) {
+              bulkManualErr.textContent = typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail || res.statusText);
+              bulkManualErr.classList.remove('hidden');
+            }
+            return;
+          }
+          const summary = typeof data.message === 'string' && data.message
+            ? data.message
+            : ('Updated ' + (data.updated || 0) + ' leads.');
+          closeBulkManualDialog();
+          await window.appAlert({
+            title: 'Auto-classify from name',
+            message: summary,
+          });
+          if ((data.updated || 0) > 0) window.location.reload();
+        } catch (err) {
+          if (bulkManualErr) {
+            bulkManualErr.textContent = 'Network error: ' + err;
+            bulkManualErr.classList.remove('hidden');
+          }
+        } finally {
+          if (classifyBtn) classifyBtn.disabled = false;
+          if (bulkManualSubmit) bulkManualSubmit.disabled = false;
+          if (classifySpinner) classifySpinner.classList.add('hidden');
+          if (classifyLabel) classifyLabel.textContent = 'Auto-classify from name';
         }
       });
       window.__dashboardOnWorkspaceShown = function () {

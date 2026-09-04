@@ -10,16 +10,37 @@ from leads.display import lead_has_dispatchable_phone, lead_phone_list, normaliz
 from leads.models import Lead, LeadGroup
 
 UNCATEGORIZED_GROUP_NAME = "Uncategorized"
+UNCATEGORIZED_DISPLAY_NAME = "New"
+READY_GROUP_NAME = "ready"
+READY_DISPLAY_NAME = "Ready"
 QUEUE_GROUP_NAME = "queue"
+QUEUE_DISPLAY_NAME = "Queue"
 TRASH_GROUP_NAME = "🚫 Trash"
 WHATSAPP_CHATS_GROUP_NAME = "whatsapp"
+WHATSAPP_CHATS_DISPLAY_NAME = "Active Chat"
 LEGACY_JUNK_GROUP_NAME = "Junk"
+
+_SYSTEM_GROUP_DISPLAY_NAMES = {
+    UNCATEGORIZED_GROUP_NAME: UNCATEGORIZED_DISPLAY_NAME,
+    READY_GROUP_NAME: READY_DISPLAY_NAME,
+    QUEUE_GROUP_NAME: QUEUE_DISPLAY_NAME,
+    WHATSAPP_CHATS_GROUP_NAME: WHATSAPP_CHATS_DISPLAY_NAME,
+}
+
+
+def lead_group_display_name(name: str | None) -> str:
+    """User-facing label for a folder tab (system views use friendly names)."""
+    if not name:
+        return UNCATEGORIZED_DISPLAY_NAME
+    return _SYSTEM_GROUP_DISPLAY_NAMES.get(name, name)
+
 
 SYSTEM_GROUP_SORT_ORDERS = {
     UNCATEGORIZED_GROUP_NAME: 0,
-    QUEUE_GROUP_NAME: 1,
-    TRASH_GROUP_NAME: 2,
-    WHATSAPP_CHATS_GROUP_NAME: 3,
+    READY_GROUP_NAME: 1,
+    QUEUE_GROUP_NAME: 2,
+    TRASH_GROUP_NAME: 3,
+    WHATSAPP_CHATS_GROUP_NAME: 4,
 }
 
 WHATSAPP_PROTECTED_STATUSES = frozenset(
@@ -131,6 +152,14 @@ def get_or_create_uncategorized_group() -> LeadGroup:
     return _pin_group_sort_order(group, SYSTEM_GROUP_SORT_ORDERS[UNCATEGORIZED_GROUP_NAME])
 
 
+def get_or_create_ready_group() -> LeadGroup:
+    group, _ = LeadGroup.objects.get_or_create(
+        name=READY_GROUP_NAME,
+        defaults={"sort_order": SYSTEM_GROUP_SORT_ORDERS[READY_GROUP_NAME]},
+    )
+    return _pin_group_sort_order(group, SYSTEM_GROUP_SORT_ORDERS[READY_GROUP_NAME])
+
+
 def get_or_create_queue_group() -> LeadGroup:
     group, _ = LeadGroup.objects.get_or_create(
         name=QUEUE_GROUP_NAME,
@@ -168,6 +197,7 @@ def ensure_pipeline_system_groups() -> dict[str, LeadGroup]:
     """Create or repair the foundational pipeline folders."""
     return {
         "uncategorized": get_or_create_uncategorized_group(),
+        "ready": get_or_create_ready_group(),
         "queue": get_or_create_queue_group(),
         "whatsapp_chats": get_or_create_whatsapp_chats_group(),
         "trash": get_or_create_trash_group(),
@@ -175,9 +205,15 @@ def ensure_pipeline_system_groups() -> dict[str, LeadGroup]:
 
 
 def uncategorized_group_filter() -> Q:
-    """Match leads in the Uncategorized folder (including legacy null FK rows)."""
+    """Match leads stored in New (scraped inbox), including pending outreach."""
     uncategorized = get_or_create_uncategorized_group()
-    return Q(group_id=uncategorized.pk) | Q(group__isnull=True)
+    return Q(group_id=uncategorized.pk)
+
+
+def ready_group_filter() -> Q:
+    """Match leads stored in Ready, including those currently pending/sending."""
+    ready = get_or_create_ready_group()
+    return Q(group_id=ready.pk)
 
 
 def next_display_order_for_group(group_id: int) -> int:
@@ -214,6 +250,23 @@ def enqueue_leads_for_whatsapp(lead_ids: Iterable[int]) -> int:
         lead.save(update_fields=["whatsapp_status", "whatsapp_last_error"])
         updated += 1
     return updated
+
+
+def move_leads_to_ready(lead_ids: Iterable[int]) -> int:
+    """Pick leads from New into Ready (qualified, waiting for outreach)."""
+    ids = list(lead_ids)
+    if not ids:
+        return 0
+    ready = get_or_create_ready_group()
+    uncategorized = get_or_create_uncategorized_group()
+    qs = (
+        Lead.objects.filter(pk__in=ids, group_id=uncategorized.pk)
+        .exclude(whatsapp_status__in=WHATSAPP_PROTECTED_STATUSES)
+    )
+    pks = list(qs.values_list("pk", flat=True))
+    if not pks:
+        return 0
+    return Lead.objects.filter(pk__in=pks).update(group=ready)
 
 
 def apply_group_assignment_side_effects(

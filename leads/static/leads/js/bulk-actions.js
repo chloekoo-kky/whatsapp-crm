@@ -16,15 +16,18 @@
         var gid = typeof currentLeadGroupTabId !== 'undefined' && currentLeadGroupTabId != null
           ? String(currentLeadGroupTabId)
           : 'uncategorized';
-        var onQueueTab = dashboardJsConfig.queueGroupTabId &&
-          gid === String(dashboardJsConfig.queueGroupTabId);
+        var onNewTab = gid === 'uncategorized';
+        var onReadyTab = dashboardJsConfig.readyGroupTabId &&
+          gid === String(dashboardJsConfig.readyGroupTabId);
         var onTrashTab = dashboardJsConfig.trashGroupTabId &&
           gid === String(dashboardJsConfig.trashGroupTabId);
+        var onQueuedFilter = typeof window.isQueuedOutreachFilterActive === 'function' &&
+          window.isQueuedOutreachFilterActive();
 
-        // Queue → "Choose batch" + "Remove from queue"; Trash → no bulk action; else → "Push to queue".
-        var showQueueBtn = onLeadsPage && !onQueueTab && !onTrashTab;
-        var showBatchBtn = onLeadsPage && onQueueTab;
-        var showDequeueBtn = onLeadsPage && onQueueTab;
+        // Ready or queued-filter → "Choose batch"; queued-filter also → dequeue.
+        var showQueueBtn = onLeadsPage && !onNewTab && !onReadyTab && !onQueuedFilter && !onTrashTab;
+        var showBatchBtn = onLeadsPage && (onReadyTab || onQueuedFilter);
+        var showDequeueBtn = onLeadsPage && onQueuedFilter;
 
         var visible = n > 0 && onLeadsPage && (showQueueBtn || showBatchBtn || showDequeueBtn);
         dock.hidden = !visible;
@@ -49,6 +52,7 @@
           dequeueBtn.hidden = !showDequeueBtn;
           dequeueBtn.style.display = showDequeueBtn ? '' : 'none';
         }
+        refreshSetCategoryButtonState();
       }
       window.refreshBulkActionDock = refreshBulkActionDock;
       async function bulkDequeueSelectedFromQueue() {
@@ -130,6 +134,41 @@
         }
       }
       window.bulkPushSelectedToWhatsappQueue = bulkPushSelectedToWhatsappQueue;
+      async function bulkMoveSelectedToReady() {
+        var ids = getUniqueSelectedLeadIds();
+        if (!ids.length) return;
+        var btn = document.getElementById('bulk-move-ready-btn');
+        if (btn) btn.disabled = true;
+        try {
+          var res = await fetch(dashboardJsConfig.bulkMoveReadyUrl, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-CSRFToken': getCsrfToken(),
+            },
+            body: JSON.stringify({ ids: ids }),
+          });
+          var data = await res.json();
+          if (!res.ok || !data.ok) {
+            throw new Error((data.detail && String(data.detail)) || ('HTTP ' + res.status));
+          }
+          var statusEl = document.getElementById('clinic-save-status');
+          if (statusEl) {
+            statusEl.textContent = 'Moved ' + (data.updated || 0) + ' lead(s) to Ready.';
+            statusEl.classList.remove('hidden');
+            window.setTimeout(function () { statusEl.classList.add('hidden'); }, 3200);
+          }
+          if (selectAll) selectAll.checked = false;
+          await switchLeadGroupTab(currentLeadGroupTabId, { force: true, skipHistory: true });
+        } catch (err) {
+          console.error(err);
+          await window.appAlert((err && err.message) || 'Could not move selected leads to Ready.');
+        } finally {
+          if (btn) btn.disabled = false;
+        }
+      }
+      window.bulkMoveSelectedToReady = bulkMoveSelectedToReady;
       function showChooseBatchError(msg) {
         var el = document.getElementById('choose-batch-error');
         if (!el) return;
@@ -187,22 +226,29 @@
         }
       }
       window.populateChooseBatchDialog = populateChooseBatchDialog;
-      function openChooseBatchDialog() {
-        var ids = getUniqueSelectedLeadIds();
-        if (!ids.length || !chooseBatchDialog) return;
+      window.chooseBatchTargetIds = null;
+      function openChooseBatchDialog(ids) {
+        var target = Array.isArray(ids) && ids.length
+          ? ids.map(String)
+          : getUniqueSelectedLeadIds();
+        if (!target.length || !chooseBatchDialog) return;
+        window.chooseBatchTargetIds = target;
         clearChooseBatchError();
         var countEl = document.getElementById('choose-batch-count');
-        if (countEl) countEl.textContent = String(ids.length);
+        if (countEl) countEl.textContent = String(target.length);
         chooseBatchDialog.showModal();
         populateChooseBatchDialog();
       }
       window.openChooseBatchDialog = openChooseBatchDialog;
       function closeChooseBatchDialog() {
+        window.chooseBatchTargetIds = null;
         if (chooseBatchDialog) chooseBatchDialog.close();
       }
       window.closeChooseBatchDialog = closeChooseBatchDialog;
       async function submitChooseBatch() {
-        var ids = getUniqueSelectedLeadIds();
+        var ids = (window.chooseBatchTargetIds && window.chooseBatchTargetIds.length)
+          ? window.chooseBatchTargetIds.slice()
+          : getUniqueSelectedLeadIds();
         if (!ids.length) return;
         var sel = document.getElementById('choose-batch-select');
         var submitBtn = document.getElementById('choose-batch-submit');
@@ -235,7 +281,7 @@
           var skipped = data.skipped || 0;
           var msg = 'Assigned ' + assigned + ' lead' + (assigned === 1 ? '' : 's') + ' to the batch.';
           if (skipped > 0) {
-            msg += ' ' + skipped + ' already in a pending batch — skipped.';
+            msg += ' ' + skipped + ' skipped (already in a pending batch or not sendable).';
           }
           var statusEl = document.getElementById('clinic-save-status');
           if (statusEl) {
@@ -257,6 +303,15 @@
         }
       }
       window.submitChooseBatch = submitChooseBatch;
+      document.body.addEventListener('click', function (e) {
+        var joinBtn = e.target.closest('.lead-join-queue-btn');
+        if (!joinBtn) return;
+        e.preventDefault();
+        e.stopPropagation();
+        var leadId = joinBtn.getAttribute('data-lead-id');
+        if (!leadId) return;
+        openChooseBatchDialog([leadId]);
+      });
       function getUniqueSelectedLeadIds() {
         const seen = Object.create(null);
         const out = [];
@@ -273,10 +328,21 @@
       }
       window.getUniqueSelectedLeadIds = getUniqueSelectedLeadIds;
       function refreshSetCategoryButtonState() {
-        const btn = document.getElementById('bulk-manual-open');
-        if (!btn) return;
         const n = getUniqueSelectedLeadIds().length;
-        btn.disabled = n < 1;
+        const btn = document.getElementById('bulk-manual-open');
+        if (btn) btn.disabled = n < 1;
+        const ownerBtn = document.getElementById('bulk-assign-owner-open');
+        if (ownerBtn) ownerBtn.disabled = n < 1;
+        const readyBtn = document.getElementById('bulk-move-ready-btn');
+        if (readyBtn) {
+          var gid = typeof currentLeadGroupTabId !== 'undefined' && currentLeadGroupTabId != null
+            ? String(currentLeadGroupTabId)
+            : 'uncategorized';
+          var onNewTab = gid === 'uncategorized';
+          readyBtn.hidden = !onNewTab;
+          readyBtn.style.display = onNewTab ? '' : 'none';
+          readyBtn.disabled = !onNewTab || n < 1;
+        }
       }
       window.refreshSetCategoryButtonState = refreshSetCategoryButtonState;
       function refreshBulkAssignGroupButtonState() {
@@ -345,6 +411,13 @@
         if (exportXlsxSpinner) exportXlsxSpinner.classList.toggle('hidden', !busy);
       }
       window.exportXlsxSetBusy = exportXlsxSetBusy;
+      function importXlsxSetBusy(busy) {
+        if (!importXlsxBtn) return;
+        importXlsxBtn.disabled = !!busy;
+        if (importXlsxIcon) importXlsxIcon.classList.toggle('hidden', !!busy);
+        if (importXlsxSpinner) importXlsxSpinner.classList.toggle('hidden', !busy);
+      }
+      window.importXlsxSetBusy = importXlsxSetBusy;
       function exportXlsxShowErr(msg) {
         if (!exportXlsxStatus) return;
         exportXlsxStatus.textContent = msg || '';

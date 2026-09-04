@@ -26,6 +26,7 @@
     </div>
   </div>
 
+  {% if request.user.is_superuser %}
   <div class="rounded-lg border border-white/5 bg-white/[0.03] p-2.5">
     <div class="flex items-start gap-2">
       <span class="mt-1.5 h-2 w-2 shrink-0 rounded-full {% if serper.configured %}bg-sky-400 shadow-[0_0_6px_rgba(56,189,248,0.45)]{% else %}bg-amber-400/90{% endif %}" aria-hidden="true"></span>
@@ -42,4 +43,16 @@
       </div>
     </div>
   </div>
+  <div class="rounded-lg border border-white/5 bg-white/[0.03] p-2.5">
+    <div class="flex items-start gap-2">
+      <span class="mt-1.5 h-2 w-2 shrink-0 rounded-full {% if outscraper.configured %}bg-violet-400 shadow-[0_0_6px_rgba(167,139,250,0.45)]{% else %}bg-amber-400/90{% endif %}" aria-hidden="true"></span>
+      <div class="min-w-0 flex-1">
+        <div class="flex items-center justify-between gap-2">
+          <p class="truncate text-[11px] font-semibold text-slate-200">Outscraper</p>
+          <span class="shrink-0 text-[10px] font-medium {% if outscraper.configured %}text-violet-300{% else %}text-amber-300/90{% endif %}">{{ outscraper.status_label }}</span>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
 </div>

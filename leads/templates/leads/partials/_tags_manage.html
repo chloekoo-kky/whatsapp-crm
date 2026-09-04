@@ -88,9 +88,14 @@
                 <span class="tag-lead-count" data-tag-slug="{{ tag.slug }}">{{ tag.lead_count }} lead{{ tag.lead_count|pluralize }}</span>
               </td>
               <td>
+                {% if tag.is_system %}
+                <input type="hidden" name="match_phrase" value="" />
+                <span class="tags-table-slug" title="Unknown is a fallback, not a match rule">Fallback</span>
+                {% else %}
                 <input name="match_phrase" type="text" maxlength="2000" aria-label="Match phrases"
                        value="{% firstof tag.match_phrases_display tag.label %}" placeholder="{{ tag.label }}"
                        class="tags-table-input" />
+                {% endif %}
               </td>
               <td>
                 <div class="tags-table-actions">

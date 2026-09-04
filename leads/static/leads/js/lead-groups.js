@@ -2,9 +2,16 @@
   if (window.__leadsDashboardSkip) return;
       function normalizeLeadGroupTabId(groupId) {
         if (groupId === 'uncategorized' || groupId === 'all' || groupId === '' || groupId == null) return 'uncategorized';
+        var qid = window.dashboardJsConfig && dashboardJsConfig.queueGroupTabId;
+        if (qid && String(groupId) === String(qid)) return 'uncategorized';
         return String(groupId);
       }
       window.normalizeLeadGroupTabId = normalizeLeadGroupTabId;
+      function defaultLeadGroupTabId() {
+        var rid = window.dashboardJsConfig && dashboardJsConfig.readyGroupTabId;
+        return rid ? String(rid) : 'uncategorized';
+      }
+      window.defaultLeadGroupTabId = defaultLeadGroupTabId;
       function dashboardHistoryState() {
         return {
           leadGroupTabId: normalizeLeadGroupTabId(currentLeadGroupTabId),
@@ -14,7 +21,7 @@
       window.dashboardHistoryState = dashboardHistoryState;
       function applyDashboardUrlFromState(state, url) {
         var u = url ? new URL(url, window.location.origin) : new URL(window.location.href);
-        var gid = 'uncategorized';
+        var gid = defaultLeadGroupTabId();
         if (state && state.leadGroupTabId) {
           gid = normalizeLeadGroupTabId(state.leadGroupTabId);
         } else {
@@ -33,8 +40,11 @@
       function replaceDashboardUrlForCurrentTab(historyMode) {
         var u = new URL(window.location.href);
         var gid = normalizeLeadGroupTabId(currentLeadGroupTabId);
-        if (gid === 'uncategorized') {
+        var readyId = defaultLeadGroupTabId();
+        if (readyId && String(gid) === String(readyId)) {
           u.searchParams.delete('group_id');
+        } else if (gid === 'uncategorized') {
+          u.searchParams.set('group_id', 'uncategorized');
         } else {
           u.searchParams.set('group_id', String(gid));
         }
@@ -71,11 +81,8 @@
         var label = document.getElementById('lead-group-mobile-label');
         var countEl = document.getElementById('lead-group-mobile-count');
         if (!btn || !label) return;
-        var clone = btn.cloneNode(true);
-        clone.querySelectorAll('.lead-group-count, #active-chat-count-badge').forEach(function (el) {
-          el.remove();
-        });
-        label.textContent = (clone.textContent || '').trim() || 'Uncategorized';
+        var nameEl = btn.querySelector('.lead-group-tab-label');
+        label.textContent = (nameEl && nameEl.textContent.trim()) || 'New';
         if (!countEl) return;
         var countBadge = btn.querySelector('.lead-group-count, #active-chat-count-badge');
         if (countBadge) {
@@ -124,6 +131,9 @@
           u.searchParams.set('group_id', gid === 'uncategorized' ? 'uncategorized' : String(gid));
         }
         if (activeSearchRecordId != null) u.searchParams.set('search_record', String(activeSearchRecordId));
+        if (typeof window.isQueuedOutreachFilterActive === 'function' && window.isQueuedOutreachFilterActive()) {
+          u.searchParams.set('queued', '1');
+        }
         var res = await fetch(u.toString(), { headers: { Accept: 'application/json' }, credentials: 'same-origin' });
         if (!res.ok) throw new Error('HTTP ' + res.status);
         return res.json();

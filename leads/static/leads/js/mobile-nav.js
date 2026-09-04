@@ -112,7 +112,7 @@
     if (groupTabs) {
       groupTabs.addEventListener("click", function (e) {
         if (!isMobileLayout()) return;
-        if (e.target.closest(".lead-group-tab[data-group-id]") && e.target.closest("#lead-group-new-btn") === null) {
+        if (e.target.closest(".lead-group-tab[data-group-id]")) {
           closeLeadGroupDrawer();
         }
       });

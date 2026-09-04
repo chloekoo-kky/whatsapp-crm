@@ -43,6 +43,7 @@
 
       function bindLabelPhrasePair(label, phrase) {
         if (!label || !phrase || phrase.dataset.mirrorBound === "1") return;
+        if (phrase.type === "hidden") return;
         phrase.dataset.mirrorBound = "1";
         if (!phrase.value) phrase.value = label.value;
         var dirty = phrase.value !== label.value;

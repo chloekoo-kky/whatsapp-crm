@@ -14,8 +14,12 @@ def _serper_configured() -> bool:
     return bool((getattr(settings, "SERPER_API_KEY", "") or "").strip())
 
 
+def _outscraper_configured() -> bool:
+    return bool((getattr(settings, "OUTSCRAPER_API_KEY", "") or "").strip())
+
+
 def get_api_sidebar_context(request=None) -> dict:
-    """Build status + usage snapshot for YCloud WhatsApp and Serper Maps."""
+    """Build status + usage snapshot for YCloud WhatsApp and Maps hunt providers."""
     connection = fetch_gateway_status()
     ycloud_connected = bool(connection.get("connected"))
     counts = queue_counts()
@@ -47,6 +51,10 @@ def get_api_sidebar_context(request=None) -> dict:
             "status_label": "Ready" if _serper_configured() else "Not configured",
             "hunts_total": hunts_total,
             "hunts_today": hunts_today,
+        },
+        "outscraper": {
+            "configured": _outscraper_configured(),
+            "status_label": "Ready" if _outscraper_configured() else "Not configured",
         },
         "refreshed_at": timezone.localtime().strftime("%H:%M"),
     }

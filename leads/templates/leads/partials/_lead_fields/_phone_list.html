@@ -3,7 +3,7 @@
   {% for p in c.dashboard_phones %}
   <div class="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5">
     <p class="{{ phone_class }}">{{ p }}</p>
-    <span class="clinic-phone-wa-row inline-flex shrink-0 items-center leading-none">
+    <span class="clinic-phone-wa-row inline-flex shrink-0 items-center gap-1 leading-none">
       {% with walink=p|wa_me_url %}
         {% if walink %}
           <a href="{{ walink }}" class="{{ wa_class }}" target="_blank" rel="noopener noreferrer" title="Open in WhatsApp" aria-label="Open in WhatsApp" onclick="event.stopPropagation()">
@@ -14,12 +14,15 @@
           <span class="text-xs text-slate-400">—</span>
         {% endif %}
       {% endwith %}
+      {% if forloop.first %}
+        {% include "leads/partials/_lead_fields/_sent_badge.html" %}
+      {% endif %}
     </span>
   </div>
   {% empty %}
   <div class="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5">
     <p class="{{ phone_class }}">—</p>
-    <span class="clinic-phone-wa-row inline-flex shrink-0 items-center leading-none"><span class="text-xs text-slate-400">—</span></span>
+    <span class="clinic-phone-wa-row inline-flex shrink-0 items-center gap-1 leading-none"><span class="text-xs text-slate-400">—</span>{% include "leads/partials/_lead_fields/_sent_badge.html" %}</span>
   </div>
   {% endfor %}
 </div>

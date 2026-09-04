@@ -9,7 +9,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from leads.models import Lead, Tag, WhatsAppBatchSchedule
-from leads.pipeline import get_or_create_uncategorized_group
+from leads.pipeline import get_or_create_ready_group, get_or_create_uncategorized_group
 from leads.views import _annotate_lead_dashboard_qs, _dashboard_prepare_clinics
 
 
@@ -103,7 +103,7 @@ class LeadFieldPartialTests(TestCase):
             "clinic-branches-line",
             "clinic-created-line",
             "clinic-batch-lines",
-            "Batch ·",
+            "WhatsApp batch ·",
             "Sent ·",
             "~4 branches",
             "lead-tag-chip",
@@ -119,6 +119,57 @@ class LeadFieldPartialTests(TestCase):
         self.assertIn("lead-vip-star-btn", card)
         self.assertNotIn("lead-vip-star-btn", row)
 
+    def test_batch_badge_sits_below_lead_details(self):
+        card = self._card()
+        row = self._row()
+        for html in (card, row):
+            with self.subTest(view="card" if html is card else "row"):
+                self.assertGreater(
+                    html.find("clinic-batch-lines"),
+                    html.find("clinic-name-cell-inner"),
+                )
+                self.assertGreater(
+                    html.find("clinic-batch-lines"),
+                    html.find("clinic-created-line"),
+                )
+        self.assertLess(
+            card.find("clinic-batch-lines"),
+            card.find("lead-card-bottom-actions"),
+        )
+        self.assertIn("justify-end pb-2", card)
+        self.assertIn("</div>", card[card.find("clinic-created-line"):card.find("clinic-batch-lines")])
+
+    def test_dispatched_card_shows_sent_chip_beside_whatsapp(self):
+        card = self._card()
+        row = self._row()
+        for html in (card, row):
+            with self.subTest(view="card" if html is card else "row"):
+                self.assertIn("clinic-sent-badge", html)
+                self.assertGreater(html.find("clinic-sent-badge"), html.find("wa-me-open-btn"))
+                self.assertGreater(html.find("clinic-sent-badge"), html.find("clinic-phone-wa-row"))
+        self.assertNotIn("clinic-card--dispatched", card)
+        self.assertNotIn("border-emerald-400", card)
+        header = card[card.find("clinic-card-header-actions"):card.find("clinic-name-cell-inner")]
+        self.assertNotIn("clinic-sent-badge", header)
+
+        self.lead.whatsapp_status = "sent"
+        self.lead.whatsapp_sent_at = timezone.now()
+        self.lead.save(update_fields=["whatsapp_status", "whatsapp_sent_at"])
+        qs = _annotate_lead_dashboard_qs(Lead.objects.filter(pk=self.lead.pk))
+        clinics, brands = _dashboard_prepare_clinics(qs, request=self.request)
+        self.ctx["c"] = clinics[0]
+        self.ctx["multi_location_brands"] = brands
+        card = self._card()
+        self.assertIn("clinic-card--dispatched", card)
+        self.assertIn('data-whatsapp-dispatched="1"', card)
+        self.assertIn("clinic-sent-badge", card)
+        self.assertIn('title="WhatsApp message sent"', card)
+        self.assertGreater(card.find("clinic-sent-badge"), card.find("wa-me-open-btn"))
+        self.assertNotIn("border-emerald-400", card)
+        self.assertNotIn("hover:border-emerald-500", card)
+        header = card[card.find("clinic-card-header-actions"):card.find("clinic-name-cell-inner")]
+        self.assertNotIn("clinic-sent-badge", header)
+
     def test_layout_class_differences_are_preserved(self):
         card = self._card()
         row = self._row()
@@ -132,10 +183,61 @@ class LeadFieldPartialTests(TestCase):
         self.assertIn("tabular-nums", row)
         self.assertNotIn("tabular-nums", card)
 
+    def test_card_tag_chips_sit_on_own_row_above_name(self):
+        card = self._card()
+        self.assertGreater(
+            card.find("clinic-type-cell"),
+            card.find("clinic-card-header-actions"),
+        )
+        self.assertGreater(
+            card.find("clinic-name-cell-inner"),
+            card.find("clinic-type-cell"),
+        )
+        self.assertGreater(
+            card.find("clinic-type-cell"),
+            card.find("lead-vip-star-btn"),
+        )
+        self.assertIn("lead-tag-chips", card[card.find("clinic-type-cell"):card.find("clinic-name-cell-inner")])
+
+    def test_assigned_line_is_superuser_only_on_cards(self):
+        sales = get_user_model().objects.create_user(
+            "card_sales", "card_sales@t.test", "pass"
+        )
+        self.lead.assigned_to = sales
+        self.lead.save()
+        self.assertIsNotNone(self.lead.assigned_at)
+        qs = _annotate_lead_dashboard_qs(Lead.objects.filter(pk=self.lead.pk))
+        clinics, brands = _dashboard_prepare_clinics(qs, request=self.request)
+        self.ctx["c"] = clinics[0]
+        card = self._card()
+        row = self._row()
+        self.assertIn("clinic-assigned-to-line", card)
+        self.assertIn("clinic-assigned-date-line", card)
+        self.assertIn("Assigned to", card)
+        self.assertIn("card_sales", card)
+        self.assertIn("Assigned date", card)
+        self.assertGreater(card.find("clinic-assigned-to-line"), card.find("clinic-name-cell-inner"))
+        self.assertLess(card.find("clinic-assigned-to-line"), card.find("clinic-source-line"))
+        self.assertGreater(card.find("clinic-assigned-date-line"), card.find("clinic-created-line"))
+        self.assertNotIn("clinic-assigned-line", row)
+
+        supervisor = get_user_model().objects.create_user(
+            "card_super", "card_super@t.test", "pass"
+        )
+        from leads.models import UserProfile
+
+        UserProfile.objects.update_or_create(
+            user=supervisor, defaults={"role": UserProfile.ROLE_SUPERVISOR}
+        )
+        self.request.user = supervisor
+        card = self._card()
+        self.assertNotIn("clinic-assigned-to-line", card)
+        self.assertNotIn("clinic-assigned-date-line", card)
+
     def test_dashboard_renders_both_views_with_shared_fields(self):
         client = Client()
         client.force_login(self.user)
-        response = client.get(reverse("dashboard"))
+        response = client.get(reverse("dashboard"), {"group_id": "uncategorized"})
         self.assertEqual(response.status_code, 200)
         html = response.content.decode()
         self.assertIn("clinic-card", html)
@@ -157,8 +259,10 @@ class LeadFieldPartialTests(TestCase):
         row = self._row()
         self.assertIn("lead-folder-badge", card)
         self.assertIn("lead-folder-badge", row)
-        self.assertIn("Uncategorized", card)
-        self.assertIn("Uncategorized", row)
+        self.assertIn("New", card)
+        self.assertIn("New", row)
+        self.assertNotIn("Uncategorized", card)
+        self.assertNotIn("Uncategorized", row)
 
     def test_leads_table_ajax_keeps_grid_and_list_fields(self):
         client = Client()
@@ -180,6 +284,40 @@ class LeadFieldPartialTests(TestCase):
         self.assertIn("lead-tag-chip", payload["grid_html"])
         self.assertIn("dental", payload["tbody_html"])
         self.assertIn("dental", payload["grid_html"])
+
+    def test_ready_tab_shows_whatsapp_batch_badge_on_cards(self):
+        ready = get_or_create_ready_group()
+        self.lead.group = ready
+        self.lead.save(update_fields=["group"])
+        client = Client()
+        client.force_login(self.user)
+        response = client.get(reverse("get_leads_table"), {"group_id": str(ready.pk)})
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        for html in (payload["grid_html"], payload["tbody_html"]):
+            with self.subTest(view="grid" if html is payload["grid_html"] else "list"):
+                self.assertIn("Shared Fields Clinic", html)
+                self.assertIn("clinic-batch-lines", html)
+                self.assertIn("WhatsApp batch ·", html)
+                self.assertIn("Sent ·", html)
+        self.assertIn("lead-dequeue-btn", payload["grid_html"])
+        self.assertIn("Remove from WhatsApp batch", payload["grid_html"])
+        self.assertNotIn("lead-join-queue-btn", payload["grid_html"])
+
+    def test_tick_stays_grey_when_pending_without_batch(self):
+        ready = get_or_create_ready_group()
+        self.lead.group = ready
+        self.lead.whatsapp_status = Lead.WhatsappStatus.PENDING
+        self.lead.save(update_fields=["group", "whatsapp_status"])
+        self.lead.whatsapp_batches.clear()
+        client = Client()
+        client.force_login(self.user)
+        response = client.get(reverse("get_leads_table"), {"group_id": str(ready.pk)})
+        self.assertEqual(response.status_code, 200)
+        html = response.json()["grid_html"]
+        self.assertIn("lead-join-queue-btn", html)
+        self.assertIn("Assign to a WhatsApp batch", html)
+        self.assertNotIn("lead-dequeue-btn", html)
 
 
 def _prefetch_names(qs):
@@ -246,22 +384,51 @@ class DashboardTagFilterTests(TestCase):
     def test_filter_control_lists_live_tags(self):
         client = Client()
         client.force_login(self.user)
-        response = client.get(reverse("dashboard"))
+        response = client.get(reverse("dashboard"), {"group_id": "uncategorized"})
         self.assertEqual(response.status_code, 200)
         html = response.content.decode()
         self.assertIn('id="lead-tag-filter"', html)
-        self.assertIn('id="lead-tag-filter-toggle"', html)
         self.assertIn('id="content-toolbar"', html)
         self.assertRegex(html, r'id="content-toolbar"[^>]*\bz-30\b')
         self.assertRegex(html, r'id="leads-scroll-container"[^>]*\bz-0\b')
         self.assertIn('z-[200]', html)
-        self.assertIn('class="lead-tag-filter-cb', html)
-        self.assertIn('value="dental"', html)
-        self.assertIn('value="gp"', html)
-        self.assertIn('value="aesthetic"', html)
-        self.assertIn("Match any selected", html)
+        self.assertIn("lead-tag-filter-chip", html)
+        self.assertIn("lead-tag-filter-count", html)
+        self.assertIn('data-tag-slug="dental"', html)
+        self.assertIn('data-tag-slug="gp"', html)
+        self.assertIn('data-tag-slug="aesthetic"', html)
+        self.assertRegex(
+            html,
+            r'data-tag-slug="dental"[^>]*>[\s\S]*?lead-tag-filter-count[^>]*>1<',
+        )
+        self.assertRegex(
+            html,
+            r'data-tag-slug="gp"[^>]*>[\s\S]*?lead-tag-filter-count[^>]*>1<',
+        )
+        self.assertRegex(
+            html,
+            r'data-tag-slug="aesthetic"[^>]*>[\s\S]*?lead-tag-filter-count[^>]*>1<',
+        )
+        self.assertIn("Match all selected", html)
+        self.assertNotIn("lead-tag-filter-cb", html)
+        self.assertNotIn("lead-tag-filter-toggle", html)
+        self.assertIn('id="lead-tag-filter-manage"', html)
+        self.assertIn('id="manage-tags-dialog"', html)
+        self.assertIn("Manage tags", html)
+        self.assertNotIn('id="lead-tag-filter-add"', html)
+        self.assertNotIn('id="lead-tag-filter-create"', html)
 
-    def test_or_semantics_from_row_data_tags_in_both_views(self):
+    def test_leads_table_returns_tag_counts_for_current_folder(self):
+        client = Client()
+        client.force_login(self.user)
+        response = client.get(reverse("get_leads_table"), {"group_id": "uncategorized"})
+        self.assertEqual(response.status_code, 200)
+        counts = response.json()["tag_counts"]
+        self.assertEqual(counts.get("dental"), 1)
+        self.assertEqual(counts.get("gp"), 1)
+        self.assertEqual(counts.get("aesthetic"), 1)
+
+    def test_and_semantics_from_row_data_tags_in_both_views(self):
         qs = _annotate_lead_dashboard_qs(
             Lead.objects.filter(pk__in=[self.both.pk, self.aes.pk, self.none.pk])
         )
@@ -274,13 +441,15 @@ class DashboardTagFilterTests(TestCase):
         def matches(name, selected):
             if not selected:
                 return True
-            return bool(tags_of(name) & set(selected))
+            return set(selected).issubset(tags_of(name))
 
         self.assertTrue(matches("Both Tags Clinic", ["dental"]))
         self.assertTrue(matches("Both Tags Clinic", ["gp"]))
-        self.assertTrue(matches("Both Tags Clinic", ["dental", "aesthetic"]))
+        self.assertTrue(matches("Both Tags Clinic", ["dental", "gp"]))
+        self.assertFalse(matches("Both Tags Clinic", ["dental", "aesthetic"]))
         self.assertFalse(matches("Aesthetic Only Clinic", ["dental"]))
-        self.assertTrue(matches("Aesthetic Only Clinic", ["dental", "aesthetic"]))
+        self.assertFalse(matches("Aesthetic Only Clinic", ["dental", "aesthetic"]))
+        self.assertTrue(matches("Aesthetic Only Clinic", ["aesthetic"]))
         self.assertFalse(matches("No Tags Clinic", ["dental"]))
         self.assertTrue(matches("No Tags Clinic", []))
 
@@ -321,8 +490,8 @@ class DashboardTagFilterTests(TestCase):
         )
         self.assertRegex(aes_row, r'data-tags="[^"]*\baesthetic\b')
         self.assertRegex(aes_card, r'data-tags="[^"]*\baesthetic\b')
-        self.assertNotIn("lead-tag-chip", aes_row)
-        self.assertNotIn("lead-tag-chip", aes_card)
+        self.assertNotIn('data-tag-slug="', aes_row)
+        self.assertNotIn('data-tag-slug="', aes_card)
 
     def test_js_persists_selected_tags_under_dashboard_key(self):
         from pathlib import Path

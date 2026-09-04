@@ -1,14 +1,14 @@
 {% with batches=c.whatsapp_batches.all %}
 {% if batches %}
-<div class="clinic-batch-lines flex flex-wrap items-center gap-1 {{ wrap_class }}">
+<div class="clinic-batch-lines flex shrink-0 flex-wrap items-center gap-1 {{ wrap_class }}">
   {% for b in batches %}
-    {% if b.status == 'pending' %}
-    <span class="clinic-batch-line inline-flex items-center gap-1 rounded-md bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold leading-snug text-emerald-700 ring-1 ring-emerald-200/70 {{ badge_class }}" title="Assigned to a scheduled WhatsApp batch">
+    {% if b.status == 'pending' or b.status == 'processing' %}
+    <span class="clinic-batch-line inline-flex max-w-full items-center gap-1 rounded-md bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold leading-snug text-emerald-700 ring-1 ring-emerald-200/70 {{ badge_class }}" title="{% if b.status == 'processing' %}WhatsApp batch is sending{% else %}Assigned to a scheduled WhatsApp batch{% endif %}">
       <svg class="h-3 w-3 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
-      <span class="{{ label_class }}">Batch · {{ b.scheduled_at|date:"M j, g:i A" }}</span>
+      <span class="{{ label_class }}">{% if b.status == 'processing' %}Sending · {% else %}WhatsApp batch · {% endif %}{{ b.scheduled_at|date:"M j, g:i A" }}</span>
     </span>
     {% elif b.status == 'completed' %}
-    <span class="clinic-batch-line inline-flex items-center gap-1 rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-semibold leading-snug text-slate-500 ring-1 ring-slate-200/80 {{ badge_class }}" title="Sent in a completed WhatsApp batch">
+    <span class="clinic-batch-line inline-flex max-w-full items-center gap-1 rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-semibold leading-snug text-slate-500 ring-1 ring-slate-200/80 {{ badge_class }}" title="Sent in a completed WhatsApp batch">
       <svg class="h-3 w-3 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5"/></svg>
       <span class="{{ label_class }}">Sent · {{ b.scheduled_at|date:"M j, g:i A" }}</span>
     </span>

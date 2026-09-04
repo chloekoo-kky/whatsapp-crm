@@ -1,16 +1,6 @@
 (function () {
   if (window.__leadsDashboardSkip) return;
-      function isChatIndicatorPollingEnabled() {
-        if (chatIndicatorPollToggle) return chatIndicatorPollToggle.checked;
-        try {
-          var stored = localStorage.getItem(CHAT_INDICATOR_POLL_KEY);
-          if (stored !== null) return stored === '1' || stored === 'true';
-        } catch (e) { /* ignore */ }
-        return true;
-      }
-      window.isChatIndicatorPollingEnabled = isChatIndicatorPollingEnabled;
       function shouldPollLeadChatIndicators() {
-        if (!isChatIndicatorPollingEnabled()) return false;
         if (!isLeadsDashboardVisible()) return false;
         if (!document.getElementById('clinics-grid-inner')) return false;
         return folderHasWhatsAppLeads();
@@ -75,6 +65,7 @@
         if (gridInner) gridInner.innerHTML = data.grid_html;
         if (data.funnel_metrics) updateFunnelMetricsStrip(data.funnel_metrics);
         if (data.group_counts) updateLeadGroupTabCounts(data.group_counts);
+        if (data.tag_counts) updateLeadTagFilterCounts(data.tag_counts);
         syncLeadsAfterGroupFragmentSwap();
         leadChatIndicatorSnapshot = leadChatIndicatorSnapshotFromMap(
           (await fetchLeadChatIndicators())?.leads || {}
@@ -86,6 +77,9 @@
         var gid = normalizeLeadGroupTabId(currentLeadGroupTabId);
         u.searchParams.set('group_id', gid === 'uncategorized' ? 'uncategorized' : String(gid));
         if (activeSearchRecordId != null) u.searchParams.set('search_record', String(activeSearchRecordId));
+        if (typeof window.isQueuedOutreachFilterActive === 'function' && window.isQueuedOutreachFilterActive()) {
+          u.searchParams.set('queued', '1');
+        }
         var res = await fetch(u.toString(), { headers: { Accept: 'application/json' }, credentials: 'same-origin' });
         if (!res.ok) throw new Error('HTTP ' + res.status);
         return res.json();

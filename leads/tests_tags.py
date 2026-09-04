@@ -154,7 +154,7 @@ class SerperImportTagTests(TestCase):
             name="Q & M Dental Clinic (Segamat)",
             address="1 Tag Import St",
         )
-        existing.tags.set(Tag.objects.filter(slug="invalid"))
+        existing.tags.set(Tag.objects.filter(slug="unknown"))
         prior_tag_ids = list(existing.tags.values_list("id", flat=True))
 
         mock_post.return_value = _serper_places_response(
@@ -177,7 +177,7 @@ class SerperImportTagTests(TestCase):
         self.assertEqual(result.skipped_existing, 1)
         existing.refresh_from_db()
         self.assertEqual(list(existing.tags.values_list("id", flat=True)), prior_tag_ids)
-        self.assertEqual(list(existing.tags.values_list("slug", flat=True)), ["invalid"])
+        self.assertEqual(list(existing.tags.values_list("slug", flat=True)), ["unknown"])
 
 
 class TagManagementTests(TestCase):
@@ -192,7 +192,164 @@ class TagManagementTests(TestCase):
         self.assertEqual(tag.label, "Veterinary")
         self.assertEqual(tag.sort_order, 90)
         self.assertFalse(tag.is_system)
-        self.assertFalse(CategoryRule.objects.filter(category="vet").exists())
+        rule = CategoryRule.objects.get(category="vet")
+        self.assertEqual(rule.match_phrase, "Veterinary")
+        self.assertEqual(rule.priority, 100)
+
+    def test_save_returns_json_when_requested(self):
+        client = staff_client()
+        response = client.post(
+            reverse("category_type_save"),
+            data={"label": "Dermatology"},
+            HTTP_ACCEPT="application/json",
+            HTTP_X_TAG_JSON="1",
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["label"], "Dermatology")
+        self.assertEqual(payload["slug"], "dermatology")
+        self.assertTrue(Tag.objects.filter(slug="dermatology", label="Dermatology").exists())
+
+    def test_json_save_requires_label(self):
+        client = staff_client()
+        response = client.post(
+            reverse("category_type_save"),
+            data={"label": ""},
+            HTTP_ACCEPT="application/json",
+            HTTP_X_TAG_JSON="1",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(response.json()["ok"])
+        self.assertIn("Label", response.json()["detail"])
+
+    def test_dashboard_exposes_tag_manage_control(self):
+        client = staff_client()
+        html = client.get(reverse("dashboard")).content.decode()
+        self.assertIn('id="lead-tag-filter-manage"', html)
+        self.assertIn('id="manage-tags-dialog"', html)
+        self.assertIn("/categories/types/save/", html)
+        self.assertIn("/categories/types/json/", html)
+        self.assertIn("/categories/types/__ID__/delete/", html)
+        self.assertNotIn('id="lead-tag-filter-create"', html)
+
+    def test_tags_json_lists_tags(self):
+        client = staff_client()
+        Tag.objects.create(slug="pilates", label="Pilates", sort_order=80)
+        response = client.get(reverse("tags_json"))
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        by_slug = {row["slug"]: row for row in payload["tags"]}
+        self.assertIn("unknown", by_slug)
+        self.assertTrue(by_slug["unknown"]["is_system"])
+        self.assertEqual(by_slug["pilates"]["label"], "Pilates")
+        self.assertEqual(by_slug["pilates"]["sort_order"], 80)
+        self.assertFalse(by_slug["pilates"]["is_system"])
+        self.assertEqual(by_slug["pilates"]["lead_count"], 0)
+
+    def test_json_rename_keeps_slug(self):
+        client = staff_client()
+        tag = Tag.objects.create(slug="pilates", label="Pilates", sort_order=80)
+        response = client.post(
+            reverse("category_type_save"),
+            data={"id": str(tag.pk), "label": "Pilates Studio", "slug": "pilates"},
+            HTTP_ACCEPT="application/json",
+            HTTP_X_TAG_JSON="1",
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["label"], "Pilates Studio")
+        self.assertEqual(payload["slug"], "pilates")
+        tag.refresh_from_db()
+        self.assertEqual(tag.label, "Pilates Studio")
+        self.assertEqual(tag.slug, "pilates")
+        self.assertEqual(tag.sort_order, 80)
+
+    def test_delete_returns_json_when_requested(self):
+        client = staff_client()
+        tag = Tag.objects.create(slug="pilates", label="Pilates", sort_order=80)
+        response = client.post(
+            reverse("category_type_delete", kwargs={"pk": tag.pk}),
+            HTTP_ACCEPT="application/json",
+            HTTP_X_TAG_JSON="1",
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["slug"], "pilates")
+        self.assertFalse(Tag.objects.filter(pk=tag.pk).exists())
+
+    def test_json_delete_blocked_for_system_tag(self):
+        client = staff_client()
+        unknown = Tag.objects.get(slug="unknown")
+        response = client.post(
+            reverse("category_type_delete", kwargs={"pk": unknown.pk}),
+            HTTP_ACCEPT="application/json",
+            HTTP_X_TAG_JSON="1",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(response.json()["ok"])
+        self.assertIn("System", response.json()["detail"])
+        self.assertTrue(Tag.objects.filter(pk=unknown.pk).exists())
+
+    def test_orm_and_admin_create_seed_label_rule(self):
+        tag = Tag.objects.create(slug="optometry", label="Optometry", sort_order=85)
+        rule = CategoryRule.objects.get(category="optometry")
+        self.assertEqual(rule.match_phrase, "Optometry")
+        self.assertEqual(rule.priority, Tag.DEFAULT_MATCH_RULE_PRIORITY)
+        self.assertEqual(tag.ensure_default_match_rule(), None)
+
+    def test_create_with_custom_phrases_replaces_seeded_label(self):
+        client = staff_client()
+        client.post(
+            reverse("category_type_save"),
+            data={
+                "label": "Veterinary",
+                "slug": "vet",
+                "sort_order": "90",
+                "match_phrase": "Vet Clinic",
+            },
+        )
+        phrases = list(
+            CategoryRule.objects.filter(category="vet")
+            .order_by("id")
+            .values_list("match_phrase", flat=True)
+        )
+        self.assertEqual(phrases, ["Vet Clinic"])
+
+    def test_deleting_last_rule_reseeds_label(self):
+        tag = Tag.objects.create(slug="optometry", label="Optometry", sort_order=85)
+        CategoryRule.objects.filter(category="optometry").delete()
+        rule = CategoryRule.objects.get(category="optometry")
+        self.assertEqual(rule.match_phrase, "Optometry")
+        tag.delete()
+        self.assertFalse(CategoryRule.objects.filter(category="optometry").exists())
+
+    def test_existing_tags_are_backfilled_with_label_rules(self):
+        self.assertTrue(
+            CategoryRule.objects.filter(
+                category="dental", match_phrase="Dental"
+            ).exists()
+        )
+        self.assertFalse(
+            CategoryRule.objects.filter(category="unknown").exists()
+        )
+        self.assertFalse(Tag.objects.filter(slug="invalid").exists())
+
+    def test_system_unknown_never_gets_a_match_rule(self):
+        unknown = Tag.objects.get(slug="unknown")
+        self.assertTrue(unknown.is_system)
+        self.assertEqual(unknown.ensure_default_match_rule(), None)
+        self.assertFalse(CategoryRule.objects.filter(category="unknown").exists())
+        CategoryRule.objects.create(
+            match_phrase="Unknown",
+            category="unknown",
+            priority=100,
+        )
+        CategoryRule.objects.filter(category="unknown").delete()
+        self.assertFalse(CategoryRule.objects.filter(category="unknown").exists())
 
     def test_create_seeds_one_rule_per_comma_separated_phrase(self):
         client = staff_client()
@@ -265,7 +422,7 @@ class TagManagementTests(TestCase):
         self.assertEqual(added.priority, 100)
         self.assertEqual(CategoryRule.objects.filter(category="vet").count(), 2)
 
-    def test_update_empty_match_phrases_deletes_all_rules(self):
+    def test_update_empty_match_phrases_keeps_label_rule(self):
         client = staff_client()
         client.post(
             reverse("category_type_save"),
@@ -291,7 +448,12 @@ class TagManagementTests(TestCase):
         )
         self.assertEqual(response.status_code, 302)
         self.assertTrue(Tag.objects.filter(pk=tag.pk).exists())
-        self.assertFalse(CategoryRule.objects.filter(category="vet").exists())
+        rules = list(
+            CategoryRule.objects.filter(category="vet").values_list(
+                "match_phrase", flat=True
+            )
+        )
+        self.assertEqual(rules, ["Veterinary"])
 
     def test_manage_list_shows_lead_count_per_tag(self):
         dental = Tag.objects.get(slug="dental")
@@ -553,7 +715,7 @@ class TagManagementTests(TestCase):
         )
         self.assertTrue(Tag.objects.filter(slug="vet").exists())
         self.assertEqual(
-            CategoryRule.objects.get(category="vet").match_phrase,
+            CategoryRule.objects.get(category="vet").match_phrase.lower(),
             "veterinary",
         )
 
@@ -594,7 +756,6 @@ class TagWritePathTests(TestCase):
         gp = Tag.objects.get(slug="gp")
         dental = Tag.objects.get(slug="dental")
         unknown = Tag.objects.get(slug="unknown")
-        invalid = Tag.objects.get(slug="invalid")
         ordered = Tag.from_slugs(["dental", "gp"])
         self.assertEqual([t.slug for t in ordered], ["dental", "gp"])
         self.assertEqual(Tag.derived_category_slug(ordered), "dental")
@@ -603,8 +764,8 @@ class TagWritePathTests(TestCase):
             "dental",
         )
         self.assertEqual(Tag.derived_category_slug([unknown]), "unknown")
-        self.assertEqual(Tag.derived_category_slug([invalid]), "invalid")
         self.assertEqual(Tag.derived_category_slug([]), "unknown")
+        self.assertFalse(Tag.objects.filter(slug="invalid").exists())
 
     def test_clinic_update_sets_tags_and_derives_category(self):
         response = self.client.patch(
@@ -743,6 +904,98 @@ class TagWritePathTests(TestCase):
         self.assertNotIn('id="bulk-manual-category"', html)
         self.assertIn(">Set tags<", html)
         self.assertNotIn(">Set category<", html)
+        self.assertIn('id="bulk-auto-classify"', html)
+        self.assertIn("Auto-classify from name", html)
+        self.assertIn("lead-tag-picker-chip", html)
+        self.assertIn("lead-tag-picker-cb", html)
+
+    def test_bulk_auto_classify_updates_unknown_only_and_skips_tagged(self):
+        CategoryRule.objects.create(
+            match_phrase="dental",
+            category="dental",
+            priority=10,
+        )
+        unknown = Tag.objects.get(slug="unknown")
+        dental = Tag.objects.get(slug="dental")
+        eligible_empty = self.lead
+        eligible_empty.name = "Sunrise Dental Clinic"
+        eligible_empty.save(update_fields=["name"])
+        eligible_empty.tags.set([unknown])
+
+        already_tagged = Lead.objects.create(
+            name="Tagged Dental Clinic",
+            address="13 Tag Write St",
+            group=self.group,
+        )
+        already_tagged.tags.set([dental])
+
+        no_match = Lead.objects.create(
+            name="Random Bakery",
+            address="14 Tag Write St",
+            group=self.group,
+        )
+        no_match.tags.set([unknown])
+
+        empty_tags = Lead.objects.create(
+            name="Segamat Dental Surgery",
+            address="15 Tag Write St",
+            group=self.group,
+        )
+
+        response = self.client.post(
+            reverse("leads_bulk_auto_classify"),
+            data=json.dumps(
+                {
+                    "ids": [
+                        eligible_empty.pk,
+                        already_tagged.pk,
+                        no_match.pk,
+                        empty_tags.pk,
+                    ]
+                }
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["updated"], 2)
+        self.assertEqual(payload["skipped_tagged"], 1)
+        self.assertEqual(payload["skipped_no_match"], 1)
+        self.assertIn("Updated 2 leads from name.", payload["message"])
+        self.assertIn("Skipped 1 already tagged", payload["message"])
+        self.assertIn("Skipped 1 with no name match", payload["message"])
+
+        eligible_empty.refresh_from_db()
+        empty_tags.refresh_from_db()
+        already_tagged.refresh_from_db()
+        no_match.refresh_from_db()
+        self.assertEqual(
+            list(eligible_empty.tags.values_list("slug", flat=True)),
+            ["dental"],
+        )
+        self.assertTrue(eligible_empty.is_processed)
+        self.assertEqual(
+            list(empty_tags.tags.values_list("slug", flat=True)),
+            ["dental"],
+        )
+        self.assertEqual(
+            list(already_tagged.tags.values_list("slug", flat=True)),
+            ["dental"],
+        )
+        self.assertEqual(
+            list(no_match.tags.values_list("slug", flat=True)),
+            ["unknown"],
+        )
+
+    def test_bulk_auto_classify_does_not_require_picker_tags(self):
+        response = self.client.post(
+            reverse("leads_bulk_auto_classify"),
+            data=json.dumps({"ids": [self.lead.pk]}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["ok"])
 
     def test_edit_dialog_js_prefills_from_data_tags(self):
         js = (

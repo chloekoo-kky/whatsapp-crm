@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  {% load clinic_display %}
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Hunt History — Lead CRM</title>
+  {% include "leads/partials/_tailwind.html" %}
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  {% include "leads/partials/_workspace_app_styles.html" %}
+</head>
+<body class="flex h-[100dvh] min-h-0 flex-col overflow-hidden overflow-x-hidden bg-slate-100 font-sans text-slate-900 antialiased lg:flex-row">
+  {% include "leads/partials/_mobile_topbar.html" with mobile_page_title="Hunt History" mobile_page_subtitle="Past Maps hunts" %}
+  {% include "leads/partials/_app_sidebar.html" with nav_active="hunt_history" %}
+
+  <main class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+    <header class="hidden shrink-0 border-b border-slate-200/80 bg-white px-4 py-4 sm:px-6 lg:block">
+      <h1 class="text-lg font-semibold text-slate-900">Hunt History</h1>
+      <p class="mt-0.5 text-sm text-slate-500">Every Maps hunt run from the dashboard, API, or CLI. Times are {{ campaign_timezone }}.</p>
+    </header>
+
+    <div class="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
+      <div class="mx-auto max-w-7xl space-y-4">
+        <section class="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm">
+          <div class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-5 py-3">
+            <h2 class="text-sm font-semibold text-slate-900">Past hunts</h2>
+            <span class="text-xs font-medium text-slate-500">{{ paginator.count }} hunt{{ paginator.count|pluralize }}</span>
+          </div>
+
+          {% if hunts %}
+          <div class="overflow-x-auto">
+            <table class="min-w-full text-left text-sm">
+              <thead class="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                <tr>
+                  <th scope="col" class="whitespace-nowrap px-5 py-3">When</th>
+                  <th scope="col" class="whitespace-nowrap px-5 py-3">State</th>
+                  <th scope="col" class="whitespace-nowrap px-5 py-3">City / area</th>
+                  <th scope="col" class="whitespace-nowrap px-5 py-3">Keyword</th>
+                  <th scope="col" class="whitespace-nowrap px-5 py-3">Maps query</th>
+                  <th scope="col" class="whitespace-nowrap px-5 py-3">Exclude keywords</th>
+                  <th scope="col" class="whitespace-nowrap px-5 py-3">Provider</th>
+                  <th scope="col" class="whitespace-nowrap px-5 py-3 text-right">Leads produced</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-slate-100">
+                {% for rec in hunts %}
+                <tr class="hover:bg-slate-50/80">
+                  <td class="whitespace-nowrap px-5 py-3 text-slate-700">{{ rec.created_at|campaign_datetime }}</td>
+                  <td class="px-5 py-3 text-slate-700">{% if rec.search_state %}{{ rec.search_state }}{% else %}<span class="text-slate-400">—</span>{% endif %}</td>
+                  <td class="px-5 py-3 text-slate-700">{% if rec.search_city %}{{ rec.search_city }}{% else %}<span class="text-slate-400">—</span>{% endif %}</td>
+                  <td class="px-5 py-3 font-medium text-slate-900">{{ rec.keyword }}</td>
+                  <td class="px-5 py-3 text-slate-700">{% if rec.maps_search_query %}{{ rec.maps_search_query }}{% else %}<span class="text-slate-400">—</span>{% endif %}</td>
+                  <td class="px-5 py-3">
+                    {% if rec.exclude_keyword_list %}
+                    <div class="flex flex-wrap gap-1">
+                      {% for term in rec.exclude_keyword_list %}
+                      <span class="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium text-slate-600">{{ term }}</span>
+                      {% endfor %}
+                    </div>
+                    {% else %}
+                    <span class="text-slate-400">—</span>
+                    {% endif %}
+                  </td>
+                  <td class="whitespace-nowrap px-5 py-3">
+                    {% if rec.provider == "outscraper" %}
+                    <span class="rounded-md bg-violet-50 px-2 py-0.5 text-xs font-semibold text-violet-700">{{ rec.get_provider_display }}</span>
+                    {% else %}
+                    <span class="rounded-md bg-sky-50 px-2 py-0.5 text-xs font-semibold text-sky-700">{{ rec.get_provider_display }}</span>
+                    {% endif %}
+                  </td>
+                  <td class="whitespace-nowrap px-5 py-3 text-right tabular-nums font-semibold text-slate-900">{{ rec.leads_created }}</td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+          {% if is_paginated %}
+          <nav class="flex items-center justify-between gap-3 border-t border-slate-100 px-5 py-3 text-sm" aria-label="Hunt history pages">
+            <p class="text-xs text-slate-500">
+              Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}
+            </p>
+            <div class="flex items-center gap-2">
+              {% if page_obj.has_previous %}
+              <a href="?page={{ page_obj.previous_page_number }}" class="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">Previous</a>
+              {% else %}
+              <span class="rounded-lg border border-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-300">Previous</span>
+              {% endif %}
+              {% if page_obj.has_next %}
+              <a href="?page={{ page_obj.next_page_number }}" class="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">Next</a>
+              {% else %}
+              <span class="rounded-lg border border-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-300">Next</span>
+              {% endif %}
+            </div>
+          </nav>
+          {% endif %}
+          {% else %}
+          <p class="px-5 py-10 text-center text-sm text-slate-400">No hunts yet. Run a hunt from the dashboard to see it here.</p>
+          {% endif %}
+        </section>
+      </div>
+    </div>
+  </main>
+
+  {% include "leads/partials/_htmx_setup.html" %}
+  {% include "leads/partials/_mobile_nav.js.html" %}
+</body>
+</html>

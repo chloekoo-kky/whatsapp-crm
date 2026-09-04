@@ -1,6 +1,6 @@
 {% load clinic_display crm_auth %}
 {% with ck=c.name|lower %}
-<article class="clinic-row clinic-card clinic-row--selectable relative flex min-h-[240px] min-w-0 cursor-pointer flex-col rounded-2xl border bg-white p-4 shadow-sm transition hover:shadow-md {% if c|whatsapp_dispatched %} clinic-card--dispatched border-2 border-emerald-400 hover:border-emerald-500{% else %}border border-slate-200/90 hover:border-slate-300{% endif %} {% if ck in multi_location_brands %}clinic-row--brand-group{% endif %}"
+<article class="clinic-row clinic-card clinic-row--selectable relative flex min-h-[240px] min-w-0 cursor-pointer flex-col rounded-2xl border border-slate-200/90 bg-white p-4 shadow-sm transition hover:shadow-md hover:border-slate-300 {% if c|whatsapp_dispatched %} clinic-card--dispatched{% endif %} {% if ck in multi_location_brands %}clinic-row--brand-group{% endif %}"
   data-clinic-id="{{ c.id }}"
   aria-selected="false"
   data-is-chain="{% if c.is_chain %}1{% else %}0{% endif %}"
@@ -16,37 +16,31 @@
   <input type="checkbox" class="clinic-select-cb sr-only" value="{{ c.id }}" title="Select card" aria-label="Select {{ c.name }}" />
   <div hidden class="whatsapp-draft-store">{{ c.whatsapp_draft }}</div>
   <div class="min-w-0 flex-1 pb-2">
-    <div class="clinic-type-row mb-2 flex items-center justify-between gap-2">
-      <div class="flex min-w-0 flex-1 flex-col items-start gap-1">
-        {% include "leads/partials/_lead_fields/_folder_badge.html" %}
-        <div class="flex min-w-0 w-full items-start gap-1">
-        {% include "leads/partials/_lead_fields/_vip_star.html" with extra_class="-ml-1 mt-0.5" %}
-        <div class="clinic-type-cell min-w-0 flex-1">
-          {% include "leads/partials/_lead_fields/_category_badge.html" %}
-          {% include "leads/partials/_lead_fields/_tag_chips.html" %}
-        </div>
+    <div class="clinic-type-row mb-2 flex flex-col gap-1.5">
+      {% include "leads/partials/_lead_fields/_folder_badge.html" %}
+      <div class="flex items-center justify-between gap-2">
+        {% include "leads/partials/_lead_fields/_vip_star.html" with extra_class="-ml-1" %}
+        <div class="flex shrink-0 items-center gap-0.5 clinic-card-header-actions">
+          <button type="button" class="clinic-edit-btn inline-flex shrink-0 rounded-lg p-1.5 text-slate-500 transition hover:bg-slate-100 hover:text-indigo-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/40" data-clinic-id="{{ c.id }}" title="Edit lead">
+            <span class="sr-only">Edit lead</span>
+            <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/></svg>
+          </button>
+          {% if request.user|can_see_all_leads %}
+          <button type="button" class="assign-to-user-btn inline-flex shrink-0 rounded-lg p-1.5 text-slate-500 transition hover:bg-sky-50 hover:text-sky-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/40" data-clinic-id="{{ c.id }}" title="Assign to…" aria-label="Assign to user">
+            <span class="sr-only">Assign to user</span>
+            <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z"/></svg>
+          </button>
+          {% endif %}
         </div>
       </div>
-      <div class="flex shrink-0 items-center gap-0.5 clinic-card-header-actions">
-        <button type="button" class="clinic-edit-btn inline-flex shrink-0 rounded-lg p-1.5 text-slate-500 transition hover:bg-slate-100 hover:text-indigo-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/40" data-clinic-id="{{ c.id }}" title="Edit lead">
-          <span class="sr-only">Edit lead</span>
-          <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/></svg>
-        </button>
-        <button type="button" class="move-to-group-btn inline-flex shrink-0 rounded-lg p-1.5 text-slate-500 transition hover:bg-violet-50 hover:text-violet-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/40" data-clinic-id="{{ c.id }}" title="Move to group" aria-label="Move to group">
-          <span class="sr-only">Move to group</span>
-          <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z"/></svg>
-        </button>
-        {% if request.user|can_see_all_leads %}
-        <button type="button" class="assign-to-user-btn inline-flex shrink-0 rounded-lg p-1.5 text-slate-500 transition hover:bg-sky-50 hover:text-sky-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/40" data-clinic-id="{{ c.id }}" title="Assign to…" aria-label="Assign to user">
-          <span class="sr-only">Assign to user</span>
-          <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z"/></svg>
-        </button>
-        {% endif %}
+      <div class="clinic-type-cell min-w-0 w-full">
+        {% include "leads/partials/_lead_fields/_tag_chips.html" %}
       </div>
     </div>
     <div class="clinic-name-cell-inner min-w-0 text-base font-bold leading-snug text-slate-900">
       {% include "leads/partials/_lead_fields/_name_link.html" with extra_class="font-bold text-slate-900 underline decoration-slate-300 decoration-1 underline-offset-2 hover:text-indigo-600" %}
     </div>
+    {% include "leads/partials/_lead_fields/_assigned_to_line.html" with extra_class="mt-1" %}
     <p class="clinic-search-inner clinic-source-line mt-1.5 text-xs leading-snug text-slate-500">
       {% include "leads/partials/_lead_fields/_source_line.html" %}
     </p>
@@ -57,8 +51,9 @@
     </div>
     {% include "leads/partials/_lead_fields/_website_line.html" with extra_class="mt-1" %}
     {% include "leads/partials/_lead_fields/_created_line.html" with extra_class="mt-2" %}
-    {% include "leads/partials/_lead_fields/_batch_badges.html" with wrap_class="mt-1.5 max-w-full" badge_class="max-w-full" label_class="truncate" %}
+    {% include "leads/partials/_lead_fields/_assigned_date_line.html" with extra_class="mt-1" %}
   </div>
+  {% include "leads/partials/_lead_fields/_batch_badges.html" with wrap_class="w-full justify-end pb-2" badge_class="max-w-full" label_class="whitespace-nowrap" %}
   {% if show_folder_badge %}
   {% include "leads/partials/_lead_grid_bottom_actions.html" with lead=c is_trash_view=c.dashboard_action_is_trash_view is_uncategorized_view=c.dashboard_action_is_uncategorized_view is_whatsapp_chats_view=c.dashboard_action_is_whatsapp_chats_view is_queue_view=c.dashboard_action_is_queue_view current_group_id=c.dashboard_action_current_group_id force_send_template_name=force_send_template_name %}
   {% else %}

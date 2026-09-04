@@ -52,6 +52,8 @@ for _raw in str(_csrf_origins).split(","):
             CSRF_TRUSTED_ORIGINS.append(f"https://{_host}")
 
 SERPER_API_KEY = env("SERPER_API_KEY", default="")
+OUTSCRAPER_API_KEY = env("OUTSCRAPER_API_KEY", default="")
+OUTSCRAPER_API_BASE = env("OUTSCRAPER_API_BASE", default="https://api.outscraper.cloud")
 # Reserved for future AI features (not used by the app today).
 GEMINI_API_KEY = env("GEMINI_API_KEY", default="")
 

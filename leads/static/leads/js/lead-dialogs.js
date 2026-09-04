@@ -192,8 +192,8 @@
       }
       window.showLeadConversationLogError = showLeadConversationLogError;
       function setLeadConversationLogVisual(leadId, hasLogs) {
-        // The left green "conversation log" ribbon was removed; the green frame
-        // (chat-record dispatched chrome) is the only card indicator now.
+        // Conversation-log ribbon was removed; dispatched cards show a Sent chip
+        // next to the WhatsApp icon.
       }
       window.setLeadConversationLogVisual = setLeadConversationLogVisual;
       function renderLeadConversationHistory(logs) {

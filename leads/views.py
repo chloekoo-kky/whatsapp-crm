@@ -4,7 +4,7 @@ Leads UI views.
 The dashboard **Run hunt** action POSTs JSON to ``POST /hunt/?limit=…`` with
 ``city``, ``shop_keyword`` (required: free-text keyword before scraping), ``query`` (optional
 Maps fragment; defaults to the keyword when empty), and optional ``require_website`` in the body;
-``limit`` is from the query string (default 100, max 100). Hunts import via Serper only.
+``limit`` is from the query string (default 100, max 100). Hunts import via Serper or Outscraper.
 """
 
 import html
@@ -112,26 +112,36 @@ from leads.whatsapp_service import (
 )
 from leads.pipeline import (
     QUEUE_GROUP_NAME,
-    SYSTEM_GROUP_SORT_ORDERS,
+    READY_GROUP_NAME,
     TRASH_GROUP_NAME,
+    UNCATEGORIZED_DISPLAY_NAME,
     UNCATEGORIZED_GROUP_NAME,
     WHATSAPP_CHATS_GROUP_NAME,
     apply_group_assignment_side_effects,
     enqueue_leads_for_whatsapp,
     ensure_pipeline_system_groups,
     get_or_create_queue_group,
+    get_or_create_ready_group,
     get_or_create_trash_group,
     get_or_create_uncategorized_group,
     get_or_create_whatsapp_chats_group,
+    lead_group_display_name,
+    move_leads_to_ready,
+    ready_group_filter,
     uncategorized_group_filter,
 )
 from leads.services import (
-    fetch_leads_from_serper,
+    auto_classify_unknown_leads_from_names,
+    create_search_query_record,
+    fetch_leads,
+    normalize_hunt_provider,
+    record_search_query_outcome,
     sync_chain_flags_for_name,
 )
 TRASH_STATUS_MESSAGE = "Moved to trash — excluded from pipeline."
 SYSTEM_LEAD_GROUP_NAMES = (
     UNCATEGORIZED_GROUP_NAME,
+    READY_GROUP_NAME,
     QUEUE_GROUP_NAME,
     WHATSAPP_CHATS_GROUP_NAME,
     TRASH_GROUP_NAME,
@@ -231,23 +241,44 @@ def _funnel_metrics(qs) -> dict[str, int]:
 
 def _lead_group_counts(request) -> dict:
     """Total lead counts keyed by each tab's ``data-group-id`` (live tab badges)."""
-    queue_group = get_or_create_queue_group()
+    ready_group = get_or_create_ready_group()
     trash_group = get_or_create_trash_group()
     counts = {
-        "uncategorized": _leads_qs_for_tab(request, "uncategorized", None).count(),
-        str(queue_group.pk): _leads_qs_for_tab(request, str(queue_group.pk), None).count(),
-        str(trash_group.pk): _leads_qs_for_tab(request, str(trash_group.pk), None).count(),
+        "uncategorized": _leads_qs_for_tab(
+            request, "uncategorized", None, queued_only=False
+        ).count(),
+        str(ready_group.pk): _leads_qs_for_tab(
+            request, str(ready_group.pk), None, queued_only=False
+        ).count(),
+        str(trash_group.pk): _leads_qs_for_tab(
+            request, str(trash_group.pk), None, queued_only=False
+        ).count(),
     }
-    group_totals = {
-        row["group_id"]: row["c"]
-        for row in visible_leads(request)
-        .exclude(group_id=None)
-        .values("group_id")
-        .annotate(c=Count("id"))
-    }
-    for g in LeadGroup.objects.exclude(name__in=SYSTEM_LEAD_GROUP_NAMES):
-        counts[str(g.pk)] = group_totals.get(g.pk, 0)
     return counts
+
+
+def _tag_lead_counts(qs) -> dict[str, int]:
+    """Map tag slug to how many distinct leads in ``qs`` have that tag."""
+    rows = (
+        qs.filter(tags__isnull=False)
+        .order_by()
+        .values("tags__slug")
+        .annotate(n=Count("pk", distinct=True))
+    )
+    return {
+        str(row["tags__slug"]): int(row["n"])
+        for row in rows
+        if row.get("tags__slug")
+    }
+
+
+def _dashboard_tags_with_counts(qs):
+    """Tags for the filter bar, with ``lead_count`` for the given lead queryset."""
+    counts = _tag_lead_counts(qs)
+    tags = list(Tag.objects.order_by("sort_order", "label", "slug"))
+    for tag in tags:
+        tag.lead_count = counts.get(tag.slug, 0)
+    return tags
 
 
 def _dashboard_enrich_clinics(qs, request=None):
@@ -289,7 +320,7 @@ def _annotate_lead_dashboard_qs(qs):
         .order_by("-created_at", "-id")
         .values("is_outbound")[:1]
     )
-    return qs.prefetch_related(
+    return qs.select_related("assigned_to").prefetch_related(
         Prefetch(
             "whatsapp_batches",
             queryset=WhatsAppBatchSchedule.objects.order_by("scheduled_at", "id"),
@@ -349,32 +380,73 @@ def _leads_tab_sink_order(qs):
     return qs.order_by("display_order", "-created_at", "id")
 
 
-def _leads_qs_for_tab(request, group_id_key: Optional[str], search_record_id: Optional[int]):
+def _request_queued_filter(request) -> bool:
+    raw = (request.GET.get("queued") or request.POST.get("queued") or "").strip().lower()
+    return raw in ("1", "true", "yes")
+
+
+def apply_queued_outreach_filter(qs):
+    """Exclude trash; keep pending/processing. Former Queue-tab condition."""
+    trash_group = get_or_create_trash_group()
+    return qs.exclude(group_id=trash_group.pk).filter(
+        whatsapp_status__in=[
+            Lead.WhatsappStatus.PENDING,
+            Lead.WhatsappStatus.PROCESSING,
+        ]
+    )
+
+
+def _resolve_dashboard_tab_key(group_id_raw: Optional[str]) -> str:
+    """Map a request ``group_id`` to a dashboard tab key. Missing values default to Ready."""
+    g = (group_id_raw or "").strip().lower()
+    if g in ("uncategorized", "all"):
+        return "uncategorized"
+    queue_group = get_or_create_queue_group()
+    if g.isdigit():
+        if int(g) == queue_group.pk:
+            return "uncategorized"
+        return g
+    return str(get_or_create_ready_group().pk)
+
+
+def _leads_qs_for_tab(
+    request,
+    group_id_key: Optional[str],
+    search_record_id: Optional[int],
+    *,
+    queued_only: Optional[bool] = None,
+):
     """Leads for a dashboard tab, with pending outreach cards sunk to the bottom."""
     qs = _leads_tab_base_qs(request)
     if search_record_id is not None:
         qs = qs.filter(search_query_record_id=int(search_record_id))
     g = (group_id_key or "uncategorized").strip().lower()
     queue_group = get_or_create_queue_group()
+    ready_group = get_or_create_ready_group()
     trash_group = get_or_create_trash_group()
     whatsapp_chats_group = get_or_create_whatsapp_chats_group()
+    if queued_only is None:
+        queued_only = _request_queued_filter(request)
+    # Queue is a toolbar filter now, not a Views tab. Old ``group_id=<queue pk>``
+    # bookmarks land on New; ``queued=1`` applies the former tab condition.
     if g.isdigit() and int(g) == queue_group.pk:
-        qs = qs.exclude(group_id=trash_group.pk).filter(
-            whatsapp_status__in=[
-                Lead.WhatsappStatus.PENDING,
-                Lead.WhatsappStatus.PROCESSING,
-            ]
-        )
-        return qs.order_by("created_at", "id")
-    if g.isdigit() and int(g) == whatsapp_chats_group.pk:
+        g = "uncategorized"
+    chats_order = False
+    if g.isdigit() and int(g) == ready_group.pk:
+        qs = qs.filter(ready_group_filter())
+    elif g.isdigit() and int(g) == whatsapp_chats_group.pk:
         qs = qs.exclude(group_id=trash_group.pk).filter(
             has_awaiting_client_reply=True
         )
-        return qs.order_by("-created_at", "id")
-    if g.isdigit():
+        chats_order = True
+    elif g.isdigit() and LeadGroup.objects.filter(pk=int(g)).exists():
         qs = qs.filter(group_id=int(g))
     else:
         qs = qs.filter(uncategorized_group_filter())
+    if queued_only:
+        qs = apply_queued_outreach_filter(qs)
+    if chats_order:
+        return qs.order_by("-created_at", "id")
     return _leads_tab_sink_order(qs)
 
 
@@ -384,6 +456,7 @@ def _folder_context_for_group(grp: LeadGroup) -> dict:
         "current_group_id": grp.pk,
         "is_trash_view": grp.name == TRASH_GROUP_NAME,
         "is_uncategorized_view": grp.name == UNCATEGORIZED_GROUP_NAME,
+        "is_ready_view": grp.name == READY_GROUP_NAME,
         "is_queue_view": grp.name == QUEUE_GROUP_NAME,
         "is_whatsapp_chats_view": grp.name == WHATSAPP_CHATS_GROUP_NAME,
         "force_send_template_name": get_force_send_template_name(),
@@ -405,22 +478,21 @@ def _lead_grid_action_context(request, lead: Lead) -> dict:
 def _active_folder_context(request) -> dict:
     """Resolve the active dashboard tab folder for grid card action conditionals."""
     gid_raw = (
-        request.GET.get("group_id") or request.POST.get("group_id") or "uncategorized"
+        request.GET.get("group_id") or request.POST.get("group_id") or ""
     ).strip().lower()
-    if gid_raw.isdigit():
-        grp = LeadGroup.objects.filter(pk=int(gid_raw)).first()
-        if grp:
-            return _folder_context_for_group(grp)
-    uncategorized = get_or_create_uncategorized_group()
-    return {
-        "current_group_name": UNCATEGORIZED_GROUP_NAME,
-        "current_group_id": uncategorized.pk,
-        "is_trash_view": False,
-        "is_uncategorized_view": True,
-        "is_queue_view": False,
-        "is_whatsapp_chats_view": False,
-        "force_send_template_name": get_force_send_template_name(),
-    }
+    tab_key = _resolve_dashboard_tab_key(gid_raw)
+    if tab_key == "uncategorized":
+        ctx = _folder_context_for_group(get_or_create_uncategorized_group())
+    elif tab_key.isdigit():
+        grp = LeadGroup.objects.filter(pk=int(tab_key)).first()
+        ctx = _folder_context_for_group(
+            grp if grp is not None else get_or_create_ready_group()
+        )
+    else:
+        ctx = _folder_context_for_group(get_or_create_ready_group())
+    if _request_queued_filter(request):
+        ctx["is_queue_view"] = True
+    return ctx
 
 
 GLOBAL_LEAD_SEARCH_MIN_LEN = 2
@@ -451,8 +523,8 @@ def _lead_dashboard_folder_meta(lead: Lead) -> tuple[str, str]:
     uncategorized = get_or_create_uncategorized_group()
     grp = lead.group
     if grp is None or grp.pk == uncategorized.pk:
-        return "uncategorized", UNCATEGORIZED_GROUP_NAME
-    return str(grp.pk), grp.name
+        return "uncategorized", lead_group_display_name(UNCATEGORIZED_GROUP_NAME)
+    return str(grp.pk), lead_group_display_name(grp.name)
 
 
 def _folder_context_for_lead(lead: Lead) -> dict:
@@ -472,6 +544,7 @@ def _attach_global_search_lead_context(lead: Lead) -> None:
     lead.dashboard_folder_name = folder_name
     lead.dashboard_action_is_trash_view = folder_ctx["is_trash_view"]
     lead.dashboard_action_is_uncategorized_view = folder_ctx["is_uncategorized_view"]
+    lead.dashboard_action_is_ready_view = folder_ctx["is_ready_view"]
     lead.dashboard_action_is_queue_view = folder_ctx["is_queue_view"]
     lead.dashboard_action_is_whatsapp_chats_view = folder_ctx["is_whatsapp_chats_view"]
     lead.dashboard_action_current_group_id = folder_ctx["current_group_id"]
@@ -499,9 +572,9 @@ def _leads_queryset_for_table(request) -> tuple:
     if len(q) >= GLOBAL_LEAD_SEARCH_MIN_LEN:
         return _leads_qs_global_search(request, q, srid_int), True
     gid_raw = (request.GET.get("group_id") or "").strip().lower()
-    if gid_raw.isdigit():
-        return _leads_qs_for_tab(request, gid_raw, srid_int), False
-    return _leads_qs_for_tab(request, "uncategorized", srid_int), False
+    return _leads_qs_for_tab(
+        request, _resolve_dashboard_tab_key(gid_raw), srid_int
+    ), False
 
 
 def _workspace_nav_js_config() -> dict:
@@ -514,6 +587,7 @@ def _workspace_nav_js_config() -> dict:
 def _dashboard_js_config(context: dict) -> dict:
     """JSON blob for dashboard.js (json_script). Keys match the old inline JS names."""
     queue = context.get("queue_group")
+    ready = context.get("ready_group")
     trash = context.get("trash_group")
     return {
         "huntApiPath": context.get("hunt_api_path") or "",
@@ -529,20 +603,37 @@ def _dashboard_js_config(context: dict) -> dict:
         "activeSearchRecordId": context.get("active_search_record_id"),
         "initialLeadGroupTabIdFromPage": context.get("active_group_tab_id") or "",
         "exportXlsxUrl": context.get("export_xlsx_url") or "/leads/export/xlsx/",
+        "importXlsxUrl": context.get("import_xlsx_url") or "/leads/import/xlsx/",
         "exportFullBackupUrl": context.get("export_full_backup_url") or "/leads/export/backup/",
         "importFullBackupUrl": context.get("import_full_backup_url") or "/leads/import/backup/",
         "bulkManualUrl": context.get("bulk_manual_url") or "/leads/api/bulk-manual/",
+        "bulkAutoClassifyUrl": context.get("bulk_auto_classify_url")
+        or "/leads/api/bulk-auto-classify/",
         "bulkWhatsappQueueUrl": context.get("bulk_whatsapp_queue_url")
         or "/leads/api/bulk-whatsapp-queue/",
+        "bulkMoveReadyUrl": context.get("bulk_move_ready_url")
+        or "/leads/api/bulk-move-ready/",
         "bulkDequeueUrl": context.get("bulk_dequeue_url") or "/leads/api/bulk-dequeue/",
         "bulkAssignBatchUrl": context.get("bulk_assign_batch_url")
         or "/leads/api/bulk-assign-batch/",
         "whatsappBatchesJsonUrl": context.get("whatsapp_batches_json_url")
         or "/leads/ajax/whatsapp/batches/",
         "queueGroupTabId": str(queue.pk) if queue is not None else "",
+        "readyGroupTabId": str(ready.pk) if ready is not None else "",
         "trashGroupTabId": str(trash.pk) if trash is not None else "",
         "leadManualCreateUrl": context.get("lead_manual_create_url") or "/leads/api/leads/manual/",
+        "categoryTypeSaveUrl": context.get("category_type_save_url")
+        or "/categories/types/save/",
+        "tagsJsonUrl": context.get("tags_json_url") or "/categories/types/json/",
+        "categoryTypeDeleteUrlTemplate": context.get(
+            "category_type_delete_url_template"
+        )
+        or "/categories/types/__ID__/delete/",
         "defaultLimit": context.get("hunt_limit_default") or 100,
+        "huntProviders": {
+            "serper": bool(context.get("hunt_serper_configured")),
+            "outscraper": bool(context.get("hunt_outscraper_configured")),
+        },
     }
 
 
@@ -558,7 +649,7 @@ class LeadDashboardView(ListView):
         srid = self.request.GET.get("search_record")
         srid_int = int(srid) if srid and str(srid).isdigit() else None
         gid_raw = (self.request.GET.get("group_id") or "").strip().lower()
-        tab_key = gid_raw if gid_raw.isdigit() else "uncategorized"
+        tab_key = _resolve_dashboard_tab_key(gid_raw)
         return _leads_qs_for_tab(self.request, tab_key, srid_int)
 
     def get_context_data(self, **kwargs):
@@ -571,14 +662,25 @@ class LeadDashboardView(ListView):
         context["hunt_limit_choices"] = HUNT_LIMIT_CHOICES
         context["hunt_limit_default"] = DEFAULT_HUNT_LIMIT
         context["hunt_default_country"] = DEFAULT_HUNT_COUNTRY
-        context["hunt_api_path"] = reverse("hunt_trigger")
+        context["hunt_serper_configured"] = bool(
+            (getattr(settings, "SERPER_API_KEY", "") or "").strip()
+        )
+        context["hunt_outscraper_configured"] = bool(
+            (getattr(settings, "OUTSCRAPER_API_KEY", "") or "").strip()
+        )
+        context["hunt_api_path"] = (
+            reverse("hunt_trigger") if self.request.user.is_superuser else ""
+        )
         context["export_xlsx_url"] = reverse("clinics_export_xlsx")
+        context["import_xlsx_url"] = reverse("import_leads_xlsx")
         context["export_full_backup_url"] = reverse("export_full_backup")
         context["import_full_backup_url"] = reverse("import_full_backup")
         context["category_choices"] = lead_category_choices()
-        context["dashboard_tags"] = list(Tag.objects.order_by("sort_order", "label", "slug"))
+        context["dashboard_tags"] = _dashboard_tags_with_counts(self.get_queryset())
         context["bulk_manual_url"] = reverse("leads_bulk_manual")
+        context["bulk_auto_classify_url"] = reverse("leads_bulk_auto_classify")
         context["bulk_whatsapp_queue_url"] = reverse("leads_bulk_whatsapp_queue")
+        context["bulk_move_ready_url"] = reverse("leads_bulk_move_ready")
         context["bulk_dequeue_url"] = reverse("leads_bulk_dequeue")
         context["bulk_assign_batch_url"] = reverse("leads_bulk_assign_batch")
         context["whatsapp_batches_json_url"] = reverse("whatsapp_batches_json")
@@ -590,38 +692,30 @@ class LeadDashboardView(ListView):
         context["reorder_lead_groups_url"] = reverse("reorder_lead_groups")
         context["reorder_leads_url"] = reverse("reorder_leads")
         context["lead_manual_create_url"] = reverse("lead_manual_create")
+        context["category_type_save_url"] = reverse("category_type_save")
+        context["tags_json_url"] = reverse("tags_json")
+        context["category_type_delete_url_template"] = (
+            "/categories/types/__ID__/delete/"
+        )
         context["workspace_fragment_dashboard_url"] = reverse("workspace_fragment_dashboard")
         context["workspace_fragment_whatsapp_url"] = reverse("workspace_fragment_whatsapp")
         context["queue_group"] = get_or_create_queue_group()
+        context["ready_group"] = get_or_create_ready_group()
         context["whatsapp_chats_group"] = get_or_create_whatsapp_chats_group()
         context["active_chat_count"] = _leads_qs_for_tab(
-            self.request, str(context["whatsapp_chats_group"].pk), None
+            self.request, str(context["whatsapp_chats_group"].pk), None, queued_only=False
         ).count()
         context["trash_group"] = get_or_create_trash_group()
-        lead_groups = list(
-            LeadGroup.objects.exclude(name__in=SYSTEM_LEAD_GROUP_NAMES).order_by(
-                "sort_order", "name"
-            )
-        )
-        group_totals = {
-            row["group_id"]: row["c"]
-            for row in visible_leads(self.request)
-            .exclude(group_id=None)
-            .values("group_id")
-            .annotate(c=Count("id"))
-        }
-        for g in lead_groups:
-            g.total_leads = group_totals.get(g.pk, 0)
-        context["lead_groups"] = lead_groups
+        context["lead_groups"] = []
         context["sales_assignees"] = sales_assignee_users()
         context["uncategorized_lead_count"] = _leads_qs_for_tab(
-            self.request, "uncategorized", None
+            self.request, "uncategorized", None, queued_only=False
         ).count()
-        context["queue_lead_count"] = _leads_qs_for_tab(
-            self.request, str(context["queue_group"].pk), None
+        context["ready_lead_count"] = _leads_qs_for_tab(
+            self.request, str(context["ready_group"].pk), None, queued_only=False
         ).count()
         context["trash_lead_count"] = _leads_qs_for_tab(
-            self.request, str(context["trash_group"].pk), None
+            self.request, str(context["trash_group"].pk), None, queued_only=False
         ).count()
         context["funnel_metrics"] = _funnel_metrics(self.get_queryset())
         rid = self.request.GET.get("search_record")
@@ -629,12 +723,13 @@ class LeadDashboardView(ListView):
             int(rid) if rid and str(rid).isdigit() else None
         )
         gid_raw = (self.request.GET.get("group_id") or "").strip().lower()
-        if gid_raw.isdigit():
-            context["active_group_pk"] = int(gid_raw)
-            context["active_group_tab_id"] = str(context["active_group_pk"])
-        else:
+        tab_key = _resolve_dashboard_tab_key(gid_raw)
+        if tab_key == "uncategorized":
             context["active_group_pk"] = None
             context["active_group_tab_id"] = "uncategorized"
+        else:
+            context["active_group_pk"] = int(tab_key)
+            context["active_group_tab_id"] = tab_key
         context.update(_active_folder_context(self.request))
         context["dashboard_js_config"] = _dashboard_js_config(context)
         context["workspace_nav_js_config"] = _workspace_nav_js_config()
@@ -664,12 +759,11 @@ def workspace_fragment_dashboard(request):
 
 
 def _whatsapp_script_template_rows() -> list[dict]:
-    """Industry folder script editors for the WhatsApp control dashboard."""
+    """Per-tag script editors for the WhatsApp control dashboard."""
     saved = {
         row.group_name: row.template_text
         for row in WhatsAppScriptTemplate.objects.all()
     }
-    system_names = set(SYSTEM_LEAD_GROUP_NAMES)
     rows: list[dict] = [
         {
             "group_name": SCRIPT_TEMPLATE_FALLBACK_GROUP,
@@ -678,16 +772,15 @@ def _whatsapp_script_template_rows() -> list[dict]:
         }
     ]
     seen = {SCRIPT_TEMPLATE_FALLBACK_GROUP}
-    for group in LeadGroup.objects.exclude(name__in=system_names).order_by(
-        "sort_order", "name"
-    ):
-        if group.name in seen:
+    for tag in Tag.objects.filter(is_system=False).order_by("sort_order", "label", "slug"):
+        name = (tag.label or "").strip()
+        if not name or name in seen:
             continue
-        seen.add(group.name)
+        seen.add(name)
         rows.append(
             {
-                "group_name": group.name,
-                "template_text": saved.get(group.name, ""),
+                "group_name": name,
+                "template_text": saved.get(name, ""),
                 "is_fallback": False,
             }
         )
@@ -1440,6 +1533,27 @@ class ReportsView(TemplateView):
         return context
 
 
+@method_decorator(ensure_csrf_cookie, name="dispatch")
+class HuntHistoryView(ListView):
+    """Past Maps hunts (SearchQueryRecord) — superuser only."""
+
+    model = SearchQueryRecord
+    template_name = "leads/hunt_history.html"
+    context_object_name = "hunts"
+    paginate_by = 50
+
+    def dispatch(self, request, *args, **kwargs):
+        if not request.user.is_superuser:
+            return HttpResponse("Superuser required.", status=403)
+        return super().dispatch(request, *args, **kwargs)
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context["nav_active"] = "hunt_history"
+        context["campaign_timezone"] = str(campaign_timezone())
+        return context
+
+
 @require_GET
 def daily_report_export_xlsx(request):
     """Download daily outreach summary for a chosen calendar day."""
@@ -1632,9 +1746,21 @@ def _reconcile_tag_category_rules(slug: str, raw_phrases: str) -> None:
 
     Existing rows whose phrase is still present are left unchanged (priority
     kept). Missing phrases are created at priority 100. Phrases no longer in
-    the list are deleted. An empty list deletes every rule for the tag.
+    the list are deleted. An empty list keeps (or reseeds) the tag label so a
+    live tag is never left without a match rule. System tags (Unknown) never
+    get matching rules — they are a fallback only. Creates happen before deletes
+    so the last-rule reseed hook does not re-add the label while replacing
+    phrases.
     """
+    tag = Tag.objects.filter(slug=slug).first()
+    if tag is not None and tag.is_system:
+        CategoryRule.objects.filter(category=slug).delete()
+        return
     desired = _parse_match_phrases(raw_phrases)
+    if not desired and tag is not None:
+        phrase = (tag.label or "").strip()[:200]
+        if phrase:
+            desired = [phrase]
     desired_keys = {phrase.lower() for phrase in desired}
     existing = list(CategoryRule.objects.filter(category=slug))
     keep_keys: set[str] = set()
@@ -1645,8 +1771,6 @@ def _reconcile_tag_category_rules(slug: str, raw_phrases: str) -> None:
             keep_keys.add(key)
         else:
             stale_ids.append(rule.pk)
-    if stale_ids:
-        CategoryRule.objects.filter(pk__in=stale_ids).delete()
     to_create = [
         CategoryRule(
             match_phrase=phrase,
@@ -1658,6 +1782,10 @@ def _reconcile_tag_category_rules(slug: str, raw_phrases: str) -> None:
     ]
     if to_create:
         CategoryRule.objects.bulk_create(to_create)
+    if stale_ids:
+        CategoryRule.objects.filter(pk__in=stale_ids).delete()
+    if tag is not None:
+        tag.ensure_default_match_rule()
 
 
 def _tags_manage_context() -> dict:
@@ -1694,6 +1822,31 @@ def _tags_fragment_response(request) -> HttpResponse:
 def category_types_fragment(request):
     """HTML fragment for the tags management section."""
     return _tags_fragment_response(request)
+
+
+@require_GET
+def tags_json(request):
+    """JSON list of tags for the dashboard manage-tags modal."""
+    tags = Tag.objects.order_by("sort_order", "label", "slug").annotate(
+        lead_count=Count("leads")
+    )
+    return JsonResponse(
+        {
+            "ok": True,
+            "tags": [
+                {
+                    "id": tag.pk,
+                    "slug": tag.slug,
+                    "label": tag.label,
+                    "sort_order": tag.sort_order,
+                    "is_system": tag.is_system,
+                    "lead_count": tag.lead_count,
+                }
+                for tag in tags
+            ],
+        },
+        json_dumps_params={"ensure_ascii": False},
+    )
 
 
 @require_GET
@@ -1739,6 +1892,20 @@ def _parse_tag_sort_order(raw: str) -> int:
     return max(0, min(sort_order, 32767))
 
 
+def _wants_tag_json(request) -> bool:
+    if request.headers.get("X-Tags-Fragment") == "1":
+        return False
+    if (request.headers.get("X-Tag-Json") or "").strip() == "1":
+        return True
+    return "application/json" in (request.headers.get("Accept") or "").lower()
+
+
+def _tag_save_error(request, message: str, status: int = 400):
+    if _wants_tag_json(request):
+        return JsonResponse({"ok": False, "detail": message}, status=status)
+    return HttpResponse(message, status=status)
+
+
 @csrf_protect
 @require_POST
 def category_type_save(request):
@@ -1747,8 +1914,10 @@ def category_type_save(request):
     label = (request.POST.get("label") or "").strip()[:80]
     raw_slug = (request.POST.get("slug") or "").strip()
     if not label:
-        return HttpResponse("Label is required.", status=400)
-    sort_order = _parse_tag_sort_order(request.POST.get("sort_order") or "100")
+        return _tag_save_error(request, "Label is required.")
+    raw_sort = request.POST.get("sort_order")
+    has_sort = raw_sort is not None and str(raw_sort).strip() != ""
+    sort_order = _parse_tag_sort_order(raw_sort or "100")
 
     if type_id.isdigit():
         tag = get_object_or_404(Tag, pk=int(type_id))
@@ -1756,14 +1925,17 @@ def category_type_save(request):
         if not tag.is_system:
             slug = normalize_category_slug(raw_slug, fallback_label=label)
             if not slug:
-                return HttpResponse("Slug is required.", status=400)
+                return _tag_save_error(request, "Slug is required.")
             if Tag.objects.filter(slug=slug).exclude(pk=tag.pk).exists():
-                return HttpResponse("A tag with this slug already exists.", status=400)
+                return _tag_save_error(request, "A tag with this slug already exists.")
             tag.slug = slug
         tag.label = label
-        tag.sort_order = sort_order
+        update_fields = ["slug", "label"]
+        if has_sort:
+            tag.sort_order = sort_order
+            update_fields.append("sort_order")
         with transaction.atomic():
-            tag.save(update_fields=["slug", "label", "sort_order"])
+            tag.save(update_fields=update_fields)
             if previous_slug != tag.slug:
                 CategoryRule.objects.filter(category=previous_slug).update(
                     category=tag.slug
@@ -1775,10 +1947,10 @@ def category_type_save(request):
     else:
         slug = normalize_category_slug(raw_slug, fallback_label=label)
         if not slug:
-            return HttpResponse("Slug is required.", status=400)
+            return _tag_save_error(request, "Slug is required.")
         slug = _unique_tag_slug(slug)
         with transaction.atomic():
-            Tag.objects.create(
+            tag = Tag.objects.create(
                 slug=slug,
                 label=label,
                 sort_order=sort_order,
@@ -1790,6 +1962,17 @@ def category_type_save(request):
 
     if _wants_tags_fragment(request):
         return _tags_fragment_response(request)
+    if _wants_tag_json(request):
+        return JsonResponse(
+            {
+                "ok": True,
+                "id": tag.pk,
+                "slug": tag.slug,
+                "label": tag.label,
+                "is_system": tag.is_system,
+            },
+            json_dumps_params={"ensure_ascii": False},
+        )
     return redirect("category_rules")
 
 
@@ -1893,17 +2076,19 @@ def category_type_delete(request, pk: int):
     """Delete a user-created tag."""
     tag = get_object_or_404(Tag, pk=pk)
     if tag.is_system:
-        return HttpResponse("System tags cannot be deleted.", status=400)
+        return _tag_save_error(request, "System tags cannot be deleted.")
     if Lead.objects.filter(tags__slug=tag.slug).exists():
-        return HttpResponse(
+        return _tag_save_error(
+            request,
             "Leads still use this tag. Reassign them before deleting.",
-            status=400,
         )
+    slug = tag.slug
     with transaction.atomic():
-        CategoryRule.objects.filter(category=tag.slug).delete()
         tag.delete()
     if _wants_tags_fragment(request):
         return _tags_fragment_response(request)
+    if _wants_tag_json(request):
+        return JsonResponse({"ok": True, "id": pk, "slug": slug})
     return redirect("category_rules")
 
 
@@ -2205,7 +2390,7 @@ def _parse_batch_datetime(date_raw: str, time_raw: str):
 @require_POST
 def whatsapp_schedule_batch(request):
     """HTMX: create an empty scheduled batch (date + time + template). Leads are
-    assigned to it later from the Queue tab."""
+    assigned to it later from Ready or Queue."""
     scheduled_at, error = _parse_batch_datetime(
         request.POST.get("scheduled_date"), request.POST.get("scheduled_time")
     )
@@ -2222,7 +2407,7 @@ def whatsapp_schedule_batch(request):
     local = scheduled_at.astimezone(campaign_timezone())
     return _render_batch_schedule_card(
         request,
-        message=f"Batch scheduled for {local:%b %d, %Y · %I:%M %p}. Assign leads from the Queue tab.",
+        message=f"Batch scheduled for {local:%b %d, %Y · %I:%M %p}. Assign leads from Ready or Queue.",
     )
 
 
@@ -2312,21 +2497,24 @@ def leads_bulk_assign_batch(request):
         )
 
     # A lead that already sits in a still-pending batch is skipped (it is
-    # already queued). Leads whose batches are all historical (sent/cancelled)
-    # — or that have none — get added to this batch, accumulating history.
+    # already queued). Idle Ready leads are enqueued so the daemon can send
+    # them; already-pending Queue leads are assigned without re-enqueueing.
     eligible_ids = list(
         visible_leads(request)
         .filter(pk__in=owned_lead_ids(request, id_list))
         .exclude(whatsapp_batches__status=WhatsAppBatchSchedule.Status.PENDING)
+        .distinct()
         .values_list("pk", flat=True)
     )
-    if eligible_ids:
-        batch.leads.add(*eligible_ids)
-    skipped = len(set(id_list)) - len(eligible_ids)
+    queueable_ids = _queueable_lead_ids(Lead.objects.filter(pk__in=eligible_ids))
+    if queueable_ids:
+        enqueue_leads_for_whatsapp(queueable_ids)
+        batch.leads.add(*queueable_ids)
+    skipped = len(set(id_list)) - len(queueable_ids)
     return JsonResponse(
         {
             "ok": True,
-            "updated": len(eligible_ids),
+            "updated": len(queueable_ids),
             "skipped": skipped,
             "batch_id": batch.pk,
         }
@@ -2574,12 +2762,13 @@ def get_lead_chat_indicators(request):
     srid = request.GET.get("search_record")
     srid_int = int(srid) if srid and str(srid).isdigit() else None
     gid_raw = (request.GET.get("group_id") or "").strip().lower()
-    if gid_raw.isdigit():
-        qs = _leads_qs_for_tab(request, gid_raw, srid_int)
-    else:
-        qs = _leads_qs_for_tab(request, "uncategorized", srid_int)
+    qs = _leads_qs_for_tab(
+        request, _resolve_dashboard_tab_key(gid_raw), srid_int
+    )
     whatsapp_chats_group = get_or_create_whatsapp_chats_group()
-    active_chat_count = _leads_qs_for_tab(request, str(whatsapp_chats_group.pk), None).count()
+    active_chat_count = _leads_qs_for_tab(
+        request, str(whatsapp_chats_group.pk), None, queued_only=False
+    ).count()
     return JsonResponse(
         {
             "ok": True,
@@ -2599,6 +2788,7 @@ def get_leads_table(request):
     GET ``group_id``: numeric LeadGroup pk, or ``uncategorized`` (default) for ungrouped leads.
     GET ``search_record``: optional hunt filter (same as dashboard).
     GET ``q``: optional global keyword search across all non-trash folders (min 2 chars).
+    GET ``queued``: ``1`` to narrow the current tab to pending/processing (former Queue tab).
     """
     qs, is_global_search = _leads_queryset_for_table(request)
     if is_global_search:
@@ -2638,6 +2828,7 @@ def get_leads_table(request):
             "grid_html": grid_html,
             "funnel_metrics": None if is_global_search else _funnel_metrics(qs),
             "group_counts": _lead_group_counts(request),
+            "tag_counts": _tag_lead_counts(qs),
             "global_search": is_global_search,
             "global_search_query": search_q if is_global_search else "",
             "global_search_count": result_count,
@@ -2666,6 +2857,27 @@ def leads_bulk_whatsapp_queue(request):
 
     updated = enqueue_leads_for_whatsapp(id_list)
     return JsonResponse({"ok": True, "updated": updated, "action": "queue"})
+
+
+@csrf_protect
+@require_POST
+def leads_bulk_move_ready(request):
+    """Pick selected New leads into Ready (waiting for outreach)."""
+    try:
+        body = json.loads(request.body.decode() or "{}")
+    except json.JSONDecodeError:
+        return JsonResponse({"ok": False, "detail": "Invalid JSON body."}, status=400)
+
+    ids = body.get("ids")
+    if not isinstance(ids, list) or not ids:
+        return JsonResponse({"ok": False, "detail": "ids must be a non-empty list."}, status=400)
+
+    id_list = owned_lead_ids(request, ids)
+    if not id_list:
+        return JsonResponse({"ok": True, "updated": 0, "action": "ready"})
+
+    updated = move_leads_to_ready(id_list)
+    return JsonResponse({"ok": True, "updated": updated, "action": "ready"})
 
 
 @csrf_protect
@@ -2768,11 +2980,11 @@ def bulk_action_by_group(request):
         return JsonResponse({"ok": False, "detail": detail}, status=400)
 
     qs = _leads_for_group_id(request, str(group_id_raw or "uncategorized"))
-    group_label = "Uncategorized"
+    group_label = UNCATEGORIZED_DISPLAY_NAME
     if group_id_raw and str(group_id_raw).strip().isdigit():
         grp = LeadGroup.objects.filter(pk=int(group_id_raw)).first()
         if grp:
-            group_label = grp.name
+            group_label = lead_group_display_name(grp.name)
 
     if action == "activate_queue":
         ids = _queueable_lead_ids(qs)
@@ -2857,8 +3069,31 @@ def enqueue_lead(request, pk: int):
 
 @csrf_protect
 @require_POST
+def move_lead_to_ready(request, pk: int):
+    """HTMX: pick a New lead into Ready and fade its grid cell out."""
+    lead = get_visible_lead_or_404(request, pk)
+    if lead.whatsapp_status in WHATSAPP_PROTECTED_STATUSES:
+        html = render_to_string(
+            "leads/partials/_lead_grid_junk_error.html",
+            {"detail": "Cannot move to Ready while a message is processing."},
+            request=request,
+        )
+        return HttpResponse(html, status=422)
+    updated = move_leads_to_ready([lead.pk])
+    if not updated:
+        html = render_to_string(
+            "leads/partials/_lead_grid_junk_error.html",
+            {"detail": "Only leads in New can be moved to Ready."},
+            request=request,
+        )
+        return HttpResponse(html, status=422)
+    return _lead_grid_cell_fade_out_response(request, lead.pk)
+
+
+@csrf_protect
+@require_POST
 def dequeue_lead(request, pk: int):
-    """HTMX: remove a lead from the WhatsApp outreach queue (revert to idle)."""
+    """HTMX: unassign a lead from a pending WhatsApp batch (and idle if pending)."""
     lead = get_visible_lead_or_404(request, pk)
     ctx = _lead_grid_action_context(request, lead)
 
@@ -2870,21 +3105,18 @@ def dequeue_lead(request, pk: int):
         )
         return HttpResponse(html, status=422)
 
-    if lead.whatsapp_status != Lead.WhatsappStatus.PENDING:
-        html = render_to_string(
-            "leads/partials/_lead_grid_queue_slot.html",
-            ctx,
-            request=request,
-        )
-        return HttpResponse(html)
-
-    lead.whatsapp_status = Lead.WhatsappStatus.IDLE
-    lead.whatsapp_last_error = ""
-    lead.save(update_fields=["whatsapp_status", "whatsapp_last_error"])
-    # Leaving the queue drops any not-yet-sent batch assignment; re-adding the
-    # lead later requires choosing a batch again.
+    was_pending = lead.whatsapp_status == Lead.WhatsappStatus.PENDING
     clear_pending_batch_memberships(lead.pk)
+    if was_pending:
+        lead.whatsapp_status = Lead.WhatsappStatus.IDLE
+        lead.whatsapp_last_error = ""
+        lead.save(update_fields=["whatsapp_status", "whatsapp_last_error"])
     lead.refresh_from_db()
+    cache = getattr(lead, "_prefetched_objects_cache", None)
+    if cache is not None:
+        cache.pop("whatsapp_batches", None)
+    if hasattr(lead, "has_active_whatsapp_batch"):
+        delattr(lead, "has_active_whatsapp_batch")
     ctx["lead"] = lead
 
     if ctx["is_queue_view"]:
@@ -2967,54 +3199,21 @@ def delete_lead_permanently(request, pk: int):
 @csrf_protect
 @require_POST
 def create_lead_group(request):
-    """Create a LeadGroup; JSON body ``{\"name\": \"...\"}``."""
-    try:
-        data = json.loads(request.body.decode() or "{}")
-    except json.JSONDecodeError:
-        return JsonResponse({"ok": False, "detail": "Invalid JSON."}, status=400)
-    name = (data.get("name") or "").strip()[:100]
-    if not name:
-        return JsonResponse({"ok": False, "detail": "name is required."}, status=400)
-    try:
-        next_ord = (LeadGroup.objects.aggregate(m=Max("sort_order"))["m"] or 0) + 1
-        g = LeadGroup.objects.create(name=name, sort_order=next_ord)
-    except IntegrityError:
-        return JsonResponse(
-            {"ok": False, "detail": "A group with this name already exists."},
-            status=400,
-        )
-    return JsonResponse({"ok": True, "id": g.pk, "name": g.name})
+    """Custom folders were removed; classify leads with tags instead."""
+    return JsonResponse(
+        {"ok": False, "detail": "Custom groups were removed. Use tags to classify leads."},
+        status=410,
+    )
 
 
 @csrf_protect
 @require_POST
 def reorder_lead_groups(request):
-    """Persist custom folder tab order (system tabs stay pinned at the front)."""
-    try:
-        body = json.loads(request.body.decode() or "{}")
-    except json.JSONDecodeError:
-        return JsonResponse({"ok": False, "detail": "Invalid JSON."}, status=400)
-    order = body.get("order")
-    if not isinstance(order, list):
-        return JsonResponse({"ok": False, "detail": "order must be a list."}, status=400)
-    try:
-        provided = [int(x) for x in order]
-    except (TypeError, ValueError):
-        return JsonResponse({"ok": False, "detail": "order must be a list of integers."}, status=400)
-    ensure_pipeline_system_groups()
-    reorderable_ids = set(
-        LeadGroup.objects.exclude(name__in=SYSTEM_LEAD_GROUP_NAMES).values_list("pk", flat=True)
+    """Custom folder tabs were removed; classify leads with tags instead."""
+    return JsonResponse(
+        {"ok": False, "detail": "Custom groups were removed. Use tags to classify leads."},
+        status=410,
     )
-    if set(provided) != reorderable_ids or len(provided) != len(reorderable_ids):
-        return JsonResponse(
-            {"ok": False, "detail": "order must list every custom lead group exactly once."},
-            status=400,
-        )
-    base_sort = max(SYSTEM_GROUP_SORT_ORDERS.values()) + 1
-    with transaction.atomic():
-        for idx, pk in enumerate(provided):
-            LeadGroup.objects.filter(pk=pk).update(sort_order=base_sort + idx)
-    return JsonResponse({"ok": True})
 
 
 @csrf_protect
@@ -3064,7 +3263,7 @@ def leads_bulk_assign_group(request):
     Assign many leads to one group or back to uncategorized.
 
     JSON: ``ids`` (list of int, required), ``group_id`` (int or JSON ``null``).
-    Use ``null`` to clear ``group`` (leads show under Uncategorized only).
+    Use ``null`` to clear ``group`` (leads land in New).
     """
     try:
         body = json.loads(request.body.decode() or "{}")
@@ -3150,7 +3349,9 @@ def leads_bulk_assign_owner(request):
             {"ok": False, "detail": "Choose an active Sales user."}, status=400
         )
 
-    updated = Lead.objects.filter(pk__in=id_list).update(assigned_to=assignee)
+    updated = Lead.objects.filter(pk__in=id_list).update(
+        assigned_to=assignee, assigned_at=django_timezone.now()
+    )
     return JsonResponse(
         {
             "ok": True,
@@ -3290,6 +3491,59 @@ def clinics_export_xlsx(request):
     return resp
 
 
+@csrf_protect
+@require_POST
+def import_leads_xlsx(request):
+    """Import leads from an Export to Excel workbook (multipart field ``xlsx``).
+
+    Existing leads (matched by name + address) are skipped. New rows land in the
+    current folder when ``group_id`` is sent, otherwise New (uncategorized).
+    """
+    if not request.user.is_superuser:
+        return JsonResponse({"ok": False, "detail": "Superuser required."}, status=403)
+    upload = request.FILES.get("xlsx")
+    if not upload:
+        return JsonResponse(
+            {"ok": False, "detail": "No Excel file uploaded."}, status=400
+        )
+    name = (upload.name or "").lower()
+    if not name.endswith(".xlsx"):
+        return JsonResponse(
+            {"ok": False, "detail": "Please upload an .xlsx file from Export to Excel."},
+            status=400,
+        )
+
+    group = get_or_create_uncategorized_group()
+    raw_gid = (request.POST.get("group_id") or "uncategorized").strip().lower()
+    if raw_gid not in ("", "uncategorized", "all"):
+        if raw_gid.isdigit():
+            resolved = LeadGroup.objects.filter(pk=int(raw_gid)).first()
+            if resolved:
+                group = resolved
+        else:
+            return JsonResponse({"ok": False, "detail": "Invalid group_id."}, status=400)
+
+    try:
+        from leads.excel_leads import import_exported_leads_workbook
+
+        summary = import_exported_leads_workbook(
+            upload,
+            group=group,
+            assigned_to=hunt_owner_for_request(request),
+        )
+    except ImportError:
+        return JsonResponse(
+            {"ok": False, "detail": "openpyxl is not installed."}, status=503
+        )
+    except ValueError as exc:
+        return JsonResponse({"ok": False, "detail": str(exc)}, status=400)
+    except Exception as exc:  # noqa: BLE001 - surface parse errors to UI
+        return JsonResponse(
+            {"ok": False, "detail": f"Import failed: {exc}"}, status=400
+        )
+    return JsonResponse({"ok": True, **summary})
+
+
 @require_GET
 def export_full_backup_xlsx(request):
     """Download a multi-sheet ``.xlsx`` backup (re-importable after deploy).
@@ -3380,9 +3634,11 @@ def import_full_backup_xlsx(request):
 @require_POST
 def hunt_trigger(request):
     """
-    Serper hunt entrypoint for the dashboard: ``limit`` from query string,
-    ``city`` and ``query`` from JSON body.
+    Serper/Outscraper hunt entrypoint for the dashboard: ``limit`` from query string,
+    ``city`` and ``query`` from JSON body. Superuser only.
     """
+    if not request.user.is_superuser:
+        return JsonResponse({"ok": False, "detail": "Superuser required."}, status=403)
     try:
         raw_limit = request.GET.get("limit", str(DEFAULT_HUNT_LIMIT))
         limit = max(1, min(int(raw_limit), MAX_HUNT_LIMIT))
@@ -3407,6 +3663,10 @@ def hunt_trigger(request):
     exclude_keywords = body.get("exclude_keywords")
     if exclude_keywords is None:
         exclude_keywords = body.get("exclude_keyword")
+    try:
+        provider = normalize_hunt_provider(body.get("provider"))
+    except ValueError as exc:
+        return JsonResponse({"detail": str(exc)}, status=400)
     if not city:
         return JsonResponse({"detail": "city is required."}, status=400)
     if not state:
@@ -3414,18 +3674,21 @@ def hunt_trigger(request):
     if not shop_keyword:
         return JsonResponse({"detail": "shop_keyword is required."}, status=400)
 
-    rec = SearchQueryRecord.objects.create(
-        keyword=shop_keyword[:160],
-        maps_search_query=(query or shop_keyword)[:255],
-        search_city=city[:255],
-        search_state=state[:255],
-        search_country=country[:255],
+    rec = create_search_query_record(
+        keyword=shop_keyword,
+        maps_query=query,
+        city=city,
+        state=state,
+        country=country,
+        provider=provider,
+        exclude_keywords=exclude_keywords,
     )
 
     try:
-        result = fetch_leads_from_serper(
+        result = fetch_leads(
             city,
             query,
+            provider=provider,
             num=limit,
             shop_keyword=shop_keyword,
             state=state,
@@ -3437,6 +3700,10 @@ def hunt_trigger(request):
         )
     except ValueError as exc:
         return JsonResponse({"detail": str(exc)}, status=400)
+
+    record_search_query_outcome(
+        rec, created=result.created, exclude_keywords=exclude_keywords
+    )
 
     if result.errors and result.places_seen == 0 and result.created == 0:
         return JsonResponse(
@@ -3493,8 +3760,6 @@ def _category_badges_html(lead: Lead, request=None) -> str:
     """Primary category badge plus extra tag chips (same as list/grid type cell)."""
     ctx = {"c": lead}
     return render_to_string(
-        "leads/partials/_lead_fields/_category_badge.html", ctx, request=request
-    ) + render_to_string(
         "leads/partials/_lead_fields/_tag_chips.html", ctx, request=request
     )
 
@@ -3544,6 +3809,10 @@ def _wa_icon_link_html(phone_number: str, *, for_grid: bool = False) -> str:
     )
 
 
+def _sent_chip_html() -> str:
+    return render_to_string("leads/partials/_lead_fields/_sent_badge.html")
+
+
 def _phone_contact_stack_html(phones: list[str], *, for_grid: bool) -> str:
     """Stack of phone lines (number + WhatsApp icon); used in list table and grid."""
     inner_cls = (
@@ -3551,25 +3820,27 @@ def _phone_contact_stack_html(phones: list[str], *, for_grid: bool) -> str:
         if for_grid
         else "clinic-phone-inner min-w-0 whitespace-normal break-words text-sm font-medium tabular-nums text-slate-800"
     )
+    sent = _sent_chip_html()
     if not phones:
         wa = _wa_icon_link_html("", for_grid=for_grid)
         dash = wa if wa else '<span class="text-xs text-slate-400">—</span>'
         row = (
             f'<div class="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5">'
             f'<p class="{inner_cls}">—</p>'
-            f'<span class="clinic-phone-wa-row inline-flex shrink-0 items-center leading-none">{dash}</span>'
+            f'<span class="clinic-phone-wa-row inline-flex shrink-0 items-center gap-1 leading-none">{dash}{sent}</span>'
             f"</div>"
         )
         return f'<div class="space-y-1">{row}</div>'
     parts: list[str] = []
-    for ph in phones:
+    for i, ph in enumerate(phones):
         esc = html.escape(ph)
         wa = _wa_icon_link_html(ph, for_grid=for_grid)
         wa_html = wa if wa else '<span class="text-xs text-slate-400">—</span>'
+        chip = sent if i == 0 else ""
         parts.append(
             f'<div class="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5">'
             f'<p class="{inner_cls}">{esc}</p>'
-            f'<span class="clinic-phone-wa-row inline-flex shrink-0 items-center leading-none">{wa_html}</span>'
+            f'<span class="clinic-phone-wa-row inline-flex shrink-0 items-center gap-1 leading-none">{wa_html}{chip}</span>'
             f"</div>"
         )
     return f'<div class="space-y-1">{"".join(parts)}</div>'
@@ -4100,5 +4371,42 @@ def leads_bulk_manual_category(request):
             "updated": updated,
             "tags": [tag.slug for tag in tags],
             "category": raw_cat,
+        }
+    )
+
+
+@csrf_protect
+@require_POST
+def leads_bulk_auto_classify(request):
+    """Re-tag selected unknown-only leads from ``matching_category_slugs_from_name``.
+
+    Dedicated endpoint (not a mode flag on bulk-manual) so the picker flow stays
+    unchanged and tagged leads cannot be overwritten by a mixed payload.
+    """
+    try:
+        body = json.loads(request.body.decode() or "{}")
+    except json.JSONDecodeError:
+        return JsonResponse({"detail": "Invalid JSON body."}, status=400)
+
+    ids = body.get("ids")
+    if not isinstance(ids, list):
+        return JsonResponse({"detail": "ids must be a list."}, status=400)
+
+    id_list = owned_lead_ids(request, ids)
+    if not id_list:
+        return JsonResponse({"detail": "No matching leads."}, status=404)
+
+    leads = list(
+        Lead.objects.filter(pk__in=id_list).prefetch_related("tags")
+    )
+    result = auto_classify_unknown_leads_from_names(leads)
+    return JsonResponse(
+        {
+            "ok": True,
+            "updated": result.updated,
+            "skipped_tagged": result.skipped_tagged,
+            "skipped_no_match": result.skipped_no_match,
+            "skipped_unchanged": result.skipped_unchanged,
+            "message": result.message(),
         }
     )

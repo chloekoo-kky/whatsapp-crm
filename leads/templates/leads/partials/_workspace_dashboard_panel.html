@@ -2,21 +2,48 @@
 <div id="workspace-panel-dashboard" class="dashboard-workspace"{% if not workspace_fragment %} data-loaded="1"{% endif %}{% if workspace_fragment %} hidden{% endif %}>
 {{ dashboard_js_config|json_script:"dashboard-js-config" }}
 
+    {% if request.user.is_superuser %}
     <aside id="scraping-panel" class="dashboard-scraping-col hidden min-h-0 shrink-0 flex-col border-b border-slate-200/90 bg-white xl:flex" aria-label="Scraping and import">
       <div class="scraping-panel-body flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-y-contain px-4 py-4 xl:px-5">
         <div class="shrink-0">
           <div class="flex flex-wrap items-center gap-x-2 gap-y-0.5">
             <h2 class="text-sm font-semibold tracking-tight text-slate-800">Scraping</h2>
-            <span class="rounded-md bg-slate-100 px-1.5 py-px text-[10px] font-semibold uppercase tracking-wider text-slate-500">Serper</span>
+            <span id="hunt-provider-badge" class="rounded-md bg-slate-100 px-1.5 py-px text-[10px] font-semibold uppercase tracking-wider text-slate-500">Serper</span>
           </div>
-          <p class="mt-1 text-[11px] leading-relaxed text-slate-500">Import leads from Serper Maps.</p>
+          <p id="hunt-provider-subtitle" class="mt-1 text-[11px] leading-relaxed text-slate-500">Import leads from Google Maps.</p>
         </div>
         <form id="hunt-form" class="mt-4 min-w-0 rounded-xl border border-slate-200/80 bg-slate-50/40 p-4 shadow-inner shadow-slate-900/5">
           <div class="grid gap-5">
+            <section class="grid gap-2.5" aria-labelledby="hunt-form-provider-label">
+              <h3 id="hunt-form-provider-label" class="hunt-form-section-label text-[10px] font-bold uppercase text-slate-400">Provider</h3>
+              <div id="hunt-provider-buttons" class="inline-flex h-10 w-full max-w-full gap-0.5 rounded-lg border border-slate-200 bg-white p-0.5 shadow-sm" role="group" aria-label="Maps hunt provider">
+                <button type="button" data-provider="serper"
+                  class="hunt-provider-btn min-w-0 flex-1 rounded-md px-2 text-xs font-semibold transition focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-1 limit-btn--active bg-indigo-600 text-white shadow-sm">Serper</button>
+                <button type="button" data-provider="outscraper"
+                  class="hunt-provider-btn min-w-0 flex-1 rounded-md px-2 text-xs font-semibold transition focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-1 text-slate-600 hover:bg-slate-50 hover:text-slate-900">Outscraper</button>
+              </div>
+              <input type="hidden" id="hunt-provider-value" value="serper" />
+              <p id="hunt-provider-help" class="text-[10px] leading-snug text-slate-400">Serper paginates ~20 listings per page. Outscraper fetches the limit in one request; values above 20 run as a job that is polled until ready.</p>
+            </section>
+
+            <section class="grid gap-2.5" aria-labelledby="hunt-form-limit-label">
+              <h3 id="hunt-form-limit-label" class="hunt-form-section-label text-[10px] font-bold uppercase text-slate-400">Result limit</h3>
+              <div id="limit-buttons" class="inline-flex h-10 w-full max-w-full gap-0.5 rounded-lg border border-slate-200 bg-white p-0.5 shadow-sm" role="group" aria-label="Hunt result limit">
+                {% with lim_def=hunt_limit_default|default:100 %}
+                {% for n in hunt_limit_choices %}
+                <button type="button" data-limit="{{ n }}"
+                  class="limit-btn min-w-0 flex-1 rounded-md px-2 text-xs font-semibold transition focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-1 {% if lim_def == n %}limit-btn--active bg-indigo-600 text-white shadow-sm{% else %}text-slate-600 hover:bg-slate-50 hover:text-slate-900{% endif %}">{{ n }}</button>
+                {% endfor %}
+                {% endwith %}
+              </div>
+              <input type="hidden" id="hunt-limit-value" value="{{ hunt_limit_default|default:100 }}" />
+              <p id="hunt-limit-help" class="text-[10px] leading-snug text-slate-400">How many listings to fetch. Values above 20 request extra Serper pages automatically.</p>
+            </section>
+
             <section class="grid gap-2.5" aria-labelledby="hunt-form-options-label">
               <h3 id="hunt-form-options-label" class="hunt-form-section-label text-[10px] font-bold uppercase text-slate-400">Options</h3>
               <div class="flex flex-col gap-2">
-                {% include "leads/partials/_hunt_option_toggle.html" with toggle_id="hunt-require-website" toggle_name="require_website" toggle_label="Website / social only" toggle_desc_id="require-website-desc" toggle_desc="When on, skip listings with no website or social URL in Serper. When off, import all results." toggle_title="When on, skip listings with no website or social URL in Serper. When off, import all results." %}
+                {% include "leads/partials/_hunt_option_toggle.html" with toggle_id="hunt-require-website" toggle_name="require_website" toggle_label="Website / social only" toggle_desc_id="require-website-desc" toggle_desc="When on, skip listings with no website or social URL. When off, import all results." toggle_title="When on, skip listings with no website or social URL. When off, import all results." %}
               </div>
             </section>
 
@@ -112,25 +139,12 @@
                     </button>
                     <div id="hunt-exclude-tags-list" class="flex flex-wrap items-center gap-1.5"></div>
                   </div>
-                  <p class="text-[10px] leading-snug text-slate-400">Saved tags skip matching listings after import (not sent to Serper — free accounts reject <span class="font-medium text-slate-500">-keyword</span> operators).</p>
+                  <p class="text-[10px] leading-snug text-slate-400">Saved tags skip matching listings after import (not sent in the Maps query).</p>
                 </div>
               </div>
             </section>
 
-            <section class="grid gap-3 border-t border-slate-200/70 pt-4" aria-labelledby="hunt-form-run-label">
-              <div class="grid gap-2">
-                <h3 id="hunt-form-run-label" class="hunt-form-section-label text-[10px] font-bold uppercase text-slate-400">Result limit</h3>
-                <p class="text-[10px] leading-snug text-slate-400">Serper Maps returns ~20 listings per page; limits above 20 fetch multiple pages automatically.</p>
-                <div id="limit-buttons" class="inline-flex h-10 w-full max-w-full gap-0.5 rounded-lg border border-slate-200 bg-white p-0.5 shadow-sm" role="group" aria-label="Serper result limit">
-                  {% with lim_def=hunt_limit_default|default:100 %}
-                  {% for n in hunt_limit_choices %}
-                  <button type="button" data-limit="{{ n }}"
-                    class="limit-btn min-w-0 flex-1 rounded-md px-2 text-xs font-semibold transition focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-1 {% if lim_def == n %}limit-btn--active bg-indigo-600 text-white shadow-sm{% else %}text-slate-600 hover:bg-slate-50 hover:text-slate-900{% endif %}">{{ n }}</button>
-                  {% endfor %}
-                  {% endwith %}
-                </div>
-                <input type="hidden" id="hunt-limit-value" value="{{ hunt_limit_default|default:100 }}" />
-              </div>
+            <section class="grid gap-3 border-t border-slate-200/70 pt-4" aria-label="Run hunt">
               <button type="submit" id="hunt-btn"
                 class="inline-flex h-11 w-full items-center justify-center rounded-lg bg-indigo-600 px-5 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60">
                 <span id="hunt-btn-label">Run hunt</span>
@@ -142,119 +156,133 @@
         <p id="hunt-status" class="mt-3 min-h-[1.125rem] text-xs leading-relaxed text-slate-600 empty:hidden" role="status"></p>
       </div>
     </aside>
+    {% endif %}
 
     <main id="content-panel" class="dashboard-content-col" aria-label="Leads">
-      <header id="content-toolbar" class="relative z-30 shrink-0 border-b border-slate-200/90 bg-white/95 px-4 py-3 shadow-[0_1px_2px_0_rgb(15_23_42/0.04)] backdrop-blur-sm supports-[backdrop-filter]:bg-white/85 sm:px-5">
+      <header id="content-toolbar" class="relative z-30 shrink-0 border-b border-slate-200/90 bg-white/95 px-3 py-2 shadow-[0_1px_2px_0_rgb(15_23_42/0.04)] backdrop-blur-sm supports-[backdrop-filter]:bg-white/85 sm:px-5 sm:py-3">
         <div class="flex flex-col gap-2">
-          <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
-            <div class="flex min-h-[2.5rem] min-w-0 flex-1 items-stretch gap-2 sm:min-w-[12rem]">
-              <div class="relative min-h-[2.5rem] min-w-0 flex-1">
-                <label for="table-search" class="sr-only">Search all folders</label>
-                <input id="table-search" type="search" placeholder="Search all folders…" autocomplete="off"
-                  class="h-full min-h-[2.5rem] w-full rounded-xl border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm shadow-sm outline-none transition placeholder:text-slate-400 focus:border-indigo-400 focus:ring-2 focus:ring-indigo-500/20" />
-                <svg class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
-              </div>
-              <button type="button" id="table-search-clear" hidden
-                class="inline-flex shrink-0 items-center justify-center gap-1 rounded-xl border border-slate-200 bg-white px-2.5 py-2 text-xs font-semibold text-slate-600 shadow-sm transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/30"
-                title="Clear filter"
-                aria-label="Clear lead filter">× <span class="font-medium">clear</span></button>
-            </div>
-            <div class="leads-toolbar-actions hidden min-w-0 shrink-0 flex-wrap items-center gap-2 lg:flex">
-              <button type="button" id="bulk-manual-open" disabled
-                class="inline-flex min-h-[2.5rem] shrink-0 items-center rounded-xl border border-indigo-200 bg-indigo-50/90 px-3.5 py-2 text-xs font-semibold text-indigo-950 shadow-sm transition hover:border-indigo-300 hover:bg-indigo-100/90 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/35 disabled:pointer-events-none disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400 disabled:opacity-70"
-                title="Set tags and mark selected leads as processed (no AI). Select at least one lead first."
-                aria-label="Set tags for selected leads without AI">Set tags</button>
-              <button type="button" id="bulk-assign-group-open" disabled
-                class="inline-flex min-h-[2.5rem] shrink-0 items-center rounded-xl border border-violet-200 bg-violet-50/90 px-3.5 py-2 text-xs font-semibold text-violet-950 shadow-sm transition hover:border-violet-300 hover:bg-violet-100/90 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/35 disabled:pointer-events-none disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400 disabled:opacity-70"
-                title="Choose a folder for selected leads (or Uncategorized)"
-                aria-label="Move selected leads to a group"
-                aria-expanded="false"
-                aria-haspopup="true">Move to group…</button>
-              {% if request.user|can_see_all_leads %}
-              <button type="button" id="bulk-assign-owner-open" disabled
-                class="inline-flex min-h-[2.5rem] shrink-0 items-center rounded-xl border border-sky-200 bg-sky-50/90 px-3.5 py-2 text-xs font-semibold text-sky-950 shadow-sm transition hover:border-sky-300 hover:bg-sky-100/90 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/35 disabled:pointer-events-none disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400 disabled:opacity-70"
-                title="Assign selected leads to a Sales user"
-                aria-label="Assign selected leads to a user"
-                aria-expanded="false"
-                aria-haspopup="true">Assign to…</button>
-              {% endif %}
-              <button type="button" id="lead-manual-create-open"
-                class="inline-flex min-h-[2.5rem] min-w-[2.5rem] shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:border-indigo-300/80 hover:bg-indigo-50/90 hover:text-indigo-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/35"
-                title="Add a lead manually (saved in the current folder tab)"
-                aria-label="Add lead manually">
-                <span class="sr-only">Add lead manually</span>
-                <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/></svg>
-              </button>
-              {% if request.user.is_superuser %}
-              <div id="leads-more-menu" class="relative shrink-0">
-                <button type="button" id="leads-more-open"
-                  class="inline-flex min-h-[2.5rem] shrink-0 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/35"
-                  title="More lead actions"
-                  aria-label="More"
-                  aria-expanded="false"
-                  aria-haspopup="menu"
-                  aria-controls="leads-more-panel">
-                  <svg class="h-4 w-4 shrink-0 text-slate-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M6.75 12a.75.75 0 11-1.5 0 .75.75 0 011.5 0zm6 0a.75.75 0 11-1.5 0 .75.75 0 011.5 0zm6 0a.75.75 0 11-1.5 0 .75.75 0 011.5 0z"/></svg>
-                  More
-                  <svg class="h-3.5 w-3.5 shrink-0 text-slate-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5"/></svg>
+          <div class="lead-toolbar-primary flex flex-wrap items-start gap-2">
+            <div class="lead-toolbar-filters flex min-w-0 w-full flex-wrap items-center gap-2">
+              <div id="lead-tag-filter" class="lead-tag-filter min-w-0" role="group" aria-label="Filter by tags. Match all selected." title="Show leads that have every selected tag">
+                {% for tag in dashboard_tags %}
+                <button type="button" class="lead-tag-filter-chip" data-tag-slug="{{ tag.slug }}" aria-pressed="false" title="{{ tag.label }} · {{ tag.lead_count }} lead(s)">
+                  <span class="lead-tag-filter-label">{{ tag.label }}</span>
+                  <span class="lead-tag-filter-count" aria-hidden="true">{{ tag.lead_count }}</span>
                 </button>
-                <div id="leads-more-panel" class="absolute right-0 z-[200] mt-1 hidden w-max min-w-[12rem] max-w-[calc(100vw-1.5rem)] rounded-xl border border-slate-200/95 bg-white py-1 shadow-xl shadow-slate-900/15 ring-1 ring-slate-900/5" role="menu" aria-hidden="true" aria-label="More lead actions">
-                  <button type="button" id="export-xlsx-btn" role="menuitem"
-                    class="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm font-medium text-slate-800 transition hover:bg-emerald-50/90 focus:bg-emerald-50/90 focus:outline-none disabled:cursor-wait disabled:opacity-60"
-                    title="Download Excel (.xlsx) for the current folder — checked rows only if any are selected (still limited to this folder)">
-                    <svg id="export-xlsx-icon" class="h-5 w-5 shrink-0 text-emerald-600" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5m0 0V9.375A3.375 3.375 0 0013.5 6.375h-1.5a3.375 3.375 0 00-3.375 3.375V10.5m14.625 0a3.375 3.375 0 00-3.375-3.375H3.375A3.375 3.375 0 001.875 10.5v8.25A3.375 3.375 0 004.875 22.125h14.25a3.375 3.375 0 003.375-3.375V14.25"/><path stroke-linecap="round" stroke-linejoin="round" d="M6 10.5h9m-9 4.5h6M7.5 18H18M10.5 3.75h3m-1.5-1.5v3"/></svg>
-                    <svg id="export-xlsx-spinner" class="hidden h-5 w-5 shrink-0 animate-spin text-emerald-700" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                    <span class="whitespace-nowrap">Export to Excel</span>
-                  </button>
-                  <button type="button" id="backup-all-btn" role="menuitem"
-                    class="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm font-medium text-slate-800 transition hover:bg-sky-50/90 focus:bg-sky-50/90 focus:outline-none disabled:cursor-wait disabled:opacity-60"
-                    title="Backup leads to a re-importable .xlsx — checked rows only when any are selected, otherwise all folders (with chats, logs &amp; settings)">
-                    <svg id="backup-all-icon" class="h-5 w-5 shrink-0 text-sky-600" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12a9.75 9.75 0 0119.5 0v.75M12 2.25v9m0 0l-3-3m3 3l3-3M4.5 18.75h15"/></svg>
-                    <svg id="backup-all-spinner" class="hidden h-5 w-5 shrink-0 animate-spin text-sky-700" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                    <span class="whitespace-nowrap">Backup</span>
-                  </button>
-                  <button type="button" id="restore-backup-btn" role="menuitem"
-                    class="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm font-medium text-slate-800 transition hover:bg-amber-50/90 focus:bg-amber-50/90 focus:outline-none disabled:cursor-wait disabled:opacity-60"
-                    title="Restore from a backup .xlsx file — existing leads (same name &amp; address) are skipped">
-                    <svg id="restore-backup-icon" class="h-5 w-5 shrink-0 text-amber-600" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 21.75a9.75 9.75 0 119.75-9.75M12 21.75V12m0 9.75l3-3m-3 3l-3-3M4.5 5.25h15"/></svg>
-                    <svg id="restore-backup-spinner" class="hidden h-5 w-5 shrink-0 animate-spin text-amber-700" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                    <span class="whitespace-nowrap">Restore</span>
-                  </button>
-                </div>
-                <input type="file" id="restore-backup-input" accept=".xlsx" class="hidden" aria-hidden="true" tabindex="-1" />
+                {% empty %}
+                <span class="lead-tag-filter-empty px-1 text-xs font-medium text-slate-400">No tags yet</span>
+                {% endfor %}
+                <button type="button" id="lead-tag-filter-manage" class="lead-tag-filter-manage" title="Manage tags" aria-label="Manage tags" aria-haspopup="dialog" aria-controls="manage-tags-dialog">
+                  <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/></svg>
+                </button>
+                <button type="button" id="lead-tag-filter-clear" class="lead-tag-filter-clear hidden" hidden>Clear</button>
               </div>
-              {% endif %}
             </div>
-          </div>
-          <div id="global-search-banner" class="hidden rounded-xl border border-indigo-200/90 bg-indigo-50/70 px-3 py-2 text-xs text-indigo-950 sm:px-3.5" role="status" aria-live="polite">
-            <div class="flex flex-wrap items-center justify-between gap-2">
-              <p id="global-search-banner-text" class="min-w-0 font-medium leading-snug"></p>
-              <button type="button" id="global-search-banner-exit"
-                class="inline-flex shrink-0 items-center rounded-lg border border-indigo-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-indigo-800 shadow-sm transition hover:border-indigo-300 hover:bg-indigo-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/35">
-                Back to folder
-              </button>
+            <div class="lead-toolbar-search flex min-w-0 w-full flex-col gap-1.5">
+              <div class="lead-toolbar-search-row flex min-h-[2.25rem] min-w-0 items-center gap-1.5 sm:gap-2">
+                <div class="relative min-h-[2.25rem] min-w-0 flex-1">
+                  <label for="table-search" class="sr-only">Search all leads</label>
+                  <input id="table-search" type="search" placeholder="Search leads…" autocomplete="off"
+                    class="h-full min-h-[2.25rem] w-full rounded-xl border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm shadow-sm outline-none transition placeholder:text-slate-400 focus:border-indigo-400 focus:ring-2 focus:ring-indigo-500/20" />
+                  <svg class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+                </div>
+                <button type="button" id="filter-queued-only"
+                  class="toolbar-btn toolbar-btn--icon shrink-0"
+                  aria-pressed="false"
+                  title="Show only leads currently pending or sending in WhatsApp"
+                  aria-label="In queue">
+                  <span class="sr-only">In queue</span>
+                  <svg class="h-4 w-4 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5"/></svg>
+                </button>
+                <button type="button" id="filter-very-important-only"
+                  class="toolbar-btn toolbar-btn--icon shrink-0"
+                  aria-pressed="false"
+                  title="Show only leads marked with the star (very important)"
+                  aria-label="Very important">
+                  <span class="sr-only">Very important</span>
+                  <svg class="h-4 w-4 shrink-0" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M10.788 3.21c.448-1.077 1.976-1.077 2.424 0l2.082 5.006 5.404.434c1.164.093 1.636 1.545.749 2.305l-4.117 3.527 1.257 5.273c.271 1.136-.964 2.033-1.96 1.425L12 18.354 7.373 21.18c-.996.608-2.231-.29-1.96-1.425l1.257-5.273-4.117-3.527c-.887-.76-.415-2.212.749-2.305l5.404-.434 2.082-5.005z" clip-rule="evenodd" /></svg>
+                </button>
+                <button type="button" id="filter-sent-message-only"
+                  class="toolbar-btn toolbar-btn--icon shrink-0"
+                  aria-pressed="false"
+                  title="Show only leads that have been sent a WhatsApp message"
+                  aria-label="Sent message">
+                  <span class="sr-only">Sent message</span>
+                  <svg class="h-4 w-4 shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M8.625 12a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H8.25m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H12m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 01-2.555-.337A5.972 5.972 0 015.41 20.97a5.969 5.969 0 01-.474-.065 4.48 4.48 0 00.978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25z" /></svg>
+                </button>
+                <button type="button" id="table-search-clear" hidden
+                  class="toolbar-btn shrink-0"
+                  title="Clear search and filters"
+                  aria-label="Clear search and filters">× <span class="font-medium">clear</span></button>
+                {% if request.user.is_superuser %}
+                <div id="leads-more-menu" class="relative shrink-0">
+                  <button type="button" id="leads-more-open"
+                    class="toolbar-btn"
+                    title="More lead actions"
+                    aria-label="More"
+                    aria-expanded="false"
+                    aria-haspopup="menu"
+                    aria-controls="leads-more-panel">
+                    <svg class="h-4 w-4 shrink-0 text-slate-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M6.75 12a.75.75 0 11-1.5 0 .75.75 0 011.5 0zm6 0a.75.75 0 11-1.5 0 .75.75 0 011.5 0zm6 0a.75.75 0 11-1.5 0 .75.75 0 011.5 0z"/></svg>
+                    <span class="leads-more-label">More</span>
+                    <svg class="leads-more-caret h-3.5 w-3.5 shrink-0 text-slate-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5"/></svg>
+                  </button>
+                  <div id="leads-more-panel" class="absolute right-0 z-[200] mt-1 hidden w-max min-w-[12rem] max-w-[calc(100vw-1.5rem)] rounded-xl border border-slate-200/95 bg-white py-1 shadow-xl shadow-slate-900/15 ring-1 ring-slate-900/5" role="menu" aria-hidden="true" aria-label="More lead actions">
+                    <button type="button" id="export-xlsx-btn" role="menuitem"
+                      class="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm font-medium text-slate-800 transition hover:bg-emerald-50/90 focus:bg-emerald-50/90 focus:outline-none disabled:cursor-wait disabled:opacity-60"
+                      title="Download Excel (.xlsx) for the current view — checked rows only if any are selected (still limited to this view)">
+                      <svg id="export-xlsx-icon" class="h-5 w-5 shrink-0 text-emerald-600" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5m0 0V9.375A3.375 3.375 0 0013.5 6.375h-1.5a3.375 3.375 0 00-3.375 3.375V10.5m14.625 0a3.375 3.375 0 00-3.375-3.375H3.375A3.375 3.375 0 001.875 10.5v8.25A3.375 3.375 0 004.875 22.125h14.25a3.375 3.375 0 003.375-3.375V14.25"/><path stroke-linecap="round" stroke-linejoin="round" d="M6 10.5h9m-9 4.5h6M7.5 18H18M10.5 3.75h3m-1.5-1.5v3"/></svg>
+                      <svg id="export-xlsx-spinner" class="hidden h-5 w-5 shrink-0 animate-spin text-emerald-700" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                      <span class="whitespace-nowrap">Export to Excel</span>
+                    </button>
+                    <button type="button" id="import-xlsx-btn" role="menuitem"
+                      class="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm font-medium text-slate-800 transition hover:bg-emerald-50/90 focus:bg-emerald-50/90 focus:outline-none disabled:cursor-wait disabled:opacity-60"
+                      title="Import leads from an Export to Excel .xlsx — existing name &amp; address rows are skipped; new rows go to the current view">
+                      <svg id="import-xlsx-icon" class="h-5 w-5 shrink-0 text-emerald-600" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5"/></svg>
+                      <svg id="import-xlsx-spinner" class="hidden h-5 w-5 shrink-0 animate-spin text-emerald-700" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                      <span class="whitespace-nowrap">Import from Excel</span>
+                    </button>
+                    <button type="button" id="backup-all-btn" role="menuitem"
+                      class="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm font-medium text-slate-800 transition hover:bg-sky-50/90 focus:bg-sky-50/90 focus:outline-none disabled:cursor-wait disabled:opacity-60"
+                      title="Backup leads to a re-importable .xlsx — checked rows only when any are selected, otherwise all views (with chats, logs &amp; settings)">
+                      <svg id="backup-all-icon" class="h-5 w-5 shrink-0 text-sky-600" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12a9.75 9.75 0 0119.5 0v.75M12 2.25v9m0 0l-3-3m3 3l3-3M4.5 18.75h15"/></svg>
+                      <svg id="backup-all-spinner" class="hidden h-5 w-5 shrink-0 animate-spin text-sky-700" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                      <span class="whitespace-nowrap">Backup</span>
+                    </button>
+                    <button type="button" id="restore-backup-btn" role="menuitem"
+                      class="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm font-medium text-slate-800 transition hover:bg-amber-50/90 focus:bg-amber-50/90 focus:outline-none disabled:cursor-wait disabled:opacity-60"
+                      title="Restore from a backup .xlsx file — existing leads (same name &amp; address) are skipped">
+                      <svg id="restore-backup-icon" class="h-5 w-5 shrink-0 text-amber-600" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 21.75a9.75 9.75 0 119.75-9.75M12 21.75V12m0 9.75l3-3m-3 3l-3-3M4.5 5.25h15"/></svg>
+                      <svg id="restore-backup-spinner" class="hidden h-5 w-5 shrink-0 animate-spin text-amber-700" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                      <span class="whitespace-nowrap">Restore</span>
+                    </button>
+                  </div>
+                  <input type="file" id="import-xlsx-input" accept=".xlsx" class="hidden" aria-hidden="true" tabindex="-1" />
+                  <input type="file" id="restore-backup-input" accept=".xlsx" class="hidden" aria-hidden="true" tabindex="-1" />
+                </div>
+                {% endif %}
+              </div>
+              <div id="lead-filter-tags-row" class="flex flex-wrap items-center gap-1.5" role="group" aria-label="Saved search keywords">
+                <button type="button" id="lead-filter-tag-save" disabled
+                  class="inline-flex shrink-0 items-center gap-1 rounded-lg border border-dashed border-slate-300 bg-slate-50/80 px-2 py-1 text-[11px] font-semibold text-slate-600 transition hover:border-indigo-300 hover:bg-indigo-50/80 hover:text-indigo-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/30 disabled:pointer-events-none disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
+                  title="Save current search as a reusable tag"
+                  aria-label="Save current search as tag">
+                  <svg class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9.568 3H5.25A2.25 2.25 0 003 5.25v4.318c0 .597.237 1.17.659 1.591l9.581 9.581c.699.699 1.78.872 2.607.33a18.095 18.095 0 005.223-5.223c.542-.827.369-1.908-.33-2.607L11.16 3.66A2.25 2.25 0 009.568 3z"/><path stroke-linecap="round" stroke-linejoin="round" d="M6 6h.008v.008H6V6z"/></svg>
+                  <span>Tag</span>
+                </button>
+                <div id="lead-filter-tags-list" class="flex flex-wrap items-center gap-1.5"></div>
+              </div>
             </div>
-          </div>
-          <div id="lead-filter-tags-row" class="hidden flex-wrap items-center gap-1.5 lg:flex" role="group" aria-label="Saved filter tags">
-            <button type="button" id="lead-filter-tag-save" disabled
-              class="inline-flex shrink-0 items-center gap-1 rounded-lg border border-dashed border-slate-300 bg-slate-50/80 px-2 py-1 text-[11px] font-semibold text-slate-600 transition hover:border-indigo-300 hover:bg-indigo-50/80 hover:text-indigo-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/30 disabled:pointer-events-none disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
-              title="Save current filter text as a reusable tag"
-              aria-label="Save current filter as tag">
-              <svg class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9.568 3H5.25A2.25 2.25 0 003 5.25v4.318c0 .597.237 1.17.659 1.591l9.581 9.581c.699.699 1.78.872 2.607.33a18.095 18.095 0 005.223-5.223c.542-.827.369-1.908-.33-2.607L11.16 3.66A2.25 2.25 0 009.568 3z"/><path stroke-linecap="round" stroke-linejoin="round" d="M6 6h.008v.008H6V6z"/></svg>
-              <span>Tag</span>
-            </button>
-            <div id="lead-filter-tags-list" class="flex flex-wrap items-center gap-1.5"></div>
-          </div>
           <div id="lead-group-drawer-anchor" class="lead-group-header">
             <button type="button" id="lead-group-drawer-toggle"
-              class="mb-2 flex w-full items-center gap-2.5 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-left shadow-sm transition hover:border-indigo-200 hover:bg-indigo-50/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/35 lg:hidden"
+              class="lead-group-drawer-toggle flex w-full items-center gap-2 rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-left shadow-sm transition hover:border-indigo-200 hover:bg-indigo-50/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/35 lg:hidden"
               aria-expanded="false" aria-controls="lead-group-drawer-panel">
-              <svg class="h-5 w-5 shrink-0 text-indigo-600" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z"/></svg>
+              <svg class="h-4 w-4 shrink-0 text-indigo-600" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z"/></svg>
               <span class="min-w-0 flex-1">
-                <span class="block text-[10px] font-bold uppercase tracking-wide text-slate-400">Folder</span>
-                <span id="lead-group-mobile-label" class="block truncate text-sm font-semibold text-slate-900">{% if active_group_pk is None %}Uncategorized{% elif active_group_pk == queue_group.pk %}🚀Queue{% elif active_group_pk == trash_group.pk %}{{ trash_group.name }}{% elif active_group_pk == whatsapp_chats_group.pk %}💬 Active Chat{% else %}{% for g in lead_groups %}{% if active_group_pk == g.pk %}{{ g.name }}{% endif %}{% endfor %}{% endif %}</span>
+                <span class="block text-[10px] font-bold uppercase tracking-wide text-slate-400">View</span>
+                <span id="lead-group-mobile-label" class="block truncate text-sm font-semibold leading-tight text-slate-900">{% if active_group_pk is None %}New{% elif active_group_pk == ready_group.pk %}Ready{% elif active_group_pk == trash_group.pk %}Trash{% elif active_group_pk == whatsapp_chats_group.pk %}Active Chat{% else %}New{% endif %}</span>
               </span>
-              <span id="lead-group-mobile-count" class="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-bold tabular-nums text-slate-600">{% if active_group_pk is None %}{{ uncategorized_lead_count }}{% elif active_group_pk == queue_group.pk %}{{ queue_lead_count }}{% elif active_group_pk == trash_group.pk %}{{ trash_lead_count }}{% elif active_group_pk == whatsapp_chats_group.pk %}{{ active_chat_count }}{% else %}{% for g in lead_groups %}{% if active_group_pk == g.pk %}{{ g.total_leads }}{% endif %}{% endfor %}{% endif %}</span>
+              <span id="lead-group-mobile-count" class="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-bold tabular-nums text-slate-600">{% if active_group_pk is None %}{{ uncategorized_lead_count }}{% elif active_group_pk == ready_group.pk %}{{ ready_lead_count }}{% elif active_group_pk == trash_group.pk %}{{ trash_lead_count }}{% elif active_group_pk == whatsapp_chats_group.pk %}{{ active_chat_count }}{% else %}{{ uncategorized_lead_count }}{% endif %}</span>
               <svg class="h-4 w-4 shrink-0 text-slate-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5"/></svg>
             </button>
 
@@ -262,91 +290,107 @@
               <div id="lead-group-drawer-backdrop" class="lead-group-drawer-backdrop" aria-hidden="true"></div>
               <div id="lead-group-drawer-panel" class="lead-group-drawer-panel" role="dialog" aria-modal="true" aria-labelledby="lead-group-drawer-title">
                 <div class="lead-group-drawer-mobile-header flex shrink-0 items-center justify-between border-b border-slate-100 px-4 py-3 lg:hidden">
-                  <h3 id="lead-group-drawer-title" class="text-sm font-semibold text-slate-900">Folders</h3>
+                  <h3 id="lead-group-drawer-title" class="text-sm font-semibold text-slate-900">Views</h3>
                   <button type="button" id="lead-group-drawer-close"
                     class="inline-flex h-9 w-9 items-center justify-center rounded-lg text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/35"
-                    aria-label="Close folders">
+                    aria-label="Close views">
                     <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
                   </button>
                 </div>
-                <div id="lead-group-tabs" class="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto overscroll-y-contain px-2 py-2 lg:flex-none lg:max-h-none lg:flex-row lg:flex-wrap lg:items-end lg:gap-0.5 lg:overflow-visible lg:border-b lg:border-slate-200 lg:px-5 lg:py-0" role="tablist" aria-label="Lead groups">
-              <button type="button" role="tab" class="lead-group-tab rounded-t-md{% if active_group_pk is None %} lead-group-tab--active{% endif %}" data-group-id="uncategorized" aria-selected="{% if active_group_pk is None %}true{% else %}false{% endif %}"><span class="relative inline-flex">Uncategorized<span class="lead-group-count absolute -right-3.5 -top-2.5 inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-slate-200 px-1.5 py-0.5 text-[11px] font-bold leading-none text-slate-600 ring-1 ring-white" title="{{ uncategorized_lead_count }} lead(s) in this group">{{ uncategorized_lead_count }}</span></span></button>
-              <button type="button" role="tab" class="lead-group-tab rounded-t-md{% if active_group_pk == queue_group.pk %} lead-group-tab--active{% endif %}" data-group-id="{{ queue_group.pk }}" aria-selected="{% if active_group_pk == queue_group.pk %}true{% else %}false{% endif %}"><span class="relative inline-flex">🚀Queue<span class="lead-group-count absolute -right-3.5 -top-2.5 inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-slate-200 px-1.5 py-0.5 text-[11px] font-bold leading-none text-slate-600 ring-1 ring-white" title="{{ queue_lead_count }} lead(s) in this group">{{ queue_lead_count }}</span></span></button>
-              <button type="button" role="tab" class="lead-group-tab rounded-t-md{% if active_group_pk == trash_group.pk %} lead-group-tab--active{% endif %}" data-group-id="{{ trash_group.pk }}" aria-selected="{% if active_group_pk == trash_group.pk %}true{% else %}false{% endif %}"><span class="relative inline-flex">{{ trash_group.name }}<span class="lead-group-count absolute -right-3.5 -top-2.5 inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-slate-200 px-1.5 py-0.5 text-[11px] font-bold leading-none text-slate-600 ring-1 ring-white" title="{{ trash_lead_count }} lead(s) in this group">{{ trash_lead_count }}</span></span></button>
-              <button type="button" role="tab" class="lead-group-tab rounded-t-md{% if active_group_pk == whatsapp_chats_group.pk %} lead-group-tab--active{% endif %}" data-group-id="{{ whatsapp_chats_group.pk }}" aria-selected="{% if active_group_pk == whatsapp_chats_group.pk %}true{% else %}false{% endif %}">💬 Active Chat<span id="active-chat-count-badge" class="ml-1.5 inline-flex min-w-[1.125rem] items-center justify-center rounded-full bg-emerald-500 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white{% if not active_chat_count %} hidden{% endif %}" aria-label="{{ active_chat_count }} active chats" title="{{ active_chat_count }} chats awaiting your reply">{{ active_chat_count }}</span></button>
-              {% for g in lead_groups %}
-              <button type="button" role="tab" class="lead-group-tab lead-group-tab--draggable rounded-t-md{% if active_group_pk == g.pk %} lead-group-tab--active{% endif %}" draggable="true" data-group-id="{{ g.pk }}" aria-selected="{% if active_group_pk == g.pk %}true{% else %}false{% endif %}"><span class="relative inline-flex">{{ g.name }}<span class="lead-group-count absolute -right-3.5 -top-2.5 inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-slate-200 px-1.5 py-0.5 text-[11px] font-bold leading-none text-slate-600 ring-1 ring-white" title="{{ g.total_leads }} lead(s) in this group">{{ g.total_leads }}</span></span></button>
-              {% endfor %}
-              <button type="button" id="lead-group-new-btn" class="lead-group-tab lead-group-tab--new ml-0.5 rounded-t-md font-semibold lg:rounded-t-md" title="Create a new group">+ New group</button>
+                <div id="lead-group-tabs" class="lead-group-tabs min-h-0 flex-1 overflow-y-auto overscroll-y-contain lg:flex-none lg:max-h-none lg:overflow-visible" role="tablist" aria-label="Lead views">
+              <div class="lead-group-tabs-system" role="group" aria-label="Workflow views">
+                <span class="lead-group-tabs-kicker">Views</span>
+                <div class="lead-group-tabs-system-pills">
+                  <button type="button" role="tab" class="lead-group-tab lead-group-tab--system toolbar-btn{% if active_group_pk is None %} lead-group-tab--active{% endif %}" data-group-id="uncategorized" aria-selected="{% if active_group_pk is None %}true{% else %}false{% endif %}" title="New — scraped leads" aria-label="New">
+                    <svg class="h-4 w-4 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z"/></svg>
+                    <span class="lead-group-tab-label">New</span>
+                    <span class="lead-group-count" title="{{ uncategorized_lead_count }} lead(s) in this view">{{ uncategorized_lead_count }}</span>
+                  </button>
+                  <button type="button" role="tab" class="lead-group-tab lead-group-tab--system toolbar-btn{% if active_group_pk == ready_group.pk %} lead-group-tab--active{% endif %}" data-group-id="{{ ready_group.pk }}" aria-selected="{% if active_group_pk == ready_group.pk %}true{% else %}false{% endif %}" title="Ready — picked from New, waiting for outreach" aria-label="Ready">
+                    <svg class="h-4 w-4 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                    <span class="lead-group-tab-label">Ready</span>
+                    <span class="lead-group-count" title="{{ ready_lead_count }} lead(s) in this view">{{ ready_lead_count }}</span>
+                  </button>
+                  <button type="button" role="tab" class="lead-group-tab lead-group-tab--system toolbar-btn{% if active_group_pk == trash_group.pk %} lead-group-tab--active{% endif %}" data-group-id="{{ trash_group.pk }}" aria-selected="{% if active_group_pk == trash_group.pk %}true{% else %}false{% endif %}" title="Trash" aria-label="Trash">
+                    <svg class="h-4 w-4 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0"/></svg>
+                    <span class="lead-group-tab-label">Trash</span>
+                    <span class="lead-group-count" title="{{ trash_lead_count }} lead(s) in this view">{{ trash_lead_count }}</span>
+                  </button>
+                  <button type="button" role="tab" class="lead-group-tab lead-group-tab--system toolbar-btn{% if active_group_pk == whatsapp_chats_group.pk %} lead-group-tab--active{% endif %}" data-group-id="{{ whatsapp_chats_group.pk }}" aria-selected="{% if active_group_pk == whatsapp_chats_group.pk %}true{% else %}false{% endif %}" title="Active Chat" aria-label="Active Chat">
+                    <svg class="h-4 w-4 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M8.625 12a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H8.25m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H12m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 01-2.555-.337A5.972 5.972 0 015.41 20.97a5.969 5.969 0 01-.474-.065 4.48 4.48 0 00.978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25z"/></svg>
+                    <span class="lead-group-tab-label">Active Chat</span>
+                    <span id="active-chat-count-badge" class="lead-group-count{% if not active_chat_count %} hidden{% endif %}" aria-label="{{ active_chat_count }} active chats" title="{{ active_chat_count }} chats awaiting your reply">{{ active_chat_count }}</span>
+                  </button>
+                </div>
+              </div>
                 </div>
               </div>
             </div>
           </div>
-          <div id="leads-controls-bar" class="sticky top-0 z-20 -mx-4 hidden flex-wrap items-center gap-2 border-t border-slate-100 bg-white/95 px-4 py-2.5 backdrop-blur-sm supports-[backdrop-filter]:bg-white/85 sm:-mx-5 sm:px-5 lg:flex">
-            <label class="inline-flex min-h-[2.5rem] cursor-pointer select-none items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-sm transition hover:border-indigo-200/90 hover:bg-slate-50/80 focus-within:outline-none focus-within:ring-2 focus-within:ring-indigo-500/30" title="Select all leads visible on this page">
-              <input type="checkbox" id="select-all-clinics" class="h-4 w-4 shrink-0 rounded border-slate-300 text-indigo-600 focus:ring-2 focus:ring-indigo-500/35" aria-label="Select all leads on this page" />
-              <span class="text-xs font-semibold text-slate-700">Select all</span>
-            </label>
-            <button type="button" id="filter-very-important-only"
-              class="inline-flex min-h-[2.5rem] shrink-0 items-center gap-1 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-600 shadow-sm transition hover:border-amber-500/60 hover:bg-amber-50/60 hover:text-amber-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/35"
-              aria-pressed="false" title="Show only leads marked with the star (very important)">
-              <svg class="h-4 w-4 shrink-0 text-amber-500" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M10.788 3.21c.448-1.077 1.976-1.077 2.424 0l2.082 5.006 5.404.434c1.164.093 1.636 1.545.749 2.305l-4.117 3.527 1.257 5.273c.271 1.136-.964 2.033-1.96 1.425L12 18.354 7.373 21.18c-.996.608-2.231-.29-1.96-1.425l1.257-5.273-4.117-3.527c-.887-.76-.415-2.212.749-2.305l5.404-.434 2.082-5.005z" clip-rule="evenodd" /></svg>
-              <span>Very important</span>
-            </button>
-            <button type="button" id="filter-sent-message-only"
-              class="inline-flex min-h-[2.5rem] shrink-0 items-center gap-1 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-600 shadow-sm transition hover:border-emerald-500/60 hover:bg-emerald-50/60 hover:text-emerald-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/35"
-              aria-pressed="false" title="Show only leads that have been sent a WhatsApp message">
-              <svg class="h-4 w-4 shrink-0 text-emerald-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M8.625 12a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H8.25m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H12m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 01-2.555-.337A5.972 5.972 0 015.41 20.97a5.969 5.969 0 01-.474-.065 4.48 4.48 0 00.978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25z" /></svg>
-              <span>Sent message</span>
-            </button>
-            <div id="lead-tag-filter" class="relative shrink-0">
-              <button type="button" id="lead-tag-filter-toggle"
-                class="inline-flex min-h-[2.5rem] shrink-0 items-center gap-1 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-600 shadow-sm transition hover:border-indigo-400/70 hover:bg-indigo-50/60 hover:text-indigo-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/35"
-                aria-pressed="false" aria-expanded="false" aria-haspopup="true" aria-controls="lead-tag-filter-menu"
-                title="Filter leads by tags (match any selected)">
-                <svg class="h-4 w-4 shrink-0 text-indigo-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.75" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9.568 3H5.25A2.25 2.25 0 003 5.25v4.318c0 .597.237 1.17.659 1.591l9.581 9.581c.699.699 1.78.872 2.607.33a18.095 18.095 0 005.223-5.223c.542-.827.369-1.908-.33-2.607L11.16 3.66A2.25 2.25 0 009.568 3z"/><path stroke-linecap="round" stroke-linejoin="round" d="M6 6h.008v.008H6V6z"/></svg>
-                <span>Tags</span>
-                <span id="lead-tag-filter-count" class="hidden min-w-[1.15rem] rounded-full bg-indigo-600 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white" aria-hidden="true">0</span>
-              </button>
-              <div id="lead-tag-filter-menu" class="absolute left-0 top-full z-[200] mt-1 hidden w-56 rounded-xl border border-slate-200 bg-white p-2 shadow-lg ring-1 ring-slate-900/5" role="group" aria-label="Filter by tags" hidden>
-                <p class="px-1.5 pb-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Match any selected</p>
-                <div id="lead-tag-filter-options" class="max-h-64 space-y-0.5 overflow-y-auto">
-                  {% for tag in dashboard_tags %}
-                  <label class="flex cursor-pointer items-center gap-2 rounded-lg px-1.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-indigo-50/70">
-                    <input type="checkbox" class="lead-tag-filter-cb h-3.5 w-3.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500/40" value="{{ tag.slug }}" data-tag-label="{{ tag.label }}" />
-                    <span class="min-w-0 truncate">{{ tag.label }}</span>
-                  </label>
-                  {% empty %}
-                  <p class="px-1.5 py-2 text-xs text-slate-400">No tags yet</p>
-                  {% endfor %}
-                </div>
-                <button type="button" id="lead-tag-filter-clear"
-                  class="mt-1.5 w-full rounded-lg px-2 py-1.5 text-[11px] font-semibold text-slate-500 transition hover:bg-slate-50 hover:text-slate-800">
-                  Clear tags
+          <div id="leads-controls-bar" class="sticky top-0 z-20 -mx-4 hidden flex-nowrap items-center gap-1.5 overflow-x-auto border-t border-slate-100 bg-white/95 px-4 py-2 backdrop-blur-sm supports-[backdrop-filter]:bg-white/85 sm:-mx-5 sm:gap-2 sm:px-5 lg:flex">
+              <label class="toolbar-btn shrink-0 cursor-pointer select-none" title="Select all leads visible on this page">
+                <input type="checkbox" id="select-all-clinics" class="h-4 w-4 shrink-0 rounded border-slate-300 text-indigo-600 focus:ring-2 focus:ring-indigo-500/35" aria-label="Select all leads on this page" />
+                <span class="select-all-label">Select all</span>
+              </label>
+              <div class="leads-view-mode-toggle toolbar-btn shrink-0" role="group" aria-label="Table layout">
+                <button type="button" class="view-mode-btn" data-view-mode="list" aria-pressed="true" title="List" aria-label="List">
+                  <span class="sr-only">List</span>
+                  <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5"/></svg>
+                </button>
+                <button type="button" class="view-mode-btn" data-view-mode="grid" aria-pressed="false" title="Grid" aria-label="Grid">
+                  <span class="sr-only">Grid</span>
+                  <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25a2.25 2.25 0 01-2.25-2.25V6zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25A2.25 2.25 0 0113.5 18v-2.25z"/></svg>
                 </button>
               </div>
-            </div>
-            <label class="inline-flex min-h-[2.5rem] shrink-0 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-600 shadow-sm transition hover:border-slate-300 hover:bg-slate-50/80 focus-within:ring-2 focus-within:ring-indigo-500/35" title="Sort leads in the current folder">
-              <span class="pl-0.5 text-slate-500">Sort</span>
-              <select id="lead-sort-select" class="max-w-[9.5rem] cursor-pointer border-0 bg-transparent py-1 pr-6 text-xs font-semibold text-slate-700 focus:outline-none focus:ring-0" aria-label="Sort leads">
-                <option value="default">Default order</option>
-                <option value="name-asc">Name A–Z</option>
-                <option value="name-desc">Name Z–A</option>
-                <option value="state-asc">State A–Z</option>
-                <option value="state-desc">State Z–A</option>
-                <option value="created-desc">Created · newest</option>
-                <option value="created-asc">Created · oldest</option>
-              </select>
-            </label>
-            <div class="ml-auto flex flex-wrap items-center justify-end gap-2 leads-controls-secondary">
-              {% include "leads/partials/_leads_pagination_controls.html" %}
-              <div class="hidden min-w-[11.5rem] max-w-xs shrink-0 lg:block">
-                {% include "leads/partials/_hunt_option_toggle.html" with toggle_id="chat-indicator-poll-toggle" toggle_name="chat_indicator_poll" toggle_label="Live chat badges" toggle_desc_id="chat-indicator-poll-desc" toggle_desc="When on, poll about every 15 seconds for reply updates on lead cards (only in folders with sent WhatsApp). When off, badges refresh when you switch tabs or send messages." toggle_checked=True toggle_title="Periodic chat-indicator polling for the current folder" %}
+              <div class="ml-auto flex min-w-0 flex-nowrap items-center justify-end gap-1.5 sm:gap-2 leads-controls-secondary">
+                <label class="toolbar-btn shrink-0" title="Sort leads in the current view">
+                  <span class="leads-control-label text-slate-500">Sort</span>
+                  <select id="lead-sort-select" class="max-w-[9.5rem] cursor-pointer border-0 bg-transparent py-1 pr-6 text-xs font-semibold text-slate-700 focus:outline-none focus:ring-0" aria-label="Sort leads">
+                    <option value="default">Default order</option>
+                    <option value="name-asc">Name A–Z</option>
+                    <option value="name-desc">Name Z–A</option>
+                    <option value="state-asc">State A–Z</option>
+                    <option value="state-desc">State Z–A</option>
+                    <option value="created-desc">Created · newest</option>
+                    <option value="created-asc">Created · oldest</option>
+                  </select>
+                </label>
+                {% include "leads/partials/_leads_pagination_controls.html" %}
+                <div class="leads-toolbar-actions flex shrink-0 flex-nowrap items-center gap-1.5 sm:gap-2">
+                  <button type="button" id="bulk-manual-open" disabled
+                    class="toolbar-btn"
+                    title="Set tags and mark selected leads as processed (no AI). Select at least one lead first."
+                    aria-label="Set tags for selected leads without AI">Set tags</button>
+                  {% if request.user|can_see_all_leads %}
+                  <button type="button" id="bulk-assign-owner-open" disabled
+                    class="toolbar-btn"
+                    title="Assign selected leads to a Sales user. Select at least one lead first."
+                    aria-label="Assign selected leads to a user"
+                    aria-haspopup="menu"
+                    aria-expanded="false">Assign to…</button>
+                  {% endif %}
+                  <button type="button" id="bulk-move-ready-btn" disabled
+                    class="toolbar-btn"
+                    title="Move selected New leads to Ready (waiting for outreach)"
+                    aria-label="Move selected leads to Ready"{% if active_group_pk is not None %} hidden style="display:none"{% endif %}>Move to Ready</button>
+                  <button type="button" id="lead-manual-create-open"
+                    class="toolbar-btn toolbar-btn--icon"
+                    title="Add a lead manually (saved in the current view)"
+                    aria-label="Add lead manually">
+                    <span class="sr-only">Add lead manually</span>
+                    <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/></svg>
+                  </button>
+                </div>
               </div>
-              <div class="leads-view-mode-toggle flex min-h-[2.5rem] items-center gap-0.5 rounded-xl border border-slate-200 bg-slate-50 p-1 shadow-inner" role="group" aria-label="Table layout">
-                <button type="button" class="view-mode-btn rounded-lg px-3 py-2 text-xs font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/35" data-view-mode="list" aria-pressed="true">List</button>
-                <button type="button" class="view-mode-btn min-w-[3.25rem] rounded-lg px-3 py-2 text-xs font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/35" data-view-mode="grid" aria-pressed="false">Grid</button>
-              </div>
+          </div>
+          </div>
+          <div id="global-search-banner" class="hidden rounded-xl border border-indigo-200/90 bg-indigo-50/70 px-3 py-2 text-xs text-indigo-950 sm:px-3.5" role="status" aria-live="polite">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <p id="global-search-banner-text" class="min-w-0 font-medium leading-snug"></p>
+              <button type="button" id="global-search-banner-exit"
+                class="toolbar-btn">
+                Back to folder
+              </button>
             </div>
           </div>
           {% load static %}
@@ -417,29 +461,31 @@
           <label for="clinic-edit-name" class="text-xs font-semibold text-slate-700">Business name <span class="text-red-600">*</span></label>
           <input id="clinic-edit-name" name="name" type="text" autocomplete="organization" class="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15" />
         </div>
-        <div class="grid gap-3 sm:grid-cols-2">
-          <div class="space-y-1.5">
-            <div class="flex items-end justify-between gap-2">
-              <span class="text-xs font-semibold text-slate-700">Phone numbers</span>
-              <button type="button" id="clinic-edit-add-phone" class="text-xs font-medium text-indigo-600 transition hover:text-indigo-500">+ Add number</button>
+        <div class="grid gap-3 sm:grid-cols-2 sm:items-stretch">
+          <div class="space-y-3">
+            <div class="space-y-1.5">
+              <div class="flex items-end justify-between gap-2">
+                <span class="text-xs font-semibold text-slate-700">Phone numbers</span>
+                <button type="button" id="clinic-edit-add-phone" class="text-xs font-medium text-indigo-600 transition hover:text-indigo-500">+ Add number</button>
+              </div>
+              <div id="clinic-edit-phones-list" class="space-y-2"></div>
+              <p class="text-[10px] leading-snug text-slate-400">Default +60. Up to 8 numbers; first is primary. Spaces/dashes stripped on save.</p>
             </div>
-            <div id="clinic-edit-phones-list" class="space-y-2"></div>
-            <p class="text-[10px] leading-snug text-slate-400">Default +60. Up to 8 numbers; first is primary. Spaces/dashes stripped on save.</p>
+            <div class="space-y-1.5">
+              <label for="clinic-edit-website" class="text-xs font-semibold text-slate-700">Website</label>
+              <input id="clinic-edit-website" name="website" type="text" inputmode="url" placeholder="https://…" class="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15" />
+            </div>
           </div>
-          <div class="space-y-1.5">
-            <p class="text-xs font-semibold text-slate-700">Tags</p>
-            <div id="clinic-edit-tags" class="rounded-xl border border-slate-200 bg-white px-2.5 py-2 shadow-sm">
-              {% include "leads/partials/_tag_picker.html" %}
-            </div>
+          <div class="flex min-h-0 flex-col gap-1.5">
+            <label for="clinic-edit-address" class="text-xs font-semibold text-slate-700">Address</label>
+            <textarea id="clinic-edit-address" name="address" rows="4" class="min-h-[6.5rem] w-full flex-1 resize-y rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15"></textarea>
           </div>
         </div>
         <div class="space-y-1.5">
-          <label for="clinic-edit-address" class="text-xs font-semibold text-slate-700">Address</label>
-          <textarea id="clinic-edit-address" name="address" rows="2" class="w-full resize-y rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15"></textarea>
-        </div>
-        <div class="space-y-1.5">
-          <label for="clinic-edit-website" class="text-xs font-semibold text-slate-700">Website</label>
-          <input id="clinic-edit-website" name="website" type="text" inputmode="url" placeholder="https://…" class="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15" />
+          <p class="text-xs font-semibold text-slate-700">Tags</p>
+          <div id="clinic-edit-tags" class="rounded-xl border border-slate-200 bg-white px-2.5 py-2 shadow-sm">
+            {% include "leads/partials/_tag_picker.html" %}
+          </div>
         </div>
         <div class="grid gap-3 sm:grid-cols-2">
           <div class="space-y-1.5">
@@ -493,29 +539,31 @@
           <label for="lead-create-name" class="text-xs font-semibold text-slate-700">Business name <span class="text-red-600">*</span></label>
           <input id="lead-create-name" name="name" type="text" required autocomplete="organization" class="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15" />
         </div>
-        <div class="grid gap-3 sm:grid-cols-2">
-          <div class="space-y-1.5">
-            <div class="flex items-end justify-between gap-2">
-              <span class="text-xs font-semibold text-slate-700">Phone numbers</span>
-              <button type="button" id="lead-create-add-phone" class="text-xs font-medium text-indigo-600 transition hover:text-indigo-500">+ Add number</button>
+        <div class="grid gap-3 sm:grid-cols-2 sm:items-stretch">
+          <div class="space-y-3">
+            <div class="space-y-1.5">
+              <div class="flex items-end justify-between gap-2">
+                <span class="text-xs font-semibold text-slate-700">Phone numbers</span>
+                <button type="button" id="lead-create-add-phone" class="text-xs font-medium text-indigo-600 transition hover:text-indigo-500">+ Add number</button>
+              </div>
+              <div id="lead-create-phones-list" class="space-y-2"></div>
+              <p class="text-[10px] leading-snug text-slate-400">Default +60. Up to 8 numbers. Spaces/dashes stripped on save.</p>
             </div>
-            <div id="lead-create-phones-list" class="space-y-2"></div>
-            <p class="text-[10px] leading-snug text-slate-400">Default +60. Up to 8 numbers. Spaces/dashes stripped on save.</p>
+            <div class="space-y-1.5">
+              <label for="lead-create-website" class="text-xs font-semibold text-slate-700">Website</label>
+              <input id="lead-create-website" name="website" type="text" inputmode="url" placeholder="https://…" class="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15" />
+            </div>
           </div>
-          <div class="space-y-1.5">
-            <p class="text-xs font-semibold text-slate-700">Tags</p>
-            <div id="lead-create-tags" class="rounded-xl border border-slate-200 bg-white px-2.5 py-2 shadow-sm">
-              {% include "leads/partials/_tag_picker.html" with default_checked_slug="unknown" %}
-            </div>
+          <div class="flex min-h-0 flex-col gap-1.5">
+            <label for="lead-create-address" class="text-xs font-semibold text-slate-700">Address</label>
+            <textarea id="lead-create-address" name="address" rows="4" class="min-h-[6.5rem] w-full flex-1 resize-y rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15"></textarea>
           </div>
         </div>
         <div class="space-y-1.5">
-          <label for="lead-create-address" class="text-xs font-semibold text-slate-700">Address</label>
-          <textarea id="lead-create-address" name="address" rows="2" class="w-full resize-y rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15"></textarea>
-        </div>
-        <div class="space-y-1.5">
-          <label for="lead-create-website" class="text-xs font-semibold text-slate-700">Website</label>
-          <input id="lead-create-website" name="website" type="text" inputmode="url" placeholder="https://…" class="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15" />
+          <p class="text-xs font-semibold text-slate-700">Tags</p>
+          <div id="lead-create-tags" class="rounded-xl border border-slate-200 bg-white px-2.5 py-2 shadow-sm">
+            {% include "leads/partials/_tag_picker.html" with default_checked_slug="unknown" %}
+          </div>
         </div>
       </div>
       <div class="flex flex-wrap items-center justify-end gap-2 border-t border-slate-100 bg-slate-50/50 px-5 py-3">
@@ -578,7 +626,7 @@
   </template>
 
   <dialog id="bulk-manual-dialog" class="z-[100] w-[calc(100%-1.5rem)] max-w-md overflow-hidden rounded-2xl border border-slate-200/90 bg-white p-0 shadow-2xl ring-1 ring-slate-900/5 backdrop:bg-slate-900/45">
-    <form id="bulk-manual-form" class="flex max-h-[min(90vh,480px)] flex-col">
+    <form id="bulk-manual-form" class="flex max-h-[min(90vh,560px)] flex-col">
       <div class="flex items-start justify-between gap-3 border-b border-slate-100 bg-slate-50/80 px-5 py-4">
         <div>
           <h2 class="text-base font-semibold tracking-tight text-slate-900">Set tags</h2>
@@ -596,6 +644,15 @@
           <div id="bulk-manual-tags" class="rounded-xl border border-slate-200 bg-white px-2.5 py-2 shadow-sm">
             {% include "leads/partials/_tag_picker.html" %}
           </div>
+        </div>
+        <div class="space-y-2 border-t border-slate-100 pt-3">
+          <p class="text-xs font-semibold text-slate-700">Auto-classify from name</p>
+          <p class="text-[11px] leading-snug text-slate-500">Re-tags selected leads that are still <strong class="font-medium text-slate-600">Unknown</strong> using match phrases. Leads that already have a real tag are skipped.</p>
+          <button type="button" id="bulk-auto-classify"
+                  class="inline-flex w-full items-center justify-center rounded-xl border border-indigo-200 bg-indigo-50/80 px-4 py-2 text-sm font-semibold text-indigo-950 shadow-sm transition hover:border-indigo-300 hover:bg-indigo-100/90 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/30 disabled:cursor-not-allowed disabled:opacity-60">
+            <span id="bulk-auto-classify-label">Auto-classify from name</span>
+            <svg id="bulk-auto-classify-spinner" class="ml-2 hidden h-4 w-4 animate-spin text-indigo-700" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+          </button>
         </div>
       </div>
       <div class="flex flex-wrap items-center justify-end gap-2 border-t border-slate-100 bg-slate-50/50 px-5 py-3">
@@ -640,26 +697,6 @@
   </div>
   {% endif %}
 
-  <div id="lead-group-move-menu" class="fixed z-[200] hidden w-[min(calc(100vw-1.5rem),17.5rem)] rounded-xl border border-slate-200/95 bg-white py-1 shadow-xl shadow-slate-900/15 ring-1 ring-slate-900/5" role="menu" aria-hidden="true" aria-label="Move leads to folder">
-    <p class="border-b border-slate-100 px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-slate-400">Move to…</p>
-    <p id="lead-group-move-menu-error" class="hidden border-b border-red-100 bg-red-50 px-3 py-2 text-xs font-medium text-red-800" role="alert"></p>
-    <p id="lead-group-move-menu-count" class="border-b border-slate-50 px-3 py-1.5 text-[11px] text-slate-500"></p>
-    <div class="max-h-[min(55vh,18rem)] overflow-y-auto py-0.5">
-      <button type="button" role="menuitem" class="lead-group-move-pick flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm font-medium text-slate-800 transition hover:bg-violet-50/90 focus:bg-violet-50/90 focus:outline-none disabled:cursor-wait disabled:opacity-60" data-group-id="">
-        <svg class="h-5 w-5 shrink-0 text-red-500" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"/></svg>
-        <span class="min-w-0 flex-1">Uncategorized</span>
-      </button>
-      <div id="lead-group-move-menu-groups">
-        {% for g in lead_groups %}
-        <button type="button" role="menuitem" class="lead-group-move-pick flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm font-medium text-slate-800 transition hover:bg-violet-50/90 focus:bg-violet-50/90 focus:outline-none disabled:cursor-wait disabled:opacity-60" data-group-id="{{ g.pk }}">
-          <svg class="h-5 w-5 shrink-0 text-amber-500" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z"/></svg>
-          <span class="min-w-0 flex-1 truncate">{{ g.name }}</span>
-        </button>
-        {% endfor %}
-      </div>
-    </div>
-  </div>
-
   <div id="bulk-action-dock" class="bulk-action-dock pointer-events-none fixed bottom-6 left-1/2 z-[90] -translate-x-1/2 opacity-0 transition-all duration-300 ease-out" hidden aria-hidden="true" role="region" aria-label="Bulk actions for selected leads">
     <div class="pointer-events-auto flex items-center gap-3 rounded-2xl border border-slate-200/90 bg-white/95 py-2 pl-3 pr-2 shadow-2xl shadow-slate-900/10 ring-1 ring-slate-900/5 backdrop-blur-md sm:pl-4 sm:pr-3">
       <span id="bulk-action-dock-count" class="shrink-0 text-xs font-semibold tabular-nums text-slate-600">0 selected</span>
@@ -685,12 +722,39 @@
     </div>
   </div>
 
+  <dialog id="manage-tags-dialog" class="z-[100] w-[calc(100%-1.5rem)] max-w-md overflow-hidden rounded-2xl border border-slate-200/90 bg-white p-0 shadow-2xl ring-1 ring-slate-900/5 backdrop:bg-slate-900/45">
+    <div class="flex max-h-[min(90vh,560px)] flex-col">
+      <div class="flex items-start justify-between gap-3 border-b border-slate-100 bg-slate-50/80 px-5 py-4">
+        <div>
+          <h2 class="text-base font-semibold tracking-tight text-slate-900">Manage tags</h2>
+          <p class="mt-0.5 text-xs text-slate-500">Create, rename, or delete filter tags. System tags cannot be deleted.</p>
+        </div>
+        <button type="button" id="manage-tags-close-x" class="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600" aria-label="Close">
+          <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <div class="flex-1 space-y-3 overflow-y-auto px-5 py-4">
+        <p id="manage-tags-error" class="hidden rounded-lg bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700 ring-1 ring-rose-200/70" role="alert"></p>
+        <form id="manage-tags-create" class="flex min-w-0 items-center gap-2">
+          <label class="sr-only" for="manage-tags-create-label">New tag name</label>
+          <input id="manage-tags-create-label" name="label" type="text" maxlength="80" required placeholder="New tag name" autocomplete="off"
+            class="h-10 min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-3 text-sm shadow-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-500/15" />
+          <button type="submit" id="manage-tags-create-submit" class="inline-flex h-10 shrink-0 items-center rounded-lg bg-indigo-600 px-3.5 text-xs font-semibold text-white shadow-sm hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-60">Add</button>
+        </form>
+        <div id="manage-tags-list" class="manage-tags-list" role="list" aria-label="Tags"></div>
+      </div>
+      <div class="flex flex-wrap items-center justify-end gap-2 border-t border-slate-100 bg-slate-50/80 px-5 py-3">
+        <button type="button" id="manage-tags-done" class="inline-flex h-9 items-center rounded-lg border border-slate-200 px-3.5 text-xs font-semibold text-slate-600 hover:bg-slate-100">Done</button>
+      </div>
+    </div>
+  </dialog>
+
   <dialog id="choose-batch-dialog" class="z-[100] w-[calc(100%-1.5rem)] max-w-md overflow-hidden rounded-2xl border border-slate-200/90 bg-white p-0 shadow-2xl ring-1 ring-slate-900/5 backdrop:bg-slate-900/45">
     <form id="choose-batch-form" class="flex max-h-[min(90vh,540px)] flex-col">
       <div class="flex items-start justify-between gap-3 border-b border-slate-100 bg-slate-50/80 px-5 py-4">
         <div>
           <h2 class="text-base font-semibold tracking-tight text-slate-900">Choose batch</h2>
-          <p class="mt-0.5 text-xs text-slate-500"><span id="choose-batch-count">0</span> lead(s) will be assigned to the selected batch.</p>
+          <p class="mt-0.5 text-xs text-slate-500"><span id="choose-batch-count">0</span> lead(s) will be assigned to the selected batch. Idle Ready leads also join the send queue.</p>
         </div>
         <button type="button" id="choose-batch-close-x" class="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600" aria-label="Close">
           <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>

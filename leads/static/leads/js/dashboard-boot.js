@@ -16,31 +16,38 @@
       dashboardJsConfig.reorderLeadGroupsUrl = dashboardJsConfig.reorderLeadGroupsUrl || "/leads/api/lead-groups/reorder/";
       dashboardJsConfig.reorderLeadsUrl = dashboardJsConfig.reorderLeadsUrl || "/leads/api/leads/reorder/";
       dashboardJsConfig.exportXlsxUrl = dashboardJsConfig.exportXlsxUrl || "/leads/export/xlsx/";
+      dashboardJsConfig.importXlsxUrl = dashboardJsConfig.importXlsxUrl || "/leads/import/xlsx/";
       dashboardJsConfig.exportFullBackupUrl = dashboardJsConfig.exportFullBackupUrl || "/leads/export/backup/";
       dashboardJsConfig.importFullBackupUrl = dashboardJsConfig.importFullBackupUrl || "/leads/import/backup/";
       dashboardJsConfig.bulkManualUrl = dashboardJsConfig.bulkManualUrl || "/leads/api/bulk-manual/";
+      dashboardJsConfig.bulkAutoClassifyUrl = dashboardJsConfig.bulkAutoClassifyUrl || "/leads/api/bulk-auto-classify/";
       dashboardJsConfig.bulkWhatsappQueueUrl = dashboardJsConfig.bulkWhatsappQueueUrl || "/leads/api/bulk-whatsapp-queue/";
+      dashboardJsConfig.bulkMoveReadyUrl = dashboardJsConfig.bulkMoveReadyUrl || "/leads/api/bulk-move-ready/";
       dashboardJsConfig.bulkDequeueUrl = dashboardJsConfig.bulkDequeueUrl || "/leads/api/bulk-dequeue/";
       dashboardJsConfig.bulkAssignBatchUrl = dashboardJsConfig.bulkAssignBatchUrl || "/leads/api/bulk-assign-batch/";
       dashboardJsConfig.whatsappBatchesJsonUrl = dashboardJsConfig.whatsappBatchesJsonUrl || "/leads/ajax/whatsapp/batches/";
       dashboardJsConfig.leadManualCreateUrl = dashboardJsConfig.leadManualCreateUrl || "/leads/api/leads/manual/";
+      dashboardJsConfig.categoryTypeSaveUrl = dashboardJsConfig.categoryTypeSaveUrl || "/categories/types/save/";
+      dashboardJsConfig.tagsJsonUrl = dashboardJsConfig.tagsJsonUrl || "/categories/types/json/";
+      dashboardJsConfig.categoryTypeDeleteUrlTemplate = dashboardJsConfig.categoryTypeDeleteUrlTemplate || "/categories/types/__ID__/delete/";
       dashboardJsConfig.huntApiPath = dashboardJsConfig.huntApiPath || "";
       dashboardJsConfig.initialLeadGroupTabIdFromPage = dashboardJsConfig.initialLeadGroupTabIdFromPage || "";
       dashboardJsConfig.queueGroupTabId = dashboardJsConfig.queueGroupTabId || "";
+      dashboardJsConfig.readyGroupTabId = dashboardJsConfig.readyGroupTabId || "";
       dashboardJsConfig.trashGroupTabId = dashboardJsConfig.trashGroupTabId || "";
       dashboardJsConfig.defaultLimit = dashboardJsConfig.defaultLimit || 100;
       window.activeSearchRecordId = dashboardJsConfig.activeSearchRecordId != null ? dashboardJsConfig.activeSearchRecordId : null;
       /* Shared mutable state. Feature files read these as bare identifiers; that
          throws ReferenceError until they exist on window. The old single IIFE
          used `var`, which was hoisted to undefined before later assignment. */
-      window.currentLeadGroupTabId = dashboardJsConfig.initialLeadGroupTabIdFromPage || 'uncategorized';
+      window.currentLeadGroupTabId = dashboardJsConfig.initialLeadGroupTabIdFromPage || dashboardJsConfig.readyGroupTabId || 'uncategorized';
       window.currentLeadPage = 1;
       window.folderTotalPipelineCount = 0;
       window.selectionAnchorId = null;
       window.leadSortMode = 'default';
       window.globalSearchActive = false;
       window.globalSearchQuery = '';
-      window.tabBeforeGlobalSearch = 'uncategorized';
+      window.tabBeforeGlobalSearch = dashboardJsConfig.readyGroupTabId || 'uncategorized';
       window.globalSearchDebounceTimer = null;
       window.globalSearchRequestId = 0;
       window.pendingHighlightLeadId = null;
@@ -70,9 +77,9 @@
       window.leadDeleteUrlTemplate = "/leads/api/clinic/__ID__/delete/";
       window.leadVipUrlTemplate = "/leads/api/clinic/__ID__/very-important/";
       window.leadConversationLogUrlTemplate = "/leads/api/clinic/__ID__/conversation-log/";
+      window.HUNT_PROVIDER_KEY = "clinic_crm_hunt_provider";
       window.REQUIRE_WEBSITE_KEY = "clinic_crm_require_website";
       window.LEADS_PER_PAGE_KEY = "clinic_crm_leads_per_page";
-      window.CHAT_INDICATOR_POLL_KEY = "clinic_crm_chat_indicator_poll";
       window.CHAT_INDICATOR_POLL_MS = 15000;
       window.VIEW_MODE_KEY = "clinic_crm_clinic_view";
       window.LEAD_SORT_KEY = "clinic_crm_lead_sort";

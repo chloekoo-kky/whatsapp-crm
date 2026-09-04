@@ -5,11 +5,9 @@ from __future__ import annotations
 from django.utils.text import slugify
 
 UNKNOWN_SLUG = "unknown"
-INVALID_SLUG = "invalid"
 
 DEFAULT_CATEGORY_TYPES: list[tuple[str, str, int, bool]] = [
     (UNKNOWN_SLUG, "Unknown", 0, True),
-    (INVALID_SLUG, "Invalid / irrelevant", 1, True),
     ("dental", "Dental", 10, False),
     ("aesthetic", "Aesthetic", 20, False),
     ("gp", "GP", 30, False),

@@ -18,6 +18,37 @@
         }
       }
       window.setLimit = setLimit;
+      function setHuntProvider(provider, syncButtons) {
+        var allowed = { serper: true, outscraper: true };
+        var v = allowed[provider] ? provider : 'serper';
+        var input = document.getElementById('hunt-provider-value');
+        if (input) input.value = v;
+        if (syncButtons) {
+          document.querySelectorAll('.hunt-provider-btn').forEach(function (btn) {
+            var active = btn.getAttribute('data-provider') === v;
+            btn.classList.toggle('limit-btn--active', active);
+            btn.classList.toggle('bg-indigo-600', active);
+            btn.classList.toggle('text-white', active);
+            btn.classList.toggle('shadow-sm', active);
+            btn.classList.toggle('text-slate-600', !active);
+            btn.classList.toggle('hover:bg-slate-50', !active);
+            btn.classList.toggle('hover:text-slate-900', !active);
+            btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+          });
+        }
+        var badge = document.getElementById('hunt-provider-badge');
+        if (badge) badge.textContent = v === 'outscraper' ? 'Outscraper' : 'Serper';
+        var limitHelp = document.getElementById('hunt-limit-help');
+        if (limitHelp) {
+          limitHelp.textContent = v === 'outscraper'
+            ? 'How many listings to fetch. Values above 20 run as an Outscraper job and are polled until ready.'
+            : 'How many listings to fetch. Values above 20 request extra Serper pages automatically.';
+        }
+        try {
+          localStorage.setItem(HUNT_PROVIDER_KEY, v);
+        } catch (e) { /* ignore */ }
+      }
+      window.setHuntProvider = setHuntProvider;
       function bindHuntOptionToggle(el, storageKey) {
         if (!el) return;
         try {
@@ -215,6 +246,8 @@
         const shopKeywordEl = document.getElementById('hunt-shop-keyword');
         const shop_keyword = shopKeywordEl ? shopKeywordEl.value.trim() : '';
         const exclude_keywords = loadHuntExcludeKeywords();
+        const providerEl = document.getElementById('hunt-provider-value');
+        const provider = providerEl && providerEl.value === 'outscraper' ? 'outscraper' : 'serper';
         const limitRaw = huntLimitInput ? huntLimitInput.value : String(dashboardJsConfig.defaultLimit);
         const limit = parseInt(limitRaw, 10) || dashboardJsConfig.defaultLimit;
         const qs = new URLSearchParams({ limit: String(limit) });
@@ -228,7 +261,7 @@
               'X-CSRFToken': getCsrfToken(),
             },
             credentials: 'same-origin',
-            body: JSON.stringify({ city, state, country, query, shop_keyword, require_website, exclude_keywords }),
+            body: JSON.stringify({ city, state, country, query, shop_keyword, require_website, exclude_keywords, provider }),
           });
           const data = await res.json().catch(function () { return {}; });
 

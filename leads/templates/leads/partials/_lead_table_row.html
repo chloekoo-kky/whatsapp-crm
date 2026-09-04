@@ -18,8 +18,7 @@
   </td>
   <td class="min-w-0 align-top px-2 py-3.5 sm:px-4">
     {% include "leads/partials/_lead_fields/_folder_badge.html" %}
-    <div class="clinic-type-cell mb-1.5 space-y-1">
-      {% include "leads/partials/_lead_fields/_category_badge.html" %}
+    <div class="clinic-type-cell mb-1.5">
       {% include "leads/partials/_lead_fields/_tag_chips.html" %}
     </div>
     <div class="clinic-name-cell-inner">
@@ -30,7 +29,7 @@
     </p>
     {% include "leads/partials/_lead_fields/_branches_line.html" with extra_class="mt-1 text-[11px] leading-snug text-slate-600" %}
     {% include "leads/partials/_lead_fields/_created_line.html" with extra_class="mt-1" %}
-    {% include "leads/partials/_lead_fields/_batch_badges.html" with wrap_class="mt-1" badge_class="" label_class="" %}
+    {% include "leads/partials/_lead_fields/_batch_badges.html" with wrap_class="mt-1 w-full justify-end" badge_class="" label_class="whitespace-nowrap" %}
   </td>
   <td class="clinic-contact-cell align-top px-2 py-3.5 sm:px-4">
     {% include "leads/partials/_lead_fields/_address_copy.html" with extra_class="whitespace-normal break-words text-slate-800 line-clamp-4" %}

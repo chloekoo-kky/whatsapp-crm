@@ -56,9 +56,18 @@ class LeadGroupAdmin(admin.ModelAdmin):
 
 @admin.register(SearchQueryRecord)
 class SearchQueryRecordAdmin(admin.ModelAdmin):
-    list_display = ("keyword", "maps_search_query", "search_city", "search_country", "created_at")
-    list_filter = ("created_at",)
-    search_fields = ("keyword", "maps_search_query", "search_city", "search_country")
+    list_display = (
+        "keyword",
+        "provider",
+        "maps_search_query",
+        "search_city",
+        "search_state",
+        "search_country",
+        "leads_created",
+        "created_at",
+    )
+    list_filter = ("provider", "created_at")
+    search_fields = ("keyword", "maps_search_query", "search_city", "search_state", "search_country")
     ordering = ("-created_at",)
 
 
@@ -83,6 +92,7 @@ class LeadAdmin(admin.ModelAdmin):
     list_display = (
         "name",
         "assigned_to",
+        "assigned_at",
         "shop_keyword",
         "tag_slugs",
         "is_chain",

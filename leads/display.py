@@ -153,8 +153,36 @@ def lead_has_dispatchable_phone(lead: "Lead") -> bool:
     return False
 
 
+_ACTIVE_WHATSAPP_BATCH_STATUSES = frozenset({"pending", "processing"})
+
+
+def lead_in_active_whatsapp_batch(lead: "Lead") -> bool:
+    """True when the lead is assigned to a not-yet-finished WhatsApp batch."""
+    cached = getattr(lead, "has_active_whatsapp_batch", None)
+    if cached is not None:
+        return bool(cached)
+    batches = getattr(lead, "whatsapp_batches", None)
+    if batches is None:
+        return False
+    cache = getattr(lead, "_prefetched_objects_cache", None)
+    if cache is not None and "whatsapp_batches" in cache:
+        return any(
+            (getattr(batch, "status", "") or "").strip().lower()
+            in _ACTIVE_WHATSAPP_BATCH_STATUSES
+            for batch in cache["whatsapp_batches"]
+        )
+    from leads.models import WhatsAppBatchSchedule
+
+    return batches.filter(
+        status__in=[
+            WhatsAppBatchSchedule.Status.PENDING,
+            WhatsAppBatchSchedule.Status.PROCESSING,
+        ]
+    ).exists()
+
+
 def lead_whatsapp_dispatched(lead: "Lead") -> bool:
-    """True once the lead has a chat record (permanent green-frame card chrome).
+    """True once the lead has a chat record (Sent chip next to the WhatsApp icon).
 
     A chat record exists after the first outbound WhatsApp was sent, but also for
     any lead that already has a WhatsApp chat thread (e.g. tested via the Meta
@@ -218,26 +246,27 @@ def whatsapp_me_path(phone: str) -> str:
     return url
 
 
+def lead_tag_chip_modifier(slug: str) -> str:
+    """CSS modifier for a tag chip (known categories get a tint; others share a default)."""
+    key = (slug or "").strip().lower()
+    known = {
+        "gp",
+        "aesthetic",
+        "dental",
+        "fitness",
+        "cafe",
+        "retail",
+        "service",
+        "unknown",
+    }
+    return key if key in known else "default"
+
+
 def category_badge_html(category: str) -> str:
-    """Tailwind pill HTML for a lead category slug (server-side list/grid and JSON patches)."""
+    """Pill HTML for a lead category slug (server-side list/grid and JSON patches)."""
     from leads.category_types import UNKNOWN_SLUG, category_label_for
 
     t = (category or UNKNOWN_SLUG).strip().lower()
-    palette = {
-        "gp": ("bg-sky-100", "text-sky-900"),
-        "aesthetic": ("bg-fuchsia-100", "text-fuchsia-900"),
-        "dental": ("bg-teal-100", "text-teal-900"),
-        "fitness": ("bg-violet-100", "text-violet-900"),
-        "cafe": ("bg-amber-100", "text-amber-950"),
-        "retail": ("bg-lime-100", "text-lime-900"),
-        "service": ("bg-indigo-100", "text-indigo-900"),
-        "invalid": ("bg-red-100", "text-red-900"),
-        "unknown": ("bg-slate-100", "text-slate-700"),
-    }
-    bg, fg = palette.get(t, ("bg-slate-100", "text-slate-800"))
-    label = category_label_for(t)
-    label_esc = html.escape(label)
-    return (
-        f'<span class="inline-flex rounded-full {bg} px-2.5 py-0.5 text-xs '
-        f"font-semibold {fg}\">{label_esc}</span>"
-    )
+    mod = lead_tag_chip_modifier(t)
+    label_esc = html.escape(category_label_for(t))
+    return f'<span class="lead-tag-chip lead-tag-chip--{mod}">{label_esc}</span>'

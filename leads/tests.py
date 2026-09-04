@@ -11,6 +11,7 @@ from leads.models import CategoryRule, ChatMessage, Lead, LeadConversationLog, L
 from leads.chat_messages import record_inbound_chat_message, record_outbound_chat_message
 from leads.display import (
     lead_google_maps_url,
+    lead_in_active_whatsapp_batch,
     lead_phone_list,
     lead_whatsapp_active_chat,
     lead_whatsapp_dispatched,
@@ -28,14 +29,19 @@ from leads.whatsapp_service import (
 from leads.whatsapp_webhook import parse_meta_cloud_webhook
 from leads.pipeline import (
     QUEUE_GROUP_NAME,
-
+    QUEUE_DISPLAY_NAME,
+    READY_DISPLAY_NAME,
+    READY_GROUP_NAME,
     TRASH_GROUP_NAME,
+    UNCATEGORIZED_DISPLAY_NAME,
     UNCATEGORIZED_GROUP_NAME,
     WHATSAPP_CHATS_GROUP_NAME,
     apply_group_assignment_side_effects,
     ensure_pipeline_system_groups,
     enqueue_leads_for_whatsapp,
     get_or_create_uncategorized_group,
+    lead_group_display_name,
+    move_leads_to_ready,
     phone_exists_in_database,
 )
 
@@ -54,9 +60,243 @@ class PipelineGroupTests(TestCase):
     def test_system_groups_are_created(self):
         groups = ensure_pipeline_system_groups()
         self.assertEqual(groups["uncategorized"].name, UNCATEGORIZED_GROUP_NAME)
+        self.assertEqual(groups["ready"].name, READY_GROUP_NAME)
         self.assertEqual(groups["queue"].name, QUEUE_GROUP_NAME)
         self.assertEqual(groups["whatsapp_chats"].name, WHATSAPP_CHATS_GROUP_NAME)
         self.assertEqual(groups["trash"].name, TRASH_GROUP_NAME)
+
+    def test_uncategorized_display_name_is_new(self):
+        self.assertEqual(UNCATEGORIZED_DISPLAY_NAME, "New")
+        self.assertEqual(lead_group_display_name(UNCATEGORIZED_GROUP_NAME), "New")
+        self.assertEqual(lead_group_display_name(None), "New")
+        self.assertEqual(lead_group_display_name(READY_GROUP_NAME), READY_DISPLAY_NAME)
+        self.assertEqual(lead_group_display_name(QUEUE_GROUP_NAME), QUEUE_DISPLAY_NAME)
+        self.assertEqual(lead_group_display_name("Aesthetic"), "Aesthetic")
+
+    def test_dashboard_shows_system_views_without_custom_groups(self):
+        LeadGroup.objects.create(name="Johor Folder", sort_order=20)
+        client = staff_client()
+        response = client.get(reverse("dashboard"))
+        self.assertEqual(response.status_code, 200)
+        html = response.content.decode()
+        self.assertIn('data-group-id="uncategorized"', html)
+        self.assertIn("lead-group-tabs-system", html)
+        self.assertIn("lead-group-tab--system", html)
+        self.assertNotIn("lead-group-tabs-custom", html)
+        self.assertNotIn("lead-group-tab--custom", html)
+        self.assertRegex(html, r'data-group-id="uncategorized"[^>]*>[\s\S]*?\bNew\b')
+        self.assertIn(">Ready<", html)
+        ready = ensure_pipeline_system_groups()["ready"]
+        self.assertRegex(
+            html,
+            r'data-group-id="' + str(ready.pk) + r'"[^>]*aria-selected="true"',
+        )
+        self.assertRegex(
+            html,
+            r'data-group-id="uncategorized"[^>]*aria-selected="false"',
+        )
+        self.assertNotIn("Uncategorized", html)
+        self.assertNotIn("Johor Folder", html)
+        self.assertNotIn("+ New group", html)
+        self.assertNotIn("Move to group", html)
+        self.assertIn("Views", html)
+        self.assertIn("Set tags", html)
+        self.assertIn("Assign to…", html)
+        manual_idx = html.find('id="bulk-manual-open"')
+        assign_idx = html.find('id="bulk-assign-owner-open"')
+        ready_idx = html.find('id="bulk-move-ready-btn"')
+        dock_idx = html.find('id="bulk-action-dock"')
+        self.assertNotEqual(manual_idx, -1)
+        self.assertNotEqual(assign_idx, -1)
+        self.assertNotEqual(ready_idx, -1)
+        self.assertLess(manual_idx, assign_idx)
+        self.assertLess(assign_idx, ready_idx)
+        self.assertLess(ready_idx, dock_idx)
+        self.assertIn("Choose batch", html)
+        self.assertNotIn('aria-label="Queue"', html)
+        self.assertNotIn('data-group-id="' + str(ensure_pipeline_system_groups()["queue"].pk) + '"', html)
+        search_idx = html.find('id="table-search"')
+        queued_idx = html.find('id="filter-queued-only"')
+        vip_idx = html.find('id="filter-very-important-only"')
+        self.assertNotEqual(search_idx, -1)
+        self.assertNotEqual(queued_idx, -1)
+        self.assertNotEqual(vip_idx, -1)
+        tag_idx = html.find('id="lead-tag-filter"')
+        self.assertNotEqual(tag_idx, -1)
+        self.assertLess(tag_idx, search_idx)
+        self.assertLess(search_idx, queued_idx)
+        self.assertLess(queued_idx, vip_idx)
+        self.assertIn('id="lead-tag-filter-manage"', html)
+        self.assertIn('aria-label="Manage tags"', html)
+        self.assertIn('id="table-search-clear"', html)
+        self.assertIn('aria-label="Clear search and filters"', html)
+        self.assertIn('id="lead-filter-tag-save"', html)
+        self.assertIn('id="lead-filter-tags-list"', html)
+        self.assertIn('aria-label="Save current search as tag"', html)
+        self.assertNotIn('return to New', html)
+
+    def test_dashboard_defaults_to_ready_tab(self):
+        groups = ensure_pipeline_system_groups()
+        Lead.objects.create(
+            name="Only In New Clinic",
+            address="1 New St",
+            group=groups["uncategorized"],
+        )
+        Lead.objects.create(
+            name="Only In Ready Clinic",
+            address="2 Ready St",
+            group=groups["ready"],
+        )
+        client = staff_client()
+        html = client.get(reverse("dashboard")).content.decode()
+        self.assertIn("Only In Ready Clinic", html)
+        self.assertNotIn("Only In New Clinic", html)
+        new_html = client.get(
+            reverse("dashboard"), {"group_id": "uncategorized"}
+        ).content.decode()
+        self.assertIn("Only In New Clinic", new_html)
+        self.assertNotIn("Only In Ready Clinic", new_html)
+
+    def test_create_lead_group_api_is_gone(self):
+        client = staff_client()
+        url = reverse("create_lead_group")
+        response = client.post(
+            url,
+            data=json.dumps({"name": "Johor"}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 410)
+        self.assertIn("tags", response.json()["detail"].lower())
+
+    def test_custom_group_converts_to_tag_and_moves_leads_to_new(self):
+        import importlib.util
+        from pathlib import Path
+
+        from django.apps import apps
+
+        path = Path(__file__).resolve().parent / "migrations" / "0051_convert_custom_groups_to_tags.py"
+        spec = importlib.util.spec_from_file_location("convert_custom_groups_to_tags", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        uncategorized = get_or_create_uncategorized_group()
+        folder = LeadGroup.objects.create(name="Johor", sort_order=20)
+        lead = Lead.objects.create(
+            name="JB Clinic",
+            address="1 Jalan Test",
+            group=folder,
+        )
+        mod.convert_custom_groups_to_tags(apps, None)
+        lead.refresh_from_db()
+        self.assertEqual(lead.group_id, uncategorized.pk)
+        self.assertTrue(lead.tags.filter(label="Johor").exists())
+        self.assertFalse(LeadGroup.objects.filter(name="Johor").exists())
+
+    def test_unknown_group_id_falls_back_to_new(self):
+        from django.test import RequestFactory
+
+        from leads.views import _leads_qs_for_tab
+
+        uncategorized = get_or_create_uncategorized_group()
+        lead = Lead.objects.create(
+            name="Visible In New",
+            address="9 Fall St",
+            group=uncategorized,
+        )
+        user = get_user_model().objects.create_superuser(
+            "fallbackadmin", "fallback@t.test", "pass"
+        )
+        request = RequestFactory().get("/")
+        request.user = user
+        qs = _leads_qs_for_tab(request, "999999", None)
+        self.assertEqual(list(qs.values_list("name", flat=True)), ["Visible In New"])
+        self.assertEqual(lead.pk, qs.get().pk)
+
+    def test_new_tab_includes_pending_uncategorized(self):
+        from django.test import RequestFactory
+
+        from leads.views import _leads_qs_for_tab, apply_queued_outreach_filter
+
+        groups = ensure_pipeline_system_groups()
+        visible = Lead.objects.create(
+            name="Idle In New",
+            address="1 New St",
+            group=groups["uncategorized"],
+        )
+        queued = Lead.objects.create(
+            name="Queued Pending",
+            address="2 New St",
+            group=groups["uncategorized"],
+            whatsapp_status=Lead.WhatsappStatus.PENDING,
+        )
+        ready = Lead.objects.create(
+            name="Picked Ready",
+            address="3 Ready St",
+            group=groups["ready"],
+        )
+        ready_queued = Lead.objects.create(
+            name="Ready Pending",
+            address="5 Ready St",
+            group=groups["ready"],
+            whatsapp_status=Lead.WhatsappStatus.PENDING,
+        )
+        trashed = Lead.objects.create(
+            name="Hidden In Trash",
+            address="4 Trash St",
+            group=groups["trash"],
+            whatsapp_status=Lead.WhatsappStatus.PENDING,
+        )
+        user = get_user_model().objects.create_superuser(
+            "newtabadmin", "newtab@t.test", "pass"
+        )
+        request = RequestFactory().get("/")
+        request.user = user
+        qs = _leads_qs_for_tab(request, "uncategorized", None)
+        names = set(qs.values_list("name", flat=True))
+        self.assertEqual(names, {"Idle In New", "Queued Pending"})
+        self.assertNotIn(trashed.pk, qs.values_list("pk", flat=True))
+        self.assertNotIn(ready.pk, qs.values_list("pk", flat=True))
+        self.assertIn(visible.pk, qs.values_list("pk", flat=True))
+        self.assertIn(queued.pk, qs.values_list("pk", flat=True))
+
+        ready_qs = _leads_qs_for_tab(request, str(groups["ready"].pk), None)
+        self.assertEqual(
+            set(ready_qs.values_list("name", flat=True)),
+            {"Picked Ready", "Ready Pending"},
+        )
+
+        queued_new = _leads_qs_for_tab(
+            request, "uncategorized", None, queued_only=True
+        )
+        self.assertEqual(set(queued_new.values_list("name", flat=True)), {"Queued Pending"})
+        queued_ready = _leads_qs_for_tab(
+            request, str(groups["ready"].pk), None, queued_only=True
+        )
+        self.assertEqual(set(queued_ready.values_list("name", flat=True)), {"Ready Pending"})
+
+        # Same condition the Queue tab used: exclude trash, pending/processing only.
+        base = _leads_qs_for_tab(request, "uncategorized", None, queued_only=False)
+        self.assertEqual(
+            set(apply_queued_outreach_filter(base).values_list("name", flat=True)),
+            {"Queued Pending"},
+        )
+        self.assertFalse(
+            apply_queued_outreach_filter(
+                _leads_qs_for_tab(request, str(groups["trash"].pk), None, queued_only=False)
+            ).exists()
+        )
+        self.assertNotIn(ready_queued.pk, queued_new.values_list("pk", flat=True))
+
+        queued_req = RequestFactory().get("/?queued=1")
+        queued_req.user = user
+        self.assertEqual(
+            set(
+                _leads_qs_for_tab(queued_req, "uncategorized", None).values_list(
+                    "name", flat=True
+                )
+            ),
+            {"Queued Pending"},
+        )
 
     def test_new_lead_defaults_to_idle_not_pending(self):
         lead = Lead.objects.create(
@@ -85,6 +325,39 @@ class PipelineGroupTests(TestCase):
         self.assertEqual(lead.whatsapp_status, Lead.WhatsappStatus.PENDING)
         self.assertEqual(lead.display_order, 1)
 
+    def test_move_to_ready_picks_from_new(self):
+        groups = ensure_pipeline_system_groups()
+        lead = Lead.objects.create(
+            name="Pick Me",
+            address="5 Ready Rd",
+            group=groups["uncategorized"],
+        )
+        updated = move_leads_to_ready([lead.pk])
+        lead.refresh_from_db()
+        self.assertEqual(updated, 1)
+        self.assertEqual(lead.group_id, groups["ready"].pk)
+        self.assertEqual(lead.whatsapp_status, Lead.WhatsappStatus.IDLE)
+
+    def test_bulk_move_ready_api_picks_from_new(self):
+        groups = ensure_pipeline_system_groups()
+        lead = Lead.objects.create(
+            name="Bulk Pick",
+            address="6 Ready Rd",
+            group=groups["uncategorized"],
+        )
+        client = staff_client()
+        response = client.post(
+            reverse("leads_bulk_move_ready"),
+            data=json.dumps({"ids": [lead.pk]}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["updated"], 1)
+        lead.refresh_from_db()
+        self.assertEqual(lead.group_id, groups["ready"].pk)
+
     def test_dequeue_reverts_pending_lead_to_idle(self):
         groups = ensure_pipeline_system_groups()
         lead = Lead.objects.create(
@@ -106,6 +379,30 @@ class PipelineGroupTests(TestCase):
         lead.refresh_from_db()
         self.assertEqual(lead.whatsapp_status, Lead.WhatsappStatus.IDLE)
         self.assertIn("lead-join-queue-btn", response.content.decode())
+        self.assertIn("Assign to a WhatsApp batch", response.content.decode())
+        self.assertNotIn(f"/leads/ajax/lead/{lead.pk}/enqueue/", response.content.decode())
+
+    def test_ready_join_queue_button_targets_choose_batch_modal(self):
+        groups = ensure_pipeline_system_groups()
+        lead = Lead.objects.create(
+            name="Ready Batch Clinic",
+            address="8 Batch Rd",
+            phone_number="+60118889900",
+            phone_numbers=["+60118889900"],
+            group=groups["ready"],
+            whatsapp_status=Lead.WhatsappStatus.IDLE,
+        )
+        client = staff_client()
+        response = client.get(
+            reverse("get_leads_table"), {"group_id": str(groups["ready"].pk)}
+        )
+        self.assertEqual(response.status_code, 200)
+        html = response.json()["grid_html"]
+        self.assertIn("lead-join-queue-btn", html)
+        self.assertIn(f'data-lead-id="{lead.pk}"', html)
+        self.assertIn("Assign to a WhatsApp batch", html)
+        self.assertNotIn(f"/leads/ajax/lead/{lead.pk}/enqueue/", html)
+        self.assertIn('id="choose-batch-dialog"', client.get(reverse("dashboard")).content.decode())
 
     def test_leaving_queue_folder_returns_lead_to_idle(self):
         groups = ensure_pipeline_system_groups()
@@ -148,6 +445,31 @@ class LeadDisplayPipelineTests(TestCase):
         )
         self.assertTrue(lead_whatsapp_dispatched(lead))
         self.assertFalse(lead_whatsapp_active_chat(lead))
+
+    def test_active_batch_ignores_pending_status_without_assignment(self):
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        from leads.models import WhatsAppBatchSchedule
+
+        pending_only = Lead.objects.create(
+            name="Pending No Batch",
+            address="2 Road",
+            whatsapp_status=Lead.WhatsappStatus.PENDING,
+        )
+        self.assertFalse(lead_in_active_whatsapp_batch(pending_only))
+
+        batched = Lead.objects.create(
+            name="Idle In Batch",
+            address="3 Road",
+            whatsapp_status=Lead.WhatsappStatus.IDLE,
+        )
+        batch = WhatsAppBatchSchedule.objects.create(
+            scheduled_at=timezone.now() + timedelta(hours=1),
+        )
+        batched.whatsapp_batches.add(batch)
+        self.assertTrue(lead_in_active_whatsapp_batch(batched))
 
     def test_dispatched_persists_when_re_enqueued(self):
         from django.utils import timezone
@@ -1421,6 +1743,35 @@ class WhatsAppBatchScheduleTests(TestCase):
         self.assertEqual(lead.whatsapp_status, Lead.WhatsappStatus.IDLE)
         self.assertFalse(lead.whatsapp_batches.filter(pk=batch.pk).exists())
 
+    def test_dequeue_unassigns_idle_lead_from_pending_batch(self):
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        from leads.models import WhatsAppBatchSchedule
+
+        batch = WhatsAppBatchSchedule.objects.create(
+            scheduled_at=timezone.now() + timedelta(hours=2),
+        )
+        lead = Lead.objects.create(
+            name="Idle Batched",
+            address="1 Batch St",
+            group=get_or_create_uncategorized_group(),
+            phone_number="+60123456780",
+            whatsapp_status=Lead.WhatsappStatus.IDLE,
+        )
+        lead.whatsapp_batches.add(batch)
+
+        client = staff_client()
+        response = client.post(reverse("dequeue_lead", kwargs={"pk": lead.pk}))
+        self.assertEqual(response.status_code, 200)
+
+        lead.refresh_from_db()
+        self.assertEqual(lead.whatsapp_status, Lead.WhatsappStatus.IDLE)
+        self.assertFalse(lead.whatsapp_batches.filter(pk=batch.pk).exists())
+        self.assertIn("lead-join-queue-btn", response.content.decode())
+        self.assertNotIn("lead-dequeue-btn", response.content.decode())
+
     def test_dequeue_keeps_completed_batch_history(self):
         from datetime import timedelta
 
@@ -1513,6 +1864,40 @@ class WhatsAppBatchScheduleTests(TestCase):
         # The already-queued lead stays out of the target batch.
         self.assertFalse(already.whatsapp_batches.filter(pk=target.pk).exists())
         self.assertTrue(fresh.whatsapp_batches.filter(pk=target.pk).exists())
+
+    def test_bulk_assign_batch_enqueues_idle_ready_leads(self):
+        import json as _json
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        from leads.models import WhatsAppBatchSchedule
+
+        groups = ensure_pipeline_system_groups()
+        batch = WhatsAppBatchSchedule.objects.create(
+            scheduled_at=timezone.now() + timedelta(hours=3),
+        )
+        ready = Lead.objects.create(
+            name="ReadyIdle",
+            address="1 Ready St",
+            group=groups["ready"],
+            phone_number="+60129876543",
+            whatsapp_status=Lead.WhatsappStatus.IDLE,
+        )
+        client = staff_client()
+        response = client.post(
+            reverse("leads_bulk_assign_batch"),
+            data=_json.dumps({"ids": [ready.pk], "batch_id": batch.pk}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["updated"], 1)
+        ready.refresh_from_db()
+        self.assertEqual(ready.whatsapp_status, Lead.WhatsappStatus.PENDING)
+        self.assertTrue(ready.whatsapp_batches.filter(pk=batch.pk).exists())
+        self.assertEqual(ready.group_id, groups["ready"].pk)
 
 
 class WhatsAppMetaTemplateSyncTests(TestCase):
@@ -2541,6 +2926,102 @@ class BackupExportTests(TestCase):
         self.assertIn(f"clinic_crm_backup_1_leads_", response["Content-Disposition"])
 
 
+class ExcelLeadsImportTests(TestCase):
+    def setUp(self):
+        self.client = Client()
+        self.user = get_user_model().objects.create_superuser(
+            "xlsxadmin", "xlsx@t.test", "pass"
+        )
+        self.client.force_login(self.user)
+        self.group = get_or_create_uncategorized_group()
+        self.tag, _ = Tag.objects.get_or_create(
+            slug="dental", defaults={"label": "Dental", "sort_order": 1}
+        )
+
+    def _xlsx_upload(self, content, name="business_leads.xlsx"):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        return SimpleUploadedFile(
+            name,
+            content,
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+    def test_export_import_round_trip(self):
+        lead = Lead.objects.create(
+            name="Excel Clinic",
+            address="10 Import Rd",
+            phone_number="+60121111000",
+            phone_numbers=["+60121111000", "+60121111001"],
+            website="https://excel.example/",
+            shop_keyword="clinic",
+            search_city="Petaling Jaya",
+            search_country="Malaysia",
+            search_query="weight loss clinic",
+            source_url="https://maps.example/place",
+            is_very_important=True,
+            is_processed=True,
+            group=self.group,
+        )
+        lead.tags.set([self.tag])
+        export = self.client.get(reverse("clinics_export_xlsx"))
+        self.assertEqual(export.status_code, 200)
+        payload = export.content
+        lead.delete()
+
+        response = self.client.post(
+            reverse("import_leads_xlsx"),
+            {"xlsx": self._xlsx_upload(payload), "group_id": "uncategorized"},
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        data = response.json()
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["leads_created"], 1)
+        imported = Lead.objects.get(name="Excel Clinic")
+        self.assertEqual(imported.address, "10 Import Rd")
+        self.assertEqual(imported.phone_number, "+60121111000")
+        self.assertEqual(imported.phone_numbers, ["+60121111000", "+60121111001"])
+        self.assertEqual(imported.shop_keyword, "clinic")
+        self.assertEqual(imported.search_city, "Petaling Jaya")
+        self.assertEqual(imported.search_query, "weight loss clinic")
+        self.assertTrue(imported.is_very_important)
+        self.assertCountEqual(list(imported.tags.values_list("slug", flat=True)), ["dental"])
+        self.assertEqual(imported.group_id, self.group.pk)
+
+    def test_import_skips_existing_name_and_address(self):
+        Lead.objects.create(
+            name="Excel Clinic",
+            address="10 Import Rd",
+            group=self.group,
+        )
+        export = self.client.get(reverse("clinics_export_xlsx"))
+        response = self.client.post(
+            reverse("import_leads_xlsx"),
+            {"xlsx": self._xlsx_upload(export.content), "group_id": "uncategorized"},
+        )
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["leads_created"], 0)
+        self.assertEqual(data["leads_skipped"], 1)
+        self.assertEqual(Lead.objects.filter(name="Excel Clinic").count(), 1)
+
+    def test_rejects_full_backup_workbook(self):
+        from io import BytesIO
+
+        from leads.backup import build_backup_workbook
+
+        Lead.objects.create(name="Keep Me", address="1 Road", group=self.group)
+        wb = build_backup_workbook()
+        buf = BytesIO()
+        wb.save(buf)
+        response = self.client.post(
+            reverse("import_leads_xlsx"),
+            {"xlsx": self._xlsx_upload(buf.getvalue(), name="clinic_crm_backup.xlsx")},
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Restore", response.json()["detail"])
+
+
 class GlobalLeadSearchTests(TestCase):
     def setUp(self):
         from leads.models import LeadGroup
@@ -2591,7 +3072,8 @@ class GlobalLeadSearchTests(TestCase):
         self.assertEqual(payload["global_search_count"], 1)
         self.assertIsNone(payload["funnel_metrics"])
         self.assertIn("lead-folder-badge", payload["tbody_html"])
-        self.assertIn("Uncategorized", payload["tbody_html"])
+        self.assertIn("New", payload["tbody_html"])
+        self.assertNotIn("Uncategorized", payload["tbody_html"])
         self.assertIn("data-folder-tab-id=\"uncategorized\"", payload["tbody_html"])
 
     def test_global_search_custom_group_shows_folder_actions(self):
@@ -2666,6 +3148,7 @@ class ApiStatusSidebarTests(TestCase):
         self.assertIn("YCloud WhatsApp", html)
         self.assertIn("Not configured", html)
         self.assertIn("Serper Maps", html)
+        self.assertIn("Outscraper", html)
         self.assertIn("Ready", html)
         self.assertIn("hunts", html)
         self.assertIn("sent", html)

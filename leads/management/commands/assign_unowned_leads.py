@@ -1,5 +1,6 @@
 from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand, CommandError
+from django.utils import timezone
 
 from leads.models import Lead
 
@@ -28,7 +29,9 @@ class Command(BaseCommand):
         except User.DoesNotExist as exc:
             raise CommandError(f"No user with username {username!r}.") from exc
 
-        updated = Lead.objects.filter(assigned_to__isnull=True).update(assigned_to=user)
+        updated = Lead.objects.filter(assigned_to__isnull=True).update(
+            assigned_to=user, assigned_at=timezone.now()
+        )
         self.stdout.write(
             self.style.SUCCESS(f"Assigned {updated} lead(s) to {username!r}.")
         )

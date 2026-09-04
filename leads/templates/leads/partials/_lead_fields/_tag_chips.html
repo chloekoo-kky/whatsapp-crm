@@ -1,10 +1,9 @@
 {% load clinic_display %}
 {% with extra_tags=c|extra_lead_tags %}
-{% if extra_tags %}
-<div class="lead-tag-chips mt-1 flex flex-wrap gap-1">
+<div class="lead-tag-chips">
+  {{ c.primary_tag_slug|category_badge }}
   {% for tag in extra_tags %}
-  <span class="lead-tag-chip inline-flex max-w-full rounded-md bg-indigo-50 px-1.5 py-0.5 text-[10px] font-semibold leading-tight text-indigo-800 ring-1 ring-indigo-100/90" data-tag-slug="{{ tag.slug }}" title="{{ tag.label }}">{{ tag.label }}</span>
+  <span class="lead-tag-chip lead-tag-chip--{{ tag.slug|tag_chip_modifier }}" data-tag-slug="{{ tag.slug }}" title="{{ tag.label }}">{{ tag.label }}</span>
   {% endfor %}
 </div>
-{% endif %}
 {% endwith %}

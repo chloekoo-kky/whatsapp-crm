@@ -7,6 +7,7 @@ from leads.display import (
     clinic_card_title,
     clinic_location_suffix,
     lead_google_maps_url,
+    lead_in_active_whatsapp_batch,
     lead_whatsapp_active_chat,
     lead_whatsapp_dispatched,
     whatsapp_me_path,
@@ -45,6 +46,13 @@ def extra_lead_tags(lead):
 
 
 @register.filter
+def tag_chip_modifier(slug):
+    from leads.display import lead_tag_chip_modifier
+
+    return lead_tag_chip_modifier(slug or "")
+
+
+@register.filter
 def category_badge(cat):
     return mark_safe(category_badge_html(cat or ""))
 
@@ -62,6 +70,11 @@ def whatsapp_active_chat(clinic):
 @register.filter
 def whatsapp_dispatched(clinic):
     return lead_whatsapp_dispatched(clinic)
+
+
+@register.filter
+def whatsapp_in_active_batch(clinic):
+    return lead_in_active_whatsapp_batch(clinic)
 
 
 @register.filter

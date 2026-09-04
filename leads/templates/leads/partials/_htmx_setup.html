@@ -219,8 +219,7 @@
     var card = document.querySelector('.clinic-card[data-clinic-id="' + id + '"]');
     if (card) {
       card.setAttribute("data-whatsapp-dispatched", "1");
-      card.classList.add("clinic-card--dispatched", "border-2", "border-emerald-400", "hover:border-emerald-500");
-      card.classList.remove("border", "border-slate-200/90", "hover:border-slate-300");
+      card.classList.add("clinic-card--dispatched");
     }
   };
 
