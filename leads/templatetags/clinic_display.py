@@ -10,6 +10,8 @@ from leads.display import (
     lead_in_active_whatsapp_batch,
     lead_whatsapp_active_chat,
     lead_whatsapp_dispatched,
+    whatsapp_business_open_url,
+    whatsapp_e164_digits,
     whatsapp_me_path,
     whatsapp_me_url,
 )
@@ -26,6 +28,16 @@ def card_title(clinic):
 @register.filter
 def wa_me_url(phone):
     return whatsapp_me_url(phone or "")
+
+
+@register.filter
+def wa_business_url(phone):
+    return whatsapp_business_open_url(phone or "")
+
+
+@register.filter
+def wa_e164_digits(phone):
+    return whatsapp_e164_digits(phone or "")
 
 
 @register.filter

@@ -119,6 +119,17 @@ class LeadFieldPartialTests(TestCase):
         self.assertIn("lead-vip-star-btn", card)
         self.assertNotIn("lead-vip-star-btn", row)
 
+    def test_whatsapp_icon_opens_business_app_scheme(self):
+        card = self._card()
+        row = self._row()
+        for html in (card, row):
+            with self.subTest(view="card" if html is card else "row"):
+                self.assertIn("whatsapp://send?phone=60123456789", html)
+                self.assertIn('data-wa-digits="60123456789"', html)
+                self.assertIn("Open in WhatsApp Business", html)
+                self.assertNotIn("https://wa.me/60123456789", html)
+                self.assertNotIn('title="Open in WhatsApp"', html)
+
     def test_batch_badge_sits_below_lead_details(self):
         card = self._card()
         row = self._row()

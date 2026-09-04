@@ -25,4 +25,46 @@
         if (d.charAt(0) === '0' && d.length >= 9) return d.slice(1);
         return d;
       };
+      function whatsappDigitsFromOpenLink(a) {
+        var digits = phoneDigitsOnly(a.getAttribute('data-wa-digits') || '');
+        if (digits) return digits;
+        var href = a.getAttribute('href') || '';
+        var m = href.match(/phone=(\d+)/) || href.match(/wa\.me\/(\d+)/);
+        return m ? m[1] : '';
+      }
+      function whatsappBusinessOpenHref(digits) {
+        var ua = navigator.userAgent || '';
+        if (/Android/i.test(ua)) {
+          return 'intent://send?phone=' + digits
+            + '#Intent;scheme=whatsapp;package=com.whatsapp.w4b;S.browser_fallback_url='
+            + encodeURIComponent('https://wa.me/' + digits)
+            + ';end';
+        }
+        if (/iPhone|iPad|iPod/i.test(ua)) {
+          return 'whatsapp-business://send?phone=' + digits;
+        }
+        return 'whatsapp://send?phone=' + digits;
+      }
+      w.whatsappBusinessOpenHref = whatsappBusinessOpenHref;
+      document.addEventListener('click', function (e) {
+        var a = e.target.closest && e.target.closest('a.wa-me-open-btn');
+        if (!a) return;
+        var digits = whatsappDigitsFromOpenLink(a);
+        if (!digits) return;
+        e.preventDefault();
+        e.stopPropagation();
+        var ua = navigator.userAgent || '';
+        if (/iPhone|iPad|iPod/i.test(ua)) {
+          var started = Date.now();
+          window.location.href = 'whatsapp-business://send?phone=' + digits;
+          window.setTimeout(function () {
+            if (document.hidden || document.webkitHidden) return;
+            if (Date.now() - started < 1600) {
+              window.location.href = 'whatsapp://send?phone=' + digits;
+            }
+          }, 700);
+          return;
+        }
+        window.location.href = whatsappBusinessOpenHref(digits);
+      }, true);
     })(window);

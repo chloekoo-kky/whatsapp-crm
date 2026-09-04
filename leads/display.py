@@ -148,7 +148,7 @@ AUTOMATOR_LOG_MARKER = "Touchpoint Automator"
 def lead_has_dispatchable_phone(lead: "Lead") -> bool:
     """True when at least one stored number normalizes to a wa.me dispatch target."""
     for raw in lead_phone_list(lead):
-        if whatsapp_me_url(raw):
+        if whatsapp_e164_digits(raw):
             return True
     return False
 
@@ -222,8 +222,8 @@ def lead_whatsapp_active_chat(lead: "Lead") -> bool:
     return latest is not None and not latest.is_outbound
 
 
-def whatsapp_me_url(phone: str) -> str:
-    """Build https://wa.me/... for Malaysian-style numbers when possible."""
+def whatsapp_e164_digits(phone: str) -> str:
+    """International digits for WhatsApp links (Malaysian-style numbers when possible)."""
     digits = "".join(ch for ch in (phone or "") if ch.isdigit())
     if not digits:
         return ""
@@ -231,7 +231,23 @@ def whatsapp_me_url(phone: str) -> str:
         digits = "60" + digits[1:]
     elif not digits.startswith("60") and 8 <= len(digits) <= 11:
         digits = "60" + digits
+    return digits
+
+
+def whatsapp_me_url(phone: str) -> str:
+    """Build https://wa.me/... for Malaysian-style numbers when possible."""
+    digits = whatsapp_e164_digits(phone)
+    if not digits:
+        return ""
     return f"https://wa.me/{digits}"
+
+
+def whatsapp_business_open_url(phone: str) -> str:
+    """Native-app chat link. Android JS retargets this to WhatsApp Business (``com.whatsapp.w4b``)."""
+    digits = whatsapp_e164_digits(phone)
+    if not digits:
+        return ""
+    return f"whatsapp://send?phone={digits}"
 
 
 def whatsapp_me_path(phone: str) -> str:

@@ -16,6 +16,9 @@ from leads.display import (
     lead_whatsapp_active_chat,
     lead_whatsapp_dispatched,
     normalize_manual_phone,
+    whatsapp_business_open_url,
+    whatsapp_e164_digits,
+    whatsapp_me_url,
 )
 from leads.views import _annotate_lead_dashboard_qs, _leads_qs_for_tab
 from leads.whatsapp_service import (
@@ -524,6 +527,16 @@ class LeadDisplayPipelineTests(TestCase):
         record_outbound_chat_message(lead, body="Hello from CRM")
         annotated = _annotate_lead_dashboard_qs(Lead.objects.all()).get(pk=lead.pk)
         self.assertFalse(lead_whatsapp_active_chat(annotated))
+
+    def test_whatsapp_open_urls_prefer_business_app_scheme(self):
+        self.assertEqual(whatsapp_e164_digits("012-345 6789"), "60123456789")
+        self.assertEqual(whatsapp_e164_digits("+60123456789"), "60123456789")
+        self.assertEqual(whatsapp_me_url("0123456789"), "https://wa.me/60123456789")
+        self.assertEqual(
+            whatsapp_business_open_url("0123456789"),
+            "whatsapp://send?phone=60123456789",
+        )
+        self.assertEqual(whatsapp_business_open_url(""), "")
 
     def test_human_log_without_client_reply_is_not_active_chat(self):
         lead = Lead.objects.create(
