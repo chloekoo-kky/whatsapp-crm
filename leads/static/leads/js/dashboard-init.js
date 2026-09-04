@@ -753,6 +753,11 @@
             toggleLeadFilterButton(vipBtn);
             return;
           }
+          var chainBtn = e.target.closest('#filter-chain-only');
+          if (chainBtn) {
+            toggleLeadFilterButton(chainBtn);
+            return;
+          }
           var queuedBtn = e.target.closest('#filter-queued-only');
           if (queuedBtn) {
             toggleLeadFilterButton(queuedBtn);
@@ -1205,7 +1210,7 @@
                 });
                 syncRowDataSearch(row, undefined, undefined, data.is_very_important);
               });
-              applyTableFilter({ resetPage: false });
+              fadeLeadsOutOfCurrentFilters([idV]);
             })
             .catch(function () {
               starNodes.forEach(function (b) { b.disabled = false; });
@@ -1661,7 +1666,14 @@
             return;
           }
           closeBulkManualDialog();
-          window.location.reload();
+          var appliedTags = Array.isArray(data.tags) && data.tags.length ? data.tags : tags;
+          ids.forEach(function (leadId) {
+            applyLeadTagSlugsToDom(leadId, appliedTags);
+          });
+          if (typeof window.invalidateLeadTabFragmentCache === 'function') {
+            window.invalidateLeadTabFragmentCache();
+          }
+          fadeLeadsOutOfCurrentFilters(ids);
         } catch (err) {
           if (bulkManualErr) {
             bulkManualErr.textContent = 'Network error: ' + err;

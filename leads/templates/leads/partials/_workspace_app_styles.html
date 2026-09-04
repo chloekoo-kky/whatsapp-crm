@@ -735,6 +735,39 @@
     background-color: rgb(241 245 249);
     color: rgb(51 65 85);
   }
+  .clinic-name-cell-inner {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.35rem;
+  }
+  .lead-chain-tag {
+    display: inline-flex;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    min-width: 1.15rem;
+    height: 1.15rem;
+    border-radius: 9999px;
+    padding: 0 0.28rem;
+    font-size: 0.625rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    line-height: 1;
+    background-color: rgb(254 243 199);
+    color: rgb(146 64 14);
+  }
+  .lead-chain-filter-mark {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 1.05rem;
+    height: 1.05rem;
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    line-height: 1;
+  }
   #content-toolbar .lead-filter-tag {
     border-radius: 9999px;
   }
@@ -844,6 +877,36 @@
   .bulk-action-dock:not([hidden]).bulk-action-dock--visible {
     display: block;
   }
+  #lead-status-toast-stack {
+    position: fixed;
+    top: 4.75rem;
+    right: 1rem;
+    z-index: 220;
+    display: flex;
+    width: min(calc(100% - 1.5rem), 22rem);
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 0.5rem;
+    pointer-events: none;
+  }
+  @media (min-width: 1024px) {
+    #lead-status-toast-stack {
+      top: 1.25rem;
+      right: 1.5rem;
+    }
+  }
+  .lead-status-toast {
+    pointer-events: none;
+    max-width: min(22rem, calc(100vw - 1.5rem));
+    word-break: break-word;
+    opacity: 0;
+    transform: translateX(0.75rem);
+  }
+  .lead-status-toast.lead-status-toast--in {
+    opacity: 1;
+    transform: translateX(0);
+    transition: opacity 0.28s ease, transform 0.28s ease;
+  }
   .wa-toast {
     opacity: 0;
     transform: translateX(1rem);
@@ -926,10 +989,16 @@
     from { opacity: 0; transform: scale(0.88); }
     to { opacity: 1; transform: scale(1); }
   }
-  .lead-card-container.htmx-swapping {
+  .lead-card-container.htmx-swapping,
+  .lead-card-container.lead-card--filter-exit {
     opacity: 0;
     transform: scale(0.95);
     transition: opacity 300ms ease, transform 300ms ease;
+    pointer-events: none;
+  }
+  tr.clinic-row.lead-card--filter-exit {
+    opacity: 0;
+    transition: opacity 300ms ease;
     pointer-events: none;
   }
   @keyframes chatSlideIn {

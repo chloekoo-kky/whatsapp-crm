@@ -157,18 +157,30 @@
         }
       }
       window.setRowWhatsappDraft = setRowWhatsappDraft;
-      function showClinicSaveSuccess(name) {
+      function showLeadStatusToast(message, opts) {
+        opts = opts || {};
         const el = document.getElementById('clinic-save-status');
         if (!el) return;
-        const label = (name != null && String(name).trim()) ? String(name).trim() : 'Clinic';
-        el.textContent = 'Saved — ' + label + ' updated.';
+        const warnClasses = ['bg-amber-50', 'text-amber-900', 'ring-amber-200/90'];
+        const okClasses = ['bg-emerald-50', 'text-emerald-900', 'ring-emerald-200/90'];
+        el.classList.remove.apply(el.classList, warnClasses.concat(okClasses));
+        el.classList.add.apply(el.classList, opts.tone === 'warn' ? warnClasses : okClasses);
+        el.textContent = String(message || '');
         el.classList.remove('hidden');
+        el.classList.remove('lead-status-toast--in');
+        void el.offsetWidth;
+        el.classList.add('lead-status-toast--in');
         if (clinicSaveStatusTimer) clearTimeout(clinicSaveStatusTimer);
         clinicSaveStatusTimer = setTimeout(function () {
+          el.classList.remove('lead-status-toast--in');
           el.classList.add('hidden');
-          el.textContent = '';
           clinicSaveStatusTimer = null;
-        }, 4200);
+        }, opts.duration || 4200);
+      }
+      window.showLeadStatusToast = showLeadStatusToast;
+      function showClinicSaveSuccess(name) {
+        const label = (name != null && String(name).trim()) ? String(name).trim() : 'Clinic';
+        showLeadStatusToast('Saved — ' + label + ' updated.');
       }
       window.showClinicSaveSuccess = showClinicSaveSuccess;
       function flashClinicRowAfterSave(clinicId) {
@@ -316,10 +328,11 @@
         });
 
         rebindLeadCardHtmx(id);
-        flashClinicRowAfterSave(id);
-        applyTableFilter({ resetPage: false });
-        refreshSelectAllState();
-        refreshSelectionVisuals();
+        if (typeof window.invalidateLeadTabFragmentCache === 'function') {
+          window.invalidateLeadTabFragmentCache();
+        }
+        if (!clinicLeadWouldHideFromCurrentFilters(id)) flashClinicRowAfterSave(id);
+        fadeLeadsOutOfCurrentFilters([id]);
       }
       window.applyClinicEditToDom = applyClinicEditToDom;
       function readLeadsPerPage() {
@@ -516,6 +529,8 @@
         if (si && si.value.trim()) return true;
         var vip = document.getElementById('filter-very-important-only');
         if (vip && vip.getAttribute('aria-pressed') === 'true') return true;
+        var chain = document.getElementById('filter-chain-only');
+        if (chain && chain.getAttribute('aria-pressed') === 'true') return true;
         var sent = document.getElementById('filter-sent-message-only');
         if (sent && sent.getAttribute('aria-pressed') === 'true') return true;
         return getLeadTagFilterSlugs().length > 0;
@@ -786,11 +801,123 @@
         return true;
       }
       window.leadRowMatchesTagFilter = leadRowMatchesTagFilter;
+      function leadRowMatchesCurrentFilters(row, opts) {
+        if (!row) return true;
+        opts = opts || {};
+        const searchInput = document.getElementById('table-search');
+        const q = searchInput ? searchInput.value.trim().toLowerCase() : '';
+        const vipBtn = document.getElementById('filter-very-important-only');
+        const vipOnly = vipBtn && vipBtn.getAttribute('aria-pressed') === 'true';
+        const chainBtn = document.getElementById('filter-chain-only');
+        const chainOnly = chainBtn && chainBtn.getAttribute('aria-pressed') === 'true';
+        const sentBtn = document.getElementById('filter-sent-message-only');
+        const sentOnly = sentBtn && sentBtn.getAttribute('aria-pressed') === 'true';
+        const tagSlugs = getLeadTagFilterSlugs();
+        const hay = (row.getAttribute('data-search') || '').toLowerCase();
+        const isVip = row.getAttribute('data-very-important') === '1';
+        const isChain = row.getAttribute('data-is-chain') === '1';
+        const hasSent = row.getAttribute('data-whatsapp-dispatched') === '1';
+        if (!opts.skipKeyword && !globalSearchActive && q && !hay.includes(q)) return false;
+        if (vipOnly && !isVip) return false;
+        if (chainOnly && !isChain) return false;
+        if (sentOnly && !hasSent) return false;
+        if (tagSlugs.length && !leadRowMatchesTagFilter(row, tagSlugs)) return false;
+        return true;
+      }
+      window.leadRowMatchesCurrentFilters = leadRowMatchesCurrentFilters;
+      function clinicLeadWouldHideFromCurrentFilters(leadId) {
+        var row = document.querySelector('.clinic-row[data-clinic-id="' + leadId + '"]');
+        return !!(row && !leadRowMatchesCurrentFilters(row));
+      }
+      window.clinicLeadWouldHideFromCurrentFilters = clinicLeadWouldHideFromCurrentFilters;
+      function leadFilterExitNodes(leadId) {
+        var nodes = [];
+        var cell = document.getElementById('lead-grid-cell-' + leadId);
+        if (cell) nodes.push(cell);
+        document.querySelectorAll('tr.clinic-row[data-clinic-id="' + leadId + '"]').forEach(function (tr) {
+          nodes.push(tr);
+        });
+        return nodes;
+      }
+      function fadeLeadsOutOfCurrentFilters(leadIds) {
+        var seen = {};
+        var fadeIds = [];
+        (leadIds || []).forEach(function (raw) {
+          var id = String(raw == null ? '' : raw).trim();
+          if (!id || seen[id]) return;
+          seen[id] = true;
+          if (clinicLeadWouldHideFromCurrentFilters(id)) fadeIds.push(id);
+        });
+        if (!fadeIds.length) {
+          applyTableFilter({ resetPage: false });
+          refreshSelectAllState();
+          refreshSelectionVisuals();
+          return;
+        }
+        fadeIds.forEach(function (id) {
+          leadFilterExitNodes(id).forEach(function (el) {
+            el.classList.add('lead-card--filter-exit');
+          });
+        });
+        window.setTimeout(function () {
+          fadeIds.forEach(function (id) {
+            document.querySelectorAll('.clinic-row[data-clinic-id="' + id + '"]').forEach(function (row) {
+              row.classList.add('hidden');
+              var cb = row.querySelector('.clinic-select-cb');
+              if (cb) cb.checked = false;
+              var cell = row.closest('.lead-card-container');
+              if (cell) cell.classList.add('hidden');
+            });
+            leadFilterExitNodes(id).forEach(function (el) {
+              el.classList.add('hidden');
+              el.classList.remove('lead-card--filter-exit');
+            });
+          });
+          applyTableFilter({ resetPage: false });
+          refreshSelectAllState();
+          refreshSelectionVisuals();
+        }, 300);
+      }
+      window.fadeLeadsOutOfCurrentFilters = fadeLeadsOutOfCurrentFilters;
+      function applyLeadTagSlugsToDom(leadId, slugs) {
+        var cleaned = [];
+        var seen = {};
+        (slugs || []).forEach(function (item) {
+          var slug = String(item || '').trim();
+          if (!slug || seen[slug]) return;
+          seen[slug] = true;
+          cleaned.push(slug);
+        });
+        document.querySelectorAll('.clinic-row[data-clinic-id="' + leadId + '"]').forEach(function (row) {
+          syncRowDataSearch(row, undefined, undefined, undefined, cleaned);
+          var typeCell = row.querySelector('.clinic-type-cell');
+          if (!typeCell) return;
+          var wrap = document.createElement('div');
+          wrap.className = 'lead-tag-chips';
+          cleaned.forEach(function (slug) {
+            var span = document.createElement('span');
+            span.className = 'lead-tag-chip lead-tag-chip--' + slug;
+            span.setAttribute('data-tag-slug', slug);
+            var filterLabel = document.querySelector(
+              '#lead-tag-filter .lead-tag-filter-chip[data-tag-slug="' + slug + '"] .lead-tag-filter-label'
+            );
+            var label = filterLabel ? filterLabel.textContent.trim() : slug;
+            span.setAttribute('title', label);
+            span.textContent = label;
+            wrap.appendChild(span);
+          });
+          typeCell.innerHTML = '';
+          typeCell.appendChild(wrap);
+        });
+      }
+      window.applyLeadTagSlugsToDom = applyLeadTagSlugsToDom;
       function isLeadIconFilterActive() {
         var queued = document.getElementById('filter-queued-only');
         if (queued && queued.getAttribute('aria-pressed') === 'true') return true;
         var vip = document.getElementById('filter-very-important-only');
         if (vip && vip.getAttribute('aria-pressed') === 'true') return true;
+        var chain = document.getElementById('filter-chain-only');
+        if (chain && chain.getAttribute('aria-pressed') === 'true') return true;
         var sent = document.getElementById('filter-sent-message-only');
         if (sent && sent.getAttribute('aria-pressed') === 'true') return true;
         return false;
@@ -820,6 +947,8 @@
         if (queued) queued.setAttribute('aria-pressed', 'false');
         var vip = document.getElementById('filter-very-important-only');
         if (vip) vip.setAttribute('aria-pressed', 'false');
+        var chain = document.getElementById('filter-chain-only');
+        if (chain) chain.setAttribute('aria-pressed', 'false');
         var sent = document.getElementById('filter-sent-message-only');
         if (sent) sent.setAttribute('aria-pressed', 'false');
         if (typeof saveLeadTagFilterSlugs === 'function') saveLeadTagFilterSlugs([]);
@@ -938,24 +1067,12 @@
       function applyTableFilter(opts) {
         opts = opts || {};
         syncLeadTagFilterUi();
-        const searchInput = document.getElementById('table-search');
-        const q = searchInput ? searchInput.value.trim().toLowerCase() : '';
-        const vipBtn = document.getElementById('filter-very-important-only');
-        const vipOnly = vipBtn && vipBtn.getAttribute('aria-pressed') === 'true';
-        const sentBtn = document.getElementById('filter-sent-message-only');
-        const sentOnly = sentBtn && sentBtn.getAttribute('aria-pressed') === 'true';
-        const tagSlugs = getLeadTagFilterSlugs();
         document.querySelectorAll('.clinic-row').forEach(function (row) {
-          const hay = (row.getAttribute('data-search') || '').toLowerCase();
-          const isVip = row.getAttribute('data-very-important') === '1';
-          const hasSent = row.getAttribute('data-whatsapp-dispatched') === '1';
-          let hide = false;
-          if (!opts.skipKeyword && !globalSearchActive && q && !hay.includes(q)) hide = true;
-          if (vipOnly && !isVip) hide = true;
-          if (sentOnly && !hasSent) hide = true;
-          if (tagSlugs.length && !leadRowMatchesTagFilter(row, tagSlugs)) hide = true;
-          row.classList.toggle('hidden', hide);
+          if (row.classList.contains('lead-card--filter-exit')) return;
           var cell = row.closest('.lead-card-container');
+          if (cell && cell.classList.contains('lead-card--filter-exit')) return;
+          var hide = !leadRowMatchesCurrentFilters(row, opts);
+          row.classList.toggle('hidden', hide);
           if (cell) cell.classList.toggle('hidden', hide);
         });
         if (opts.resetPage) currentLeadPage = 1;
@@ -971,6 +1088,8 @@
         if (si && si.value.trim()) return false;
         var vip = document.getElementById('filter-very-important-only');
         if (vip && vip.getAttribute('aria-pressed') === 'true') return false;
+        var chain = document.getElementById('filter-chain-only');
+        if (chain && chain.getAttribute('aria-pressed') === 'true') return false;
         var sent = document.getElementById('filter-sent-message-only');
         if (sent && sent.getAttribute('aria-pressed') === 'true') return false;
         if (typeof window.isQueuedOutreachFilterActive === 'function' && window.isQueuedOutreachFilterActive()) return false;

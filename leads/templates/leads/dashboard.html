@@ -18,6 +18,10 @@
   {% include "leads/partials/_mobile_topbar.html" with mobile_page_title="Leads" %}
   {% include "leads/partials/_app_sidebar.html" %}
 
+  <div id="lead-status-toast-stack" class="pointer-events-none fixed right-4 top-[4.75rem] z-[220] flex w-[min(calc(100%-1.5rem),22rem)] flex-col items-end gap-2 sm:right-6 lg:top-5" aria-live="polite" aria-atomic="true">
+    <p id="clinic-save-status" class="lead-status-toast hidden rounded-xl bg-emerald-50 px-4 py-3 text-sm font-medium leading-snug text-emerald-900 shadow-lg shadow-slate-900/15 ring-1 ring-emerald-200/90" role="status"></p>
+  </div>
+
   <div id="workspace-root" class="flex min-h-0 min-w-0 flex-1 flex-col" data-view="dashboard">
     {% include "leads/partials/_workspace_dashboard_panel.html" %}
   </div>

@@ -107,6 +107,7 @@ class LeadFieldPartialTests(TestCase):
             "Sent ·",
             "~4 branches",
             "lead-tag-chip",
+            "lead-chain-tag",
             'data-tag-slug="gp"',
             'data-tags="',
         ]
@@ -118,6 +119,32 @@ class LeadFieldPartialTests(TestCase):
         self.assertNotIn('data-tag-slug="dental"', row)
         self.assertIn("lead-vip-star-btn", card)
         self.assertNotIn("lead-vip-star-btn", row)
+
+    def test_chain_tag_follows_business_name(self):
+        card = self._card()
+        name_block = card[card.find("clinic-name-cell-inner") : card.find("clinic-source-line")]
+        self.assertIn("Shared Fields Clinic", name_block)
+        self.assertIn("lead-chain-tag", name_block)
+        self.assertGreater(name_block.find("lead-chain-tag"), name_block.find("Shared Fields Clinic"))
+        self.assertIn(">C</span>", name_block)
+        self.assertLess(name_block.find("</a>"), name_block.find("lead-chain-tag"))
+
+        from leads.views import _name_cell_html
+
+        patched = _name_cell_html(self.lead)
+        self.assertIn("lead-chain-tag", patched)
+        self.assertIn(">C</span>", patched)
+
+        self.lead.is_chain = False
+        self.lead.save(update_fields=["is_chain"])
+        qs = _annotate_lead_dashboard_qs(Lead.objects.filter(pk=self.lead.pk))
+        clinics, brands = _dashboard_prepare_clinics(qs, request=self.request)
+        self.ctx["c"] = clinics[0]
+        self.ctx["multi_location_brands"] = brands
+        card = self._card()
+        name_block = card[card.find("clinic-name-cell-inner") : card.find("clinic-source-line")]
+        self.assertNotIn("lead-chain-tag", name_block)
+        self.assertNotIn("lead-chain-tag", _name_cell_html(self.lead))
 
     def test_whatsapp_icon_opens_business_app_scheme(self):
         card = self._card()
@@ -511,7 +538,31 @@ class DashboardTagFilterTests(TestCase):
         listing = Path(__file__).resolve().parent / "static" / "leads" / "js" / "lead-list.js"
         boot_src = boot.read_text(encoding="utf-8")
         list_src = listing.read_text(encoding="utf-8")
+        init = Path(__file__).resolve().parent / "static" / "leads" / "js" / "dashboard-init.js"
+        styles = (
+            Path(__file__).resolve().parent
+            / "templates"
+            / "leads"
+            / "partials"
+            / "_workspace_app_styles.html"
+        )
+        init_src = init.read_text(encoding="utf-8")
+        styles_src = styles.read_text(encoding="utf-8")
         self.assertIn("clinic_crm_lead_tag_filter", boot_src)
         self.assertIn("clinic_crm_lead_tag_filter", list_src)
         self.assertIn("leadRowMatchesTagFilter", list_src)
         self.assertIn("getLeadTagFilterSlugs", list_src)
+        self.assertIn("fadeLeadsOutOfCurrentFilters", list_src)
+        self.assertIn("lead-card--filter-exit", list_src)
+        self.assertIn("lead-card--filter-exit", styles_src)
+        self.assertIn("fadeLeadsOutOfCurrentFilters([id])", list_src)
+        self.assertIn("showLeadStatusToast", list_src)
+        self.assertIn("lead-status-toast--in", list_src)
+        self.assertIn("filter-chain-only", list_src)
+        self.assertIn("data-is-chain", list_src)
+        self.assertIn("filter-chain-only", init_src)
+        bulk_idx = init_src.find("dashboardJsConfig.bulkManualUrl")
+        self.assertGreater(bulk_idx, -1)
+        bulk_chunk = init_src[bulk_idx : bulk_idx + 1800]
+        self.assertIn("fadeLeadsOutOfCurrentFilters(ids)", bulk_chunk)
+        self.assertNotIn("window.location.reload()", bulk_chunk)

@@ -38,7 +38,6 @@ from leads.display import (
     AUTOMATOR_LOG_MARKER,
     clinic_card_title,
     clinic_location_suffix,
-    lead_google_maps_url,
     lead_has_dispatchable_phone,
     lead_phone_list,
     lead_whatsapp_active_chat,
@@ -3766,25 +3765,22 @@ def _category_badges_html(lead: Lead, request=None) -> str:
     )
 
 
-def _name_cell_html(lead: Lead) -> str:
-    """Inner HTML for `.clinic-name-cell-inner` (name → Google Maps + optional chain suffix)."""
-    suffix = clinic_location_suffix(lead)
-    suffix_html = ""
-    if lead.is_chain and suffix:
-        suffix_html = (
-            '<span class="text-xs text-gray-400">'
-            f"(@ {html.escape(suffix)})"
-            "</span>"
-        )
-    name_esc = html.escape(lead.name or "")
-    maps_esc = html.escape(lead_google_maps_url(lead), quote=True)
-    return (
-        f'<a href="{maps_esc}" class="clinic-name-link text-sm font-bold text-slate-900 '
-        "underline decoration-slate-300 decoration-1 underline-offset-2 transition "
-        'hover:text-indigo-600 hover:decoration-indigo-300" target="_blank" rel="noopener" '
-        'title="Open in Google Maps">'
-        f"{name_esc}{suffix_html}</a>"
-    )
+def _name_cell_html(lead: Lead, request=None) -> str:
+    """Inner HTML for `.clinic-name-cell-inner` (name → Google Maps + chain marker)."""
+    if not hasattr(lead, "dashboard_location_suffix"):
+        lead.dashboard_location_suffix = clinic_location_suffix(lead)
+    return render_to_string(
+        "leads/partials/_lead_fields/_name_link.html",
+        {
+            "c": lead,
+            "extra_class": (
+                "text-sm font-bold text-slate-900 underline decoration-slate-300 "
+                "decoration-1 underline-offset-2 transition hover:text-indigo-600 "
+                "hover:decoration-indigo-300"
+            ),
+        },
+        request=request,
+    ).strip()
 
 
 def _wa_icon_link_html(phone_number: str, *, for_grid: bool = False) -> str:

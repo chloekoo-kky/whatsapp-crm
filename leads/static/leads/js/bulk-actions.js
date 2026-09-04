@@ -81,13 +81,10 @@
           if (!res.ok || !data.ok) {
             throw new Error((data.detail && String(data.detail)) || ('HTTP ' + res.status));
           }
-          var statusEl = document.getElementById('clinic-save-status');
-          if (statusEl) {
+          if (typeof window.showLeadStatusToast === 'function') {
             var msg = 'Removed ' + (data.updated || 0) + ' lead(s) from the queue.';
             if (data.skipped) msg += ' ' + data.skipped + ' skipped (not pending).';
-            statusEl.textContent = msg;
-            statusEl.classList.remove('hidden');
-            window.setTimeout(function () { statusEl.classList.add('hidden'); }, 3200);
+            window.showLeadStatusToast(msg, { duration: 3200 });
           }
           if (selectAll) selectAll.checked = false;
           await switchLeadGroupTab(currentLeadGroupTabId, { force: true, skipHistory: true });
@@ -118,11 +115,11 @@
           if (!res.ok || !data.ok) {
             throw new Error((data.detail && String(data.detail)) || ('HTTP ' + res.status));
           }
-          var statusEl = document.getElementById('clinic-save-status');
-          if (statusEl) {
-            statusEl.textContent = 'Queued ' + (data.updated || 0) + ' lead(s) for WhatsApp outreach.';
-            statusEl.classList.remove('hidden');
-            window.setTimeout(function () { statusEl.classList.add('hidden'); }, 3200);
+          if (typeof window.showLeadStatusToast === 'function') {
+            window.showLeadStatusToast(
+              'Queued ' + (data.updated || 0) + ' lead(s) for WhatsApp outreach.',
+              { duration: 3200 }
+            );
           }
           if (selectAll) selectAll.checked = false;
           await switchLeadGroupTab(currentLeadGroupTabId, { force: true, skipHistory: true });
@@ -153,11 +150,11 @@
           if (!res.ok || !data.ok) {
             throw new Error((data.detail && String(data.detail)) || ('HTTP ' + res.status));
           }
-          var statusEl = document.getElementById('clinic-save-status');
-          if (statusEl) {
-            statusEl.textContent = 'Moved ' + (data.updated || 0) + ' lead(s) to Ready.';
-            statusEl.classList.remove('hidden');
-            window.setTimeout(function () { statusEl.classList.add('hidden'); }, 3200);
+          if (typeof window.showLeadStatusToast === 'function') {
+            window.showLeadStatusToast(
+              'Moved ' + (data.updated || 0) + ' lead(s) to Ready.',
+              { duration: 3200 }
+            );
           }
           if (selectAll) selectAll.checked = false;
           await switchLeadGroupTab(currentLeadGroupTabId, { force: true, skipHistory: true });
@@ -283,15 +280,11 @@
           if (skipped > 0) {
             msg += ' ' + skipped + ' skipped (already in a pending batch or not sendable).';
           }
-          var statusEl = document.getElementById('clinic-save-status');
-          if (statusEl) {
-            var warnClasses = ['bg-amber-50', 'text-amber-900', 'ring-amber-200/90'];
-            var okClasses = ['bg-emerald-50', 'text-emerald-900', 'ring-emerald-200/90'];
-            statusEl.classList.remove.apply(statusEl.classList, skipped > 0 ? okClasses : warnClasses);
-            statusEl.classList.add.apply(statusEl.classList, skipped > 0 ? warnClasses : okClasses);
-            statusEl.textContent = msg;
-            statusEl.classList.remove('hidden');
-            window.setTimeout(function () { statusEl.classList.add('hidden'); }, skipped > 0 ? 5200 : 3200);
+          if (typeof window.showLeadStatusToast === 'function') {
+            window.showLeadStatusToast(msg, {
+              tone: skipped > 0 ? 'warn' : 'ok',
+              duration: skipped > 0 ? 5200 : 3200,
+            });
           }
           closeChooseBatchDialog();
           if (selectAll) selectAll.checked = false;
