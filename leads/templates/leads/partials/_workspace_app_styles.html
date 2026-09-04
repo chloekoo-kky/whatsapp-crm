@@ -2,6 +2,11 @@
   html {
     height: 100%;
   }
+  #leads-fragment-root.leads-fragment--loading {
+    opacity: 0.55;
+    pointer-events: none;
+    transition: opacity 120ms ease;
+  }
   tr.clinic-row--brand-group td:first-child {
     box-shadow: inset 4px 0 0 0 rgb(251 191 36 / 0.9);
   }
@@ -18,6 +23,22 @@
   }
   tr.clinic-row--selected td:first-child {
     box-shadow: inset 3px 0 0 0 rgb(99 102 241 / 0.82);
+  }
+  .lead-selection-count {
+    display: inline-flex;
+    flex-shrink: 0;
+    align-items: center;
+    border-radius: 9999px;
+    background-color: rgb(238 242 255);
+    padding: 0.2rem 0.55rem;
+    font-size: 0.6875rem;
+    font-weight: 700;
+    line-height: 1.2;
+    color: rgb(67 56 202);
+    box-shadow: inset 0 0 0 1px rgb(165 180 252 / 0.7);
+  }
+  .lead-selection-count[hidden] {
+    display: none;
   }
   tr.clinic-row--brand-group.clinic-row--selected td:first-child {
     box-shadow:
@@ -1157,6 +1178,32 @@
       width: 100% !important;
     }
 
+    .app-ptr-indicator {
+      position: fixed;
+      left: 0;
+      right: 0;
+      top: 0;
+      z-index: 80;
+      display: flex;
+      height: 0;
+      align-items: flex-end;
+      justify-content: center;
+      gap: 0.5rem;
+      overflow: hidden;
+      padding-bottom: 0.4rem;
+      color: rgb(100 116 139);
+      background: linear-gradient(180deg, rgb(255 255 255 / 0.92), rgb(255 255 255 / 0.55) 70%, transparent);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 150ms ease;
+    }
+    .app-ptr-indicator.app-ptr--ready,
+    .app-ptr-indicator.app-ptr--refreshing {
+      color: rgb(79 70 229);
+    }
+    .app-ptr-indicator.app-ptr--refreshing .app-ptr-icon {
+      animation: leads-ptr-spin 700ms linear infinite;
+    }
     .leads-ptr-indicator {
       position: absolute;
       left: 0;
@@ -1193,6 +1240,9 @@
   }
 
   @media (min-width: 1024px) {
+    .app-ptr-indicator {
+      display: none !important;
+    }
     #app-sidebar-shell {
       display: flex;
       height: 100%;

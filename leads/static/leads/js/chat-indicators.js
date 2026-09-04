@@ -56,6 +56,19 @@
         return parts.join('|');
       }
       window.leadChatIndicatorSnapshotFromMap = leadChatIndicatorSnapshotFromMap;
+      function leadChatIndicatorSnapshotFromDom() {
+        var leads = {};
+        document.querySelectorAll('#clinics-grid-inner .lead-card-container').forEach(function (cell) {
+          var id = (cell.id || '').replace('lead-grid-cell-', '');
+          if (!id) return;
+          leads[id] = {
+            awaiting: cell.getAttribute('data-awaiting-client-reply') === '1',
+            dispatched: cell.getAttribute('data-whatsapp-dispatched') === '1',
+          };
+        });
+        return leadChatIndicatorSnapshotFromMap(leads);
+      }
+      window.leadChatIndicatorSnapshotFromDom = leadChatIndicatorSnapshotFromDom;
       async function silentRefreshCurrentLeadGrid() {
         var data = await fetchLeadsTableFragment(currentLeadGroupTabId);
         if (!data || !data.ok) return;

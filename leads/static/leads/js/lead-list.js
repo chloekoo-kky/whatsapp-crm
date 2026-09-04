@@ -457,6 +457,15 @@
         selectAll.indeterminate = nOn > 0 && nOn < boxes.length;
       }
       window.refreshSelectAllState = refreshSelectAllState;
+      function refreshLeadSelectionCount() {
+        var n = typeof getUniqueSelectedLeadIds === 'function' ? getUniqueSelectedLeadIds().length : 0;
+        var text = n === 1 ? '1 selected' : n + ' selected';
+        document.querySelectorAll('[data-lead-selection-count]').forEach(function (el) {
+          el.textContent = n > 0 ? text : '';
+          el.hidden = n < 1;
+        });
+      }
+      window.refreshLeadSelectionCount = refreshLeadSelectionCount;
       function refreshSelectionVisuals() {
         const byId = {};
         document.querySelectorAll('.clinic-select-cb').forEach(function (cb) {
@@ -471,6 +480,7 @@
         refreshSetCategoryButtonState();
         refreshBulkAssignGroupButtonState();
         refreshBulkActionDock();
+        refreshLeadSelectionCount();
       }
       window.refreshSelectionVisuals = refreshSelectionVisuals;
       window.__refreshFunnelMetricsStrip = async function () {

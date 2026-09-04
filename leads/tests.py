@@ -136,6 +136,9 @@ class PipelineGroupTests(TestCase):
         self.assertIn('id="lead-filter-tag-save"', html)
         self.assertIn('id="lead-filter-tags-list"', html)
         self.assertIn('aria-label="Save current search as tag"', html)
+        self.assertIn("leads/js/mobile-pull-refresh.js", html)
+        self.assertIn('id="select-all-clinics"', html)
+        self.assertIn('data-lead-selection-count', html)
         self.assertNotIn('return to New', html)
 
     def test_dashboard_defaults_to_ready_tab(self):
@@ -2613,6 +2616,7 @@ class CategoryRuleManagementTests(TestCase):
         self.assertIn(b"dental", response.content)
         html = response.content.decode()
         self.assertIn("Manage Tags", html)
+        self.assertIn("leads/js/mobile-pull-refresh.js", html)
         self.assertIn("Add tag", html)
         self.assertIn("Save changes", html)
         self.assertIn('id="tags-table-save"', html)

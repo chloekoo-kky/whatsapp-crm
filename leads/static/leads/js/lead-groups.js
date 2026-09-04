@@ -109,6 +109,9 @@
           if (tb) window.htmx.process(tb);
         }
         if (typeof window.__ensureGridHtmxBound === "function") window.__ensureGridHtmxBound();
+        if (typeof window.leadChatIndicatorSnapshotFromDom === "function") {
+          leadChatIndicatorSnapshot = window.leadChatIndicatorSnapshotFromDom();
+        }
         if (typeof window.__syncLeadChatIndicatorPolling === "function") {
           window.__syncLeadChatIndicatorPolling();
         }
@@ -139,6 +142,37 @@
         return res.json();
       }
       window.fetchLeadsTableFragment = fetchLeadsTableFragment;
+      function leadTabCacheKey(groupId) {
+        var gid = normalizeLeadGroupTabId(groupId);
+        var queued = (typeof window.isQueuedOutreachFilterActive === 'function' && window.isQueuedOutreachFilterActive()) ? '1' : '0';
+        var sr = activeSearchRecordId != null ? String(activeSearchRecordId) : '';
+        return gid + '|' + queued + '|' + sr;
+      }
+      function rememberLeadTabFragment(groupId, data) {
+        if (!data || !data.ok) return;
+        if (!window.leadTabFragmentCache) window.leadTabFragmentCache = Object.create(null);
+        window.leadTabFragmentCache[leadTabCacheKey(groupId)] = { at: Date.now(), data: data };
+      }
+      window.rememberLeadTabFragment = rememberLeadTabFragment;
+      function readLeadTabFragment(groupId) {
+        var cache = window.leadTabFragmentCache;
+        if (!cache) return null;
+        var row = cache[leadTabCacheKey(groupId)];
+        if (!row || !row.data) return null;
+        if (Date.now() - row.at > 30000) return null;
+        return row;
+      }
+      function invalidateLeadTabFragmentCache() {
+        window.leadTabFragmentCache = Object.create(null);
+      }
+      window.invalidateLeadTabFragmentCache = invalidateLeadTabFragmentCache;
+      function setLeadsTabLoading(on) {
+        var root = document.getElementById('leads-fragment-root');
+        if (!root) return;
+        root.classList.toggle('leads-fragment--loading', !!on);
+        root.setAttribute('aria-busy', on ? 'true' : 'false');
+      }
+      window.setLeadsTabLoading = setLeadsTabLoading;
       async function switchLeadGroupTab(groupId, opts) {
         opts = opts || {};
         if (globalSearchActive && !opts.skipGlobalSearchExit) {
@@ -155,26 +189,45 @@
         if (!opts.force && want === normalizeLeadGroupTabId(currentLeadGroupTabId) && !globalSearchActive) {
           return;
         }
-        if (leadGroupTabBusy) return;
+        var reqId = ++leadGroupTabRequestId;
         leadGroupTabBusy = true;
+        setLeadGroupTabActive(want);
+        if (opts.force) invalidateLeadTabFragmentCache();
+        var cachedRow = opts.force ? null : readLeadTabFragment(want);
+        if (cachedRow) {
+          applyLeadsTableFragment(cachedRow.data);
+          if (!opts.skipHistory) {
+            replaceDashboardUrlForCurrentTab(opts.historyMode || (opts.fromPopstate ? 'replace' : 'push'));
+          }
+          syncLeadsAfterGroupFragmentSwap();
+          setLeadsTabLoading(false);
+          if (Date.now() - cachedRow.at < 15000) {
+            if (reqId === leadGroupTabRequestId) leadGroupTabBusy = false;
+            return;
+          }
+        } else {
+          setLeadsTabLoading(true);
+        }
         try {
           var data = await fetchLeadsTableFragment(want);
+          if (reqId !== leadGroupTabRequestId) return;
           if (!data.ok) throw new Error((data.detail && String(data.detail)) || 'Bad response');
+          rememberLeadTabFragment(want, data);
           applyLeadsTableFragment(data);
           setLeadGroupTabActive(want);
           if (!opts.skipHistory) {
             replaceDashboardUrlForCurrentTab(opts.historyMode || (opts.fromPopstate ? 'replace' : 'push'));
           }
           syncLeadsAfterGroupFragmentSwap();
-          leadChatIndicatorSnapshot = '';
-          if (typeof window.__refreshLeadChatIndicators === 'function') {
-            window.__refreshLeadChatIndicators();
-          }
         } catch (err) {
+          if (reqId !== leadGroupTabRequestId) return;
           console.error(err);
           await window.appAlert('Could not load leads for this group.');
         } finally {
-          leadGroupTabBusy = false;
+          if (reqId === leadGroupTabRequestId) {
+            leadGroupTabBusy = false;
+            setLeadsTabLoading(false);
+          }
         }
       }
       window.switchLeadGroupTab = switchLeadGroupTab;

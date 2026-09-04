@@ -956,6 +956,17 @@
           ? dashboardJsConfig.initialLeadGroupTabIdFromPage
           : (dashboardJsConfig.readyGroupTabId || 'uncategorized')
       );
+      if (typeof rememberLeadTabFragment === 'function') {
+        var bootTb = document.getElementById('clinics-table-body');
+        var bootGrid = document.getElementById('clinics-grid-inner');
+        if (bootTb && bootGrid) {
+          rememberLeadTabFragment(currentLeadGroupTabId, {
+            ok: true,
+            tbody_html: bootTb.innerHTML,
+            grid_html: bootGrid.innerHTML,
+          });
+        }
+      }
       document.addEventListener('visibilitychange', function () {
         if (typeof window.__syncLeadChatIndicatorPolling === 'function') {
           window.__syncLeadChatIndicatorPolling();

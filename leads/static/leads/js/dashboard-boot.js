@@ -55,6 +55,8 @@
       window.leadChatIndicatorSnapshot = '';
       window.clinicSaveStatusTimer = null;
       window.leadGroupTabBusy = false;
+      window.leadGroupTabRequestId = 0;
+      window.leadTabFragmentCache = Object.create(null);
       window.pendingMoveLeadIds = [];
       window.pendingOwnerAssignLeadIds = [];
       window.leadOwnerAssignMenuOpen = false;
