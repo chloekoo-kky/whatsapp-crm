@@ -416,6 +416,11 @@ class PipelineGroupTests(TestCase):
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["updated"], 1)
         self.assertEqual(payload["ids"], [lead.pk])
+        bottom_html = payload["bottom_actions"][str(lead.pk)]
+        self.assertIn("lead-card-active-chat-btn", bottom_html)
+        self.assertIn("chat/inbox", bottom_html)
+        self.assertNotIn('title="Move to trash"', bottom_html)
+        self.assertNotIn(str(already.pk), payload["bottom_actions"])
         lead.refresh_from_db()
         self.assertEqual(lead.whatsapp_status, Lead.WhatsappStatus.SENT)
         self.assertIsNotNone(lead.whatsapp_sent_at)
@@ -426,6 +431,28 @@ class PipelineGroupTests(TestCase):
         )
         already.refresh_from_db()
         self.assertEqual(already.whatsapp_status, Lead.WhatsappStatus.SENT)
+
+    def test_bulk_mark_sent_new_folder_keeps_permanent_delete(self):
+        groups = ensure_pipeline_system_groups()
+        lead = Lead.objects.create(
+            name="New Folder Manual Sent",
+            address="9 New Rd",
+            phone_number="+60119876545",
+            phone_numbers=["+60119876545"],
+            group=groups["uncategorized"],
+            whatsapp_status=Lead.WhatsappStatus.IDLE,
+        )
+        client = staff_client()
+        response = client.post(
+            reverse("leads_bulk_mark_sent"),
+            data=json.dumps({"ids": [lead.pk], "group_id": "uncategorized"}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        html = response.json()["bottom_actions"][str(lead.pk)]
+        self.assertIn("lead-card-active-chat-btn", html)
+        self.assertNotIn('title="Move to trash"', html)
+        self.assertIn("Permanently delete", html)
 
     def test_dequeue_reverts_pending_lead_to_idle(self):
         groups = ensure_pipeline_system_groups()

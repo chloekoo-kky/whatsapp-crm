@@ -588,6 +588,21 @@ class DashboardTagFilterTests(TestCase):
         self.assertIn("filter-unsent-message-only", init_src)
         self.assertIn("bulk-mark-sent-btn", init_src)
         self.assertIn("bulkMarkSelectedSent", init_src)
+        bulk = Path(__file__).resolve().parent / "static" / "leads" / "js" / "bulk-actions.js"
+        bulk_src = bulk.read_text(encoding="utf-8")
+        self.assertIn("bottom_actions", bulk_src)
+        self.assertIn("__swapLeadBottomActionsHtml", bulk_src)
+        self.assertIn("group_id: gid", bulk_src)
+        htmx_setup = (
+            Path(__file__).resolve().parent
+            / "templates"
+            / "leads"
+            / "partials"
+            / "_htmx_setup.html"
+        )
+        htmx_src = htmx_setup.read_text(encoding="utf-8")
+        self.assertIn("__ensureLeadChatAction", htmx_src)
+        self.assertIn("lead-card-active-chat-btn", htmx_src)
         bulk_idx = init_src.find("dashboardJsConfig.bulkManualUrl")
         self.assertGreater(bulk_idx, -1)
         bulk_chunk = init_src[bulk_idx : bulk_idx + 1800]

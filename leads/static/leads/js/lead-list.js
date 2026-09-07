@@ -300,8 +300,12 @@
             }
           }
           if (d.grid_bottom_actions_html) {
-            var bottomActions = document.getElementById('lead-bottom-actions-' + id);
-            if (bottomActions) bottomActions.outerHTML = d.grid_bottom_actions_html;
+            if (typeof window.__swapLeadBottomActionsHtml === 'function') {
+              window.__swapLeadBottomActionsHtml(id, d.grid_bottom_actions_html);
+            } else {
+              var bottomActions = document.getElementById('lead-bottom-actions-' + id);
+              if (bottomActions) bottomActions.outerHTML = d.grid_bottom_actions_html;
+            }
           }
 
           var copyPhone = '';

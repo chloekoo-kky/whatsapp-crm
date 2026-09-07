@@ -465,22 +465,29 @@ def _folder_context_for_group(grp: LeadGroup) -> dict:
     }
 
 
-def _lead_grid_action_context(request, lead: Lead) -> dict:
+def _lead_grid_action_context(
+    request, lead: Lead, *, group_id: str | None = None
+) -> dict:
     """Template context for grid card bottom action partials."""
     gid_raw = (
-        request.GET.get("group_id") or request.POST.get("group_id") or ""
+        group_id
+        or request.GET.get("group_id")
+        or request.POST.get("group_id")
+        or ""
     ).strip().lower()
-    if gid_raw.isdigit():
-        ctx = _active_folder_context(request)
+    if gid_raw.isdigit() or gid_raw == "uncategorized":
+        ctx = _active_folder_context(request, group_id=gid_raw)
     else:
         ctx = _folder_context_for_lead(lead)
     return {"lead": lead, **ctx}
 
 
-def _active_folder_context(request) -> dict:
+def _active_folder_context(request, *, group_id: str | None = None) -> dict:
     """Resolve the active dashboard tab folder for grid card action conditionals."""
     gid_raw = (
-        request.GET.get("group_id") or request.POST.get("group_id") or ""
+        group_id
+        if group_id is not None
+        else (request.GET.get("group_id") or request.POST.get("group_id") or "")
     ).strip().lower()
     tab_key = _resolve_dashboard_tab_key(gid_raw)
     if tab_key == "uncategorized":
@@ -2882,11 +2889,28 @@ def leads_bulk_mark_sent(request):
         return JsonResponse({"ok": True, "updated": 0, "ids": [], "action": "mark_sent"})
 
     updated, marked_ids = mark_leads_first_message_sent(id_list)
+    group_id = str(body.get("group_id") or "").strip()
+    bottom_actions: dict[str, str] = {}
+    if marked_ids:
+        leads = {
+            lead.pk: lead
+            for lead in Lead.objects.filter(pk__in=marked_ids)
+        }
+        for pk in marked_ids:
+            lead = leads.get(pk)
+            if lead is None:
+                continue
+            bottom_actions[str(pk)] = render_to_string(
+                "leads/partials/_lead_grid_bottom_actions.html",
+                _lead_grid_action_context(request, lead, group_id=group_id or None),
+                request=request,
+            )
     return JsonResponse(
         {
             "ok": True,
             "updated": updated,
             "ids": marked_ids,
+            "bottom_actions": bottom_actions,
             "action": "mark_sent",
         }
     )

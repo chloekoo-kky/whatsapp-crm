@@ -178,6 +178,9 @@
         var btn = document.getElementById('bulk-mark-sent-btn');
         if (btn) btn.disabled = true;
         try {
+          var gid = typeof currentLeadGroupTabId !== 'undefined' && currentLeadGroupTabId != null
+            ? String(currentLeadGroupTabId)
+            : '';
           var res = await fetch(dashboardJsConfig.bulkMarkSentUrl, {
             method: 'POST',
             credentials: 'same-origin',
@@ -185,14 +188,19 @@
               'Content-Type': 'application/json',
               'X-CSRFToken': getCsrfToken(),
             },
-            body: JSON.stringify({ ids: ids }),
+            body: JSON.stringify({ ids: ids, group_id: gid }),
           });
           var data = await res.json();
           if (!res.ok || !data.ok) {
             throw new Error((data.detail && String(data.detail)) || ('HTTP ' + res.status));
           }
           var marked = Array.isArray(data.ids) ? data.ids : ids;
+          var bottomActions = data.bottom_actions || {};
           marked.forEach(function (id) {
+            var html = bottomActions[String(id)] || bottomActions[id];
+            if (html && typeof window.__swapLeadBottomActionsHtml === 'function') {
+              window.__swapLeadBottomActionsHtml(id, html);
+            }
             if (typeof window.__applyLeadDispatchedChrome === 'function') {
               window.__applyLeadDispatchedChrome(id);
             }
