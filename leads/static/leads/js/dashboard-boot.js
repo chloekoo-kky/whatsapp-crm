@@ -20,6 +20,7 @@
       dashboardJsConfig.exportFullBackupUrl = dashboardJsConfig.exportFullBackupUrl || "/leads/export/backup/";
       dashboardJsConfig.importFullBackupUrl = dashboardJsConfig.importFullBackupUrl || "/leads/import/backup/";
       dashboardJsConfig.bulkManualUrl = dashboardJsConfig.bulkManualUrl || "/leads/api/bulk-manual/";
+      dashboardJsConfig.bulkMarkSentUrl = dashboardJsConfig.bulkMarkSentUrl || "/leads/api/bulk-mark-sent/";
       dashboardJsConfig.bulkAutoClassifyUrl = dashboardJsConfig.bulkAutoClassifyUrl || "/leads/api/bulk-auto-classify/";
       dashboardJsConfig.bulkWhatsappQueueUrl = dashboardJsConfig.bulkWhatsappQueueUrl || "/leads/api/bulk-whatsapp-queue/";
       dashboardJsConfig.bulkMoveReadyUrl = dashboardJsConfig.bulkMoveReadyUrl || "/leads/api/bulk-move-ready/";

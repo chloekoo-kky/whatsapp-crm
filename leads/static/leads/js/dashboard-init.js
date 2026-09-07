@@ -61,6 +61,9 @@
       document.getElementById('bulk-move-ready-btn')?.addEventListener('click', function () {
         bulkMoveSelectedToReady();
       });
+      document.getElementById('bulk-mark-sent-btn')?.addEventListener('click', function () {
+        bulkMarkSelectedSent();
+      });
       document.getElementById('bulk-wa-queue-btn')?.addEventListener('click', function () {
         bulkPushSelectedToWhatsappQueue();
       });

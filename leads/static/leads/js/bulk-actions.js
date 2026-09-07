@@ -166,6 +166,62 @@
         }
       }
       window.bulkMoveSelectedToReady = bulkMoveSelectedToReady;
+      async function bulkMarkSelectedSent() {
+        var ids = getUniqueSelectedLeadIds();
+        if (!ids.length) return;
+        var ok = await window.appConfirm({
+          title: 'Mark as sent?',
+          message: 'Mark ' + ids.length + ' selected lead(s) as First Message Sent? Use this when outreach was sent from WhatsApp Business and the Sent badge did not update.',
+          confirmLabel: 'Mark sent',
+        });
+        if (!ok) return;
+        var btn = document.getElementById('bulk-mark-sent-btn');
+        if (btn) btn.disabled = true;
+        try {
+          var res = await fetch(dashboardJsConfig.bulkMarkSentUrl, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-CSRFToken': getCsrfToken(),
+            },
+            body: JSON.stringify({ ids: ids }),
+          });
+          var data = await res.json();
+          if (!res.ok || !data.ok) {
+            throw new Error((data.detail && String(data.detail)) || ('HTTP ' + res.status));
+          }
+          var marked = Array.isArray(data.ids) ? data.ids : ids;
+          marked.forEach(function (id) {
+            if (typeof window.__applyLeadDispatchedChrome === 'function') {
+              window.__applyLeadDispatchedChrome(id);
+            }
+          });
+          var n = Number(data.updated) || 0;
+          if (typeof window.showLeadStatusToast === 'function') {
+            var msg = n === 1
+              ? 'Marked 1 lead as sent.'
+              : 'Marked ' + n + ' lead(s) as sent.';
+            if (n === 0) msg = 'Selected lead(s) were already marked as sent.';
+            window.showLeadStatusToast(msg, { duration: 3200 });
+          }
+          if (typeof window.invalidateLeadTabFragmentCache === 'function') {
+            window.invalidateLeadTabFragmentCache();
+          }
+          if (typeof window.fadeLeadsOutOfCurrentFilters === 'function') {
+            fadeLeadsOutOfCurrentFilters(ids);
+          }
+          refreshSelectAllState();
+          refreshSelectionVisuals();
+        } catch (err) {
+          console.error(err);
+          await window.appAlert((err && err.message) || 'Could not mark selected leads as sent.');
+        } finally {
+          if (btn) btn.disabled = false;
+          refreshSetCategoryButtonState();
+        }
+      }
+      window.bulkMarkSelectedSent = bulkMarkSelectedSent;
       function showChooseBatchError(msg) {
         var el = document.getElementById('choose-batch-error');
         if (!el) return;
@@ -324,6 +380,8 @@
         const n = getUniqueSelectedLeadIds().length;
         const btn = document.getElementById('bulk-manual-open');
         if (btn) btn.disabled = n < 1;
+        const markSentBtn = document.getElementById('bulk-mark-sent-btn');
+        if (markSentBtn) markSentBtn.disabled = n < 1;
         const ownerBtn = document.getElementById('bulk-assign-owner-open');
         if (ownerBtn) ownerBtn.disabled = n < 1;
         const readyBtn = document.getElementById('bulk-move-ready-btn');

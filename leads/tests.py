@@ -104,15 +104,19 @@ class PipelineGroupTests(TestCase):
         self.assertNotIn("Move to group", html)
         self.assertIn("Views", html)
         self.assertIn("Set tags", html)
+        self.assertIn("Mark sent", html)
         self.assertIn("Assign to…", html)
         manual_idx = html.find('id="bulk-manual-open"')
+        mark_sent_idx = html.find('id="bulk-mark-sent-btn"')
         assign_idx = html.find('id="bulk-assign-owner-open"')
         ready_idx = html.find('id="bulk-move-ready-btn"')
         dock_idx = html.find('id="bulk-action-dock"')
         self.assertNotEqual(manual_idx, -1)
+        self.assertNotEqual(mark_sent_idx, -1)
         self.assertNotEqual(assign_idx, -1)
         self.assertNotEqual(ready_idx, -1)
-        self.assertLess(manual_idx, assign_idx)
+        self.assertLess(manual_idx, mark_sent_idx)
+        self.assertLess(mark_sent_idx, assign_idx)
         self.assertLess(assign_idx, ready_idx)
         self.assertLess(ready_idx, dock_idx)
         self.assertIn("Choose batch", html)
@@ -377,6 +381,51 @@ class PipelineGroupTests(TestCase):
         self.assertEqual(payload["updated"], 1)
         lead.refresh_from_db()
         self.assertEqual(lead.group_id, groups["ready"].pk)
+
+    def test_bulk_mark_sent_api_sets_first_message_sent(self):
+        from django.utils import timezone
+
+        from leads.whatsapp_service import MANUAL_MARK_SENT_REMARK
+
+        groups = ensure_pipeline_system_groups()
+        lead = Lead.objects.create(
+            name="Manual Sent Clinic",
+            address="7 Ready Rd",
+            phone_number="+60119876543",
+            phone_numbers=["+60119876543"],
+            group=groups["ready"],
+            whatsapp_status=Lead.WhatsappStatus.IDLE,
+        )
+        already = Lead.objects.create(
+            name="Already Sent Clinic",
+            address="8 Ready Rd",
+            phone_number="+60119876544",
+            phone_numbers=["+60119876544"],
+            group=groups["ready"],
+            whatsapp_status=Lead.WhatsappStatus.SENT,
+            whatsapp_sent_at=timezone.now(),
+        )
+        client = staff_client()
+        response = client.post(
+            reverse("leads_bulk_mark_sent"),
+            data=json.dumps({"ids": [lead.pk, already.pk]}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["updated"], 1)
+        self.assertEqual(payload["ids"], [lead.pk])
+        lead.refresh_from_db()
+        self.assertEqual(lead.whatsapp_status, Lead.WhatsappStatus.SENT)
+        self.assertIsNotNone(lead.whatsapp_sent_at)
+        self.assertTrue(
+            LeadConversationLog.objects.filter(
+                lead=lead, remarks=MANUAL_MARK_SENT_REMARK
+            ).exists()
+        )
+        already.refresh_from_db()
+        self.assertEqual(already.whatsapp_status, Lead.WhatsappStatus.SENT)
 
     def test_dequeue_reverts_pending_lead_to_idle(self):
         groups = ensure_pipeline_system_groups()
@@ -1508,7 +1557,7 @@ class YCloudWebhookTests(TestCase):
         self.assertEqual(lead.whatsapp_instance_id, "prior-id")
 
     @override_settings(WHATSAPP_FROM_NUMBER="+60126336529")
-    def test_ycloud_inbound_does_not_mark_first_message_sent(self):
+    def test_ycloud_inbound_marks_first_message_sent(self):
         groups = ensure_pipeline_system_groups()
         lead = Lead.objects.create(
             name="Inbound Idle Clinic",
@@ -1528,8 +1577,8 @@ class YCloudWebhookTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["synced"], 1)
         lead.refresh_from_db()
-        self.assertEqual(lead.whatsapp_status, Lead.WhatsappStatus.IDLE)
-        self.assertIsNone(lead.whatsapp_sent_at)
+        self.assertEqual(lead.whatsapp_status, Lead.WhatsappStatus.SENT)
+        self.assertIsNotNone(lead.whatsapp_sent_at)
 
     @override_settings(WHATSAPP_FROM_NUMBER="+60126336429")
     def test_business_app_free_text_not_labeled_as_template(self):

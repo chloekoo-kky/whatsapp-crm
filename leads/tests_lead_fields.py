@@ -586,6 +586,8 @@ class DashboardTagFilterTests(TestCase):
         self.assertIn("filter-no-chain-only", init_src)
         self.assertIn("filter-unsent-message-only", list_src)
         self.assertIn("filter-unsent-message-only", init_src)
+        self.assertIn("bulk-mark-sent-btn", init_src)
+        self.assertIn("bulkMarkSelectedSent", init_src)
         bulk_idx = init_src.find("dashboardJsConfig.bulkManualUrl")
         self.assertGreater(bulk_idx, -1)
         bulk_chunk = init_src[bulk_idx : bulk_idx + 1800]

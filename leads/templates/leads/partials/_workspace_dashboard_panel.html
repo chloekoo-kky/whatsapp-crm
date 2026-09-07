@@ -386,6 +386,10 @@
                     class="toolbar-btn"
                     title="Set tags and mark selected leads as processed (no AI). Select at least one lead first."
                     aria-label="Set tags for selected leads without AI">Set tags</button>
+                  <button type="button" id="bulk-mark-sent-btn" disabled
+                    class="toolbar-btn"
+                    title="Mark selected leads as First Message Sent. Use when outreach was sent from WhatsApp Business and the Sent badge did not update."
+                    aria-label="Mark selected leads as sent">Mark sent</button>
                   {% if request.user|can_see_all_leads %}
                   <button type="button" id="bulk-assign-owner-open" disabled
                     class="toolbar-btn"

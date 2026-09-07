@@ -6,7 +6,7 @@ import inspect
 import logging
 import re
 from datetime import datetime, time, timedelta
-from typing import Any, Optional
+from typing import Any, Iterable, Optional
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -54,6 +54,7 @@ from leads.ycloud_service import (
 logger = logging.getLogger(__name__)
 
 OFFICIAL_API_MARKER = "[Official API]"
+MANUAL_MARK_SENT_REMARK = "[Manual] Marked as First Message Sent"
 DEFAULT_META_TEMPLATE_NAME = "just_to_say_hi"
 APPROVED_META_TEMPLATES = frozenset(
     {
@@ -854,6 +855,21 @@ def mark_first_outbound_sent(
         update_fields.append("whatsapp_instance_id")
     lead.save(update_fields=update_fields)
     return True
+
+
+def mark_leads_first_message_sent(lead_ids: Iterable[int]) -> tuple[int, list[int]]:
+    """Manually set First Message Sent on selected leads. Skips those already sent."""
+    marked_ids: list[int] = []
+    for lead in Lead.objects.filter(pk__in=list(lead_ids)).iterator():
+        if not mark_first_outbound_sent(lead, whatsapp_from_number()):
+            continue
+        LeadConversationLog.objects.create(
+            lead=lead,
+            conversation_date=timezone.now().date(),
+            remarks=MANUAL_MARK_SENT_REMARK,
+        )
+        marked_ids.append(lead.pk)
+    return len(marked_ids), marked_ids
 
 
 def mark_sent(

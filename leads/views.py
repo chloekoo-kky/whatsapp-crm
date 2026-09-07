@@ -108,6 +108,7 @@ from leads.whatsapp_service import (
     reset_campaign_metrics_snapshot,
     send_free_text_to_lead,
     send_text_to_lead,
+    mark_leads_first_message_sent,
     whatsapp_phone_number_id,
     whatsapp_template_language,
 )
@@ -608,6 +609,8 @@ def _dashboard_js_config(context: dict) -> dict:
         "exportFullBackupUrl": context.get("export_full_backup_url") or "/leads/export/backup/",
         "importFullBackupUrl": context.get("import_full_backup_url") or "/leads/import/backup/",
         "bulkManualUrl": context.get("bulk_manual_url") or "/leads/api/bulk-manual/",
+        "bulkMarkSentUrl": context.get("bulk_mark_sent_url")
+        or "/leads/api/bulk-mark-sent/",
         "bulkAutoClassifyUrl": context.get("bulk_auto_classify_url")
         or "/leads/api/bulk-auto-classify/",
         "bulkWhatsappQueueUrl": context.get("bulk_whatsapp_queue_url")
@@ -679,6 +682,7 @@ class LeadDashboardView(ListView):
         context["category_choices"] = lead_category_choices()
         context["dashboard_tags"] = _dashboard_tags_with_counts(self.get_queryset())
         context["bulk_manual_url"] = reverse("leads_bulk_manual")
+        context["bulk_mark_sent_url"] = reverse("leads_bulk_mark_sent")
         context["bulk_auto_classify_url"] = reverse("leads_bulk_auto_classify")
         context["bulk_whatsapp_queue_url"] = reverse("leads_bulk_whatsapp_queue")
         context["bulk_move_ready_url"] = reverse("leads_bulk_move_ready")
@@ -2858,6 +2862,34 @@ def leads_bulk_whatsapp_queue(request):
 
     updated = enqueue_leads_for_whatsapp(id_list)
     return JsonResponse({"ok": True, "updated": updated, "action": "queue"})
+
+
+@csrf_protect
+@require_POST
+def leads_bulk_mark_sent(request):
+    """Mark selected leads as First Message Sent (manual WhatsApp app outreach)."""
+    try:
+        body = json.loads(request.body.decode() or "{}")
+    except json.JSONDecodeError:
+        return JsonResponse({"ok": False, "detail": "Invalid JSON body."}, status=400)
+
+    ids = body.get("ids")
+    if not isinstance(ids, list) or not ids:
+        return JsonResponse({"ok": False, "detail": "ids must be a non-empty list."}, status=400)
+
+    id_list = owned_lead_ids(request, ids)
+    if not id_list:
+        return JsonResponse({"ok": True, "updated": 0, "ids": [], "action": "mark_sent"})
+
+    updated, marked_ids = mark_leads_first_message_sent(id_list)
+    return JsonResponse(
+        {
+            "ok": True,
+            "updated": updated,
+            "ids": marked_ids,
+            "action": "mark_sent",
+        }
+    )
 
 
 @csrf_protect

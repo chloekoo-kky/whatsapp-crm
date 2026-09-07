@@ -129,6 +129,20 @@ class BulkIdorTests(TestCase):
         self.theirs.refresh_from_db()
         self.assertNotEqual(self.theirs.whatsapp_status, Lead.WhatsappStatus.PENDING)
 
+    def test_bulk_mark_sent_ignores_foreign_lead_id(self):
+        response = self.client.post(
+            reverse("leads_bulk_mark_sent"),
+            data={"ids": [self.theirs.pk]},
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["updated"], 0)
+        self.theirs.refresh_from_db()
+        self.assertNotEqual(self.theirs.whatsapp_status, Lead.WhatsappStatus.SENT)
+        self.assertIsNone(self.theirs.whatsapp_sent_at)
+
     def test_chat_inbox_404_for_foreign_lead(self):
         response = self.client.get(reverse("chat_inbox", args=[self.theirs.pk]))
         self.assertEqual(response.status_code, 404)

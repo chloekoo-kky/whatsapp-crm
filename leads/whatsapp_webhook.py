@@ -508,13 +508,6 @@ def sync_webhook_message(msg: ParsedWebhookMessage) -> bool:
             template_name=msg.template_name,
             created_at=msg.timestamp,
         )
-        from leads.whatsapp_service import mark_first_outbound_sent
-
-        mark_first_outbound_sent(
-            lead,
-            whatsapp_from_number(),
-            sent_at=msg.timestamp,
-        )
     elif not inbound_chat_message_exists(lead, msg.message_id):
         record_inbound_chat_message(
             lead,
@@ -522,6 +515,14 @@ def sync_webhook_message(msg: ParsedWebhookMessage) -> bool:
             meta_message_id=msg.message_id,
             created_at=msg.timestamp,
         )
+
+    from leads.whatsapp_service import mark_first_outbound_sent
+
+    mark_first_outbound_sent(
+        lead,
+        whatsapp_from_number(),
+        sent_at=msg.timestamp,
+    )
 
     sender = "agent" if msg.from_me else "client"
     remarks = _format_log_remarks(sender, msg.text_body, msg.message_id)

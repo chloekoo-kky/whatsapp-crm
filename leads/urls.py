@@ -62,6 +62,7 @@ from leads.views import (
     leads_bulk_assign_owner,
     leads_bulk_auto_classify,
     leads_bulk_manual_category,
+    leads_bulk_mark_sent,
     leads_bulk_dequeue,
     leads_bulk_move_ready,
     leads_bulk_whatsapp_pause,
@@ -222,6 +223,11 @@ urlpatterns = [
         "leads/api/bulk-manual/",
         leads_bulk_manual_category,
         name="leads_bulk_manual",
+    ),
+    path(
+        "leads/api/bulk-mark-sent/",
+        leads_bulk_mark_sent,
+        name="leads_bulk_mark_sent",
     ),
     path(
         "leads/api/bulk-auto-classify/",
