@@ -448,6 +448,7 @@
           countEl.textContent = '0';
           chip.appendChild(labelEl);
           chip.appendChild(countEl);
+          chip.hidden = true;
           var manageBtn = document.getElementById('lead-tag-filter-manage');
           if (manageBtn) filter.insertBefore(chip, manageBtn);
           else filter.appendChild(chip);
@@ -769,6 +770,11 @@
           var sentBtn = e.target.closest('#filter-sent-message-only');
           if (sentBtn) {
             toggleLeadFilterButton(sentBtn);
+            return;
+          }
+          var unsentBtn = e.target.closest('#filter-unsent-message-only');
+          if (unsentBtn) {
+            toggleLeadFilterButton(unsentBtn);
             return;
           }
           var tagChip = e.target.closest('.lead-tag-filter-chip');

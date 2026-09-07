@@ -123,6 +123,7 @@ class PipelineGroupTests(TestCase):
         vip_idx = html.find('id="filter-very-important-only"')
         chain_idx = html.find('id="filter-chain-only"')
         sent_idx = html.find('id="filter-sent-message-only"')
+        unsent_idx = html.find('id="filter-unsent-message-only"')
         self.assertNotEqual(search_idx, -1)
         self.assertNotEqual(queued_idx, -1)
         self.assertNotEqual(vip_idx, -1)
@@ -134,6 +135,8 @@ class PipelineGroupTests(TestCase):
         self.assertLess(queued_idx, vip_idx)
         self.assertLess(vip_idx, chain_idx)
         self.assertLess(chain_idx, sent_idx)
+        self.assertLess(sent_idx, unsent_idx)
+        self.assertIn('aria-label="Not sent"', html)
         self.assertIn('id="lead-tag-filter-manage"', html)
         self.assertIn('aria-label="Manage tags"', html)
         self.assertIn('id="table-search-clear"', html)
@@ -1182,6 +1185,53 @@ class YCloudWebhookTests(TestCase):
         top.refresh_from_db()
         self.assertGreater(lead.display_order, top.display_order)
 
+    def test_mark_first_outbound_sent_sets_status_without_template_row(self):
+        from django.utils import timezone
+
+        from leads.whatsapp_service import OFFICIAL_API_MARKER, mark_first_outbound_sent
+
+        groups = ensure_pipeline_system_groups()
+        group = LeadGroup.objects.create(name="App Send Folder", sort_order=61)
+        top = Lead.objects.create(
+            name="Top App Lead",
+            address="1 Main St",
+            phone_number="+60111111112",
+            group=group,
+            display_order=1,
+        )
+        lead = Lead.objects.create(
+            name="App Send Lead",
+            address="2 Main St",
+            phone_number="+60222222223",
+            group=group,
+            display_order=2,
+            whatsapp_status=Lead.WhatsappStatus.PENDING,
+            whatsapp_last_error="queued",
+        )
+        sent_at = timezone.now()
+        self.assertTrue(
+            mark_first_outbound_sent(lead, "+60126336429", sent_at=sent_at)
+        )
+        lead.refresh_from_db()
+        top.refresh_from_db()
+        self.assertEqual(lead.whatsapp_status, Lead.WhatsappStatus.SENT)
+        self.assertEqual(lead.whatsapp_sent_at, sent_at)
+        self.assertEqual(lead.whatsapp_instance_id, "+60126336429")
+        self.assertEqual(lead.whatsapp_last_error, "")
+        self.assertGreater(lead.display_order, top.display_order)
+        self.assertFalse(ChatMessage.objects.filter(lead=lead).exists())
+        self.assertFalse(
+            LeadConversationLog.objects.filter(
+                lead=lead, remarks__icontains=OFFICIAL_API_MARKER
+            ).exists()
+        )
+        self.assertFalse(
+            mark_first_outbound_sent(lead, "+60126336429", sent_at=timezone.now())
+        )
+        unchanged = lead.whatsapp_sent_at
+        lead.refresh_from_db()
+        self.assertEqual(lead.whatsapp_sent_at, unchanged)
+
     @override_settings(WHATSAPP_FROM_NUMBER="+60126336429")
     def test_parse_ycloud_delivery_failure(self):
         from leads.whatsapp_webhook import DELIVERY_FAILED_MARKER, parse_ycloud_webhook
@@ -1356,6 +1406,127 @@ class YCloudWebhookTests(TestCase):
         chat = ChatMessage.objects.get(lead=lead, is_outbound=True)
         self.assertEqual(chat.body, "Coex phone reply logged")
         self.assertEqual(chat.template_name, "")
+
+    @override_settings(WHATSAPP_FROM_NUMBER="+60126336429")
+    def test_ycloud_smb_echo_marks_first_message_sent(self):
+        from leads.whatsapp_service import OFFICIAL_API_MARKER
+
+        groups = ensure_pipeline_system_groups()
+        lead = Lead.objects.create(
+            name="App First Send Clinic",
+            address="1 Main St",
+            phone_number="+60123456789",
+            phone_numbers=["+60123456789"],
+            group=groups["uncategorized"],
+            whatsapp_status=Lead.WhatsappStatus.IDLE,
+        )
+        payload = {
+            "id": "evt_smb_echo_first",
+            "type": "whatsapp.smb.message.echoes",
+            "apiVersion": "v2",
+            "createTime": "2026-06-14T10:02:00.000Z",
+            "whatsappMessage": {
+                "id": "msg_smb_first",
+                "wamid": "wamid.YCLOUD_SMB_FIRST",
+                "from": "+60126336429",
+                "to": "+60123456789",
+                "type": "text",
+                "text": {"body": "Hi, are you open today?"},
+                "sendTime": "2026-06-14T10:02:00.000Z",
+            },
+        }
+        client = Client()
+        response = client.post(
+            "/whatsapp/webhook/",
+            data=json.dumps(payload),
+            content_type="application/json",
+            REMOTE_ADDR="127.0.0.1",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["synced"], 1)
+
+        lead.refresh_from_db()
+        self.assertEqual(lead.whatsapp_status, Lead.WhatsappStatus.SENT)
+        self.assertIsNotNone(lead.whatsapp_sent_at)
+        self.assertEqual(lead.whatsapp_instance_id, "+60126336429")
+        chat = ChatMessage.objects.get(lead=lead, is_outbound=True)
+        self.assertEqual(chat.body, "Hi, are you open today?")
+        self.assertEqual(chat.template_name, "")
+        self.assertFalse(
+            LeadConversationLog.objects.filter(
+                lead=lead, remarks__icontains=OFFICIAL_API_MARKER
+            ).exists()
+        )
+        agent_log = LeadConversationLog.objects.get(lead=lead)
+        self.assertIn("[WhatsApp · agent]", agent_log.remarks)
+
+    @override_settings(WHATSAPP_FROM_NUMBER="+60126336429")
+    def test_ycloud_smb_echo_does_not_reset_existing_first_send(self):
+        from django.utils import timezone
+
+        groups = ensure_pipeline_system_groups()
+        first_send = timezone.now()
+        lead = Lead.objects.create(
+            name="Already Sent Clinic",
+            address="1 Main St",
+            phone_number="+60123456789",
+            phone_numbers=["+60123456789"],
+            group=groups["uncategorized"],
+            whatsapp_status=Lead.WhatsappStatus.SENT,
+            whatsapp_sent_at=first_send,
+            whatsapp_instance_id="prior-id",
+        )
+        payload = {
+            "id": "evt_smb_echo_followup",
+            "type": "whatsapp.smb.message.echoes",
+            "apiVersion": "v2",
+            "createTime": "2026-06-14T11:02:00.000Z",
+            "whatsappMessage": {
+                "id": "msg_smb_followup",
+                "wamid": "wamid.YCLOUD_SMB_FOLLOWUP",
+                "from": "+60126336429",
+                "to": "+60123456789",
+                "type": "text",
+                "text": {"body": "Just checking in"},
+                "sendTime": "2026-06-14T11:02:00.000Z",
+            },
+        }
+        client = Client()
+        response = client.post(
+            "/whatsapp/webhook/",
+            data=json.dumps(payload),
+            content_type="application/json",
+            REMOTE_ADDR="127.0.0.1",
+        )
+        self.assertEqual(response.status_code, 200)
+        lead.refresh_from_db()
+        self.assertEqual(lead.whatsapp_status, Lead.WhatsappStatus.SENT)
+        self.assertEqual(lead.whatsapp_sent_at, first_send)
+        self.assertEqual(lead.whatsapp_instance_id, "prior-id")
+
+    @override_settings(WHATSAPP_FROM_NUMBER="+60126336529")
+    def test_ycloud_inbound_does_not_mark_first_message_sent(self):
+        groups = ensure_pipeline_system_groups()
+        lead = Lead.objects.create(
+            name="Inbound Idle Clinic",
+            address="1 Main St",
+            phone_number="+60123456789",
+            phone_numbers=["+60123456789"],
+            group=groups["uncategorized"],
+            whatsapp_status=Lead.WhatsappStatus.IDLE,
+        )
+        client = Client()
+        response = client.post(
+            "/whatsapp/webhook/",
+            data=json.dumps(self._ycloud_inbound_payload()),
+            content_type="application/json",
+            REMOTE_ADDR="127.0.0.1",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["synced"], 1)
+        lead.refresh_from_db()
+        self.assertEqual(lead.whatsapp_status, Lead.WhatsappStatus.IDLE)
+        self.assertIsNone(lead.whatsapp_sent_at)
 
     @override_settings(WHATSAPP_FROM_NUMBER="+60126336429")
     def test_business_app_free_text_not_labeled_as_template(self):

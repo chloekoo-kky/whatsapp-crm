@@ -820,6 +820,42 @@ def campaign_metrics() -> dict[str, Any]:
     }
 
 
+def mark_first_outbound_sent(
+    lead: Lead,
+    phone_number_id: str = "",
+    *,
+    sent_at=None,
+) -> bool:
+    """Set First Message Sent from a detected outbound (WhatsApp app echo, etc.).
+
+    Unlike ``mark_sent``, this does not write a template chat row or Official API
+    dispatch log. No-op when ``whatsapp_sent_at`` is already set. Returns True
+    when the first-send fields were applied.
+    """
+    lead.refresh_from_db(
+        fields=["whatsapp_sent_at", "whatsapp_status", "display_order", "group_id"]
+    )
+    if lead.whatsapp_sent_at is not None:
+        return False
+
+    now = sent_at or timezone.now()
+    lead.whatsapp_status = Lead.WhatsappStatus.SENT
+    lead.whatsapp_sent_at = now
+    lead.whatsapp_last_error = ""
+    lead.display_order = sink_lead_display_order(lead)
+    update_fields = [
+        "whatsapp_status",
+        "whatsapp_sent_at",
+        "whatsapp_last_error",
+        "display_order",
+    ]
+    if phone_number_id:
+        lead.whatsapp_instance_id = phone_number_id
+        update_fields.append("whatsapp_instance_id")
+    lead.save(update_fields=update_fields)
+    return True
+
+
 def mark_sent(
     lead: Lead,
     phone_number_id: str,

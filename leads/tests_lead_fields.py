@@ -456,6 +456,27 @@ class DashboardTagFilterTests(TestCase):
         self.assertNotIn('id="lead-tag-filter-add"', html)
         self.assertNotIn('id="lead-tag-filter-create"', html)
 
+    def test_filter_control_hides_zero_count_tags(self):
+        client = Client()
+        client.force_login(self.user)
+        html = client.get(reverse("dashboard"), {"group_id": "uncategorized"}).content.decode()
+        self.assertRegex(
+            html,
+            r'data-tag-slug="unknown"[^>]*\bhidden\b',
+        )
+        self.assertNotRegex(
+            html,
+            r'data-tag-slug="dental"[^>]*\bhidden\b',
+        )
+        self.assertNotRegex(
+            html,
+            r'data-tag-slug="gp"[^>]*\bhidden\b',
+        )
+        self.assertNotRegex(
+            html,
+            r'data-tag-slug="aesthetic"[^>]*\bhidden\b',
+        )
+
     def test_leads_table_returns_tag_counts_for_current_folder(self):
         client = Client()
         client.force_login(self.user)
@@ -561,6 +582,8 @@ class DashboardTagFilterTests(TestCase):
         self.assertIn("filter-chain-only", list_src)
         self.assertIn("data-is-chain", list_src)
         self.assertIn("filter-chain-only", init_src)
+        self.assertIn("filter-unsent-message-only", list_src)
+        self.assertIn("filter-unsent-message-only", init_src)
         bulk_idx = init_src.find("dashboardJsConfig.bulkManualUrl")
         self.assertGreater(bulk_idx, -1)
         bulk_chunk = init_src[bulk_idx : bulk_idx + 1800]

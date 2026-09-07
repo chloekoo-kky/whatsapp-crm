@@ -533,6 +533,8 @@
         if (chain && chain.getAttribute('aria-pressed') === 'true') return true;
         var sent = document.getElementById('filter-sent-message-only');
         if (sent && sent.getAttribute('aria-pressed') === 'true') return true;
+        var unsent = document.getElementById('filter-unsent-message-only');
+        if (unsent && unsent.getAttribute('aria-pressed') === 'true') return true;
         return getLeadTagFilterSlugs().length > 0;
       }
       window.isLeadTableFilterActive = isLeadTableFilterActive;
@@ -603,6 +605,14 @@
           });
       }
       window.updateLeadGroupTabCounts = updateLeadGroupTabCounts;
+      function syncLeadTagFilterChipVisibility(chip) {
+        if (!chip) return;
+        var badge = chip.querySelector('.lead-tag-filter-count');
+        var n = badge ? Number(String(badge.textContent || '').trim()) || 0 : 0;
+        var selected = chip.getAttribute('aria-pressed') === 'true';
+        chip.hidden = n < 1 && !selected;
+      }
+      window.syncLeadTagFilterChipVisibility = syncLeadTagFilterChipVisibility;
       function updateLeadTagFilterCounts(counts) {
         if (!counts || typeof counts !== 'object') return;
         document.querySelectorAll('#lead-tag-filter .lead-tag-filter-chip').forEach(function (chip) {
@@ -619,6 +629,7 @@
           var labelEl = chip.querySelector('.lead-tag-filter-label');
           var name = labelEl ? String(labelEl.textContent || '').trim() : slug;
           chip.title = name + ' · ' + n + ' lead(s)';
+          syncLeadTagFilterChipVisibility(chip);
         });
       }
       window.updateLeadTagFilterCounts = updateLeadTagFilterCounts;
@@ -728,10 +739,21 @@
         }
       }
       window.initClinicViewModeFromStorage = initClinicViewModeFromStorage;
+      var LEAD_FILTER_EXCLUSIVE_PAIRS = {
+        'filter-sent-message-only': 'filter-unsent-message-only',
+        'filter-unsent-message-only': 'filter-sent-message-only',
+      };
       function toggleLeadFilterButton(btn) {
         if (!btn) return;
         const on = btn.getAttribute('aria-pressed') !== 'true';
         btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+        if (on) {
+          var otherId = LEAD_FILTER_EXCLUSIVE_PAIRS[btn.id];
+          if (otherId) {
+            var other = document.getElementById(otherId);
+            if (other) other.setAttribute('aria-pressed', 'false');
+          }
+        }
         applyTableFilter({ resetPage: true });
         refreshSelectAllState();
         refreshSelectionVisuals();
@@ -783,6 +805,7 @@
         document.querySelectorAll('.lead-tag-filter-chip').forEach(function (btn) {
           var on = !!selected[btn.getAttribute('data-tag-slug')];
           btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+          syncLeadTagFilterChipVisibility(btn);
         });
         var clearBtn = document.getElementById('lead-tag-filter-clear');
         if (clearBtn) {
@@ -812,6 +835,8 @@
         const chainOnly = chainBtn && chainBtn.getAttribute('aria-pressed') === 'true';
         const sentBtn = document.getElementById('filter-sent-message-only');
         const sentOnly = sentBtn && sentBtn.getAttribute('aria-pressed') === 'true';
+        const unsentBtn = document.getElementById('filter-unsent-message-only');
+        const unsentOnly = unsentBtn && unsentBtn.getAttribute('aria-pressed') === 'true';
         const tagSlugs = getLeadTagFilterSlugs();
         const hay = (row.getAttribute('data-search') || '').toLowerCase();
         const isVip = row.getAttribute('data-very-important') === '1';
@@ -821,6 +846,7 @@
         if (vipOnly && !isVip) return false;
         if (chainOnly && !isChain) return false;
         if (sentOnly && !hasSent) return false;
+        if (unsentOnly && hasSent) return false;
         if (tagSlugs.length && !leadRowMatchesTagFilter(row, tagSlugs)) return false;
         return true;
       }
@@ -920,6 +946,8 @@
         if (chain && chain.getAttribute('aria-pressed') === 'true') return true;
         var sent = document.getElementById('filter-sent-message-only');
         if (sent && sent.getAttribute('aria-pressed') === 'true') return true;
+        var unsent = document.getElementById('filter-unsent-message-only');
+        if (unsent && unsent.getAttribute('aria-pressed') === 'true') return true;
         return false;
       }
       window.isLeadIconFilterActive = isLeadIconFilterActive;
@@ -951,6 +979,8 @@
         if (chain) chain.setAttribute('aria-pressed', 'false');
         var sent = document.getElementById('filter-sent-message-only');
         if (sent) sent.setAttribute('aria-pressed', 'false');
+        var unsent = document.getElementById('filter-unsent-message-only');
+        if (unsent) unsent.setAttribute('aria-pressed', 'false');
         if (typeof saveLeadTagFilterSlugs === 'function') saveLeadTagFilterSlugs([]);
         var wasGlobal = !!globalSearchActive;
         await exitGlobalSearchMode({ clearInput: true });
@@ -1092,6 +1122,8 @@
         if (chain && chain.getAttribute('aria-pressed') === 'true') return false;
         var sent = document.getElementById('filter-sent-message-only');
         if (sent && sent.getAttribute('aria-pressed') === 'true') return false;
+        var unsent = document.getElementById('filter-unsent-message-only');
+        if (unsent && unsent.getAttribute('aria-pressed') === 'true') return false;
         if (typeof window.isQueuedOutreachFilterActive === 'function' && window.isQueuedOutreachFilterActive()) return false;
         if (getLeadTagFilterSlugs().length > 0) return false;
         var filtered = getFilteredClinicRowsInOrder();
