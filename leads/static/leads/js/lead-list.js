@@ -531,6 +531,8 @@
         if (vip && vip.getAttribute('aria-pressed') === 'true') return true;
         var chain = document.getElementById('filter-chain-only');
         if (chain && chain.getAttribute('aria-pressed') === 'true') return true;
+        var noChain = document.getElementById('filter-no-chain-only');
+        if (noChain && noChain.getAttribute('aria-pressed') === 'true') return true;
         var sent = document.getElementById('filter-sent-message-only');
         if (sent && sent.getAttribute('aria-pressed') === 'true') return true;
         var unsent = document.getElementById('filter-unsent-message-only');
@@ -742,6 +744,8 @@
       var LEAD_FILTER_EXCLUSIVE_PAIRS = {
         'filter-sent-message-only': 'filter-unsent-message-only',
         'filter-unsent-message-only': 'filter-sent-message-only',
+        'filter-chain-only': 'filter-no-chain-only',
+        'filter-no-chain-only': 'filter-chain-only',
       };
       function toggleLeadFilterButton(btn) {
         if (!btn) return;
@@ -833,6 +837,8 @@
         const vipOnly = vipBtn && vipBtn.getAttribute('aria-pressed') === 'true';
         const chainBtn = document.getElementById('filter-chain-only');
         const chainOnly = chainBtn && chainBtn.getAttribute('aria-pressed') === 'true';
+        const noChainBtn = document.getElementById('filter-no-chain-only');
+        const noChainOnly = noChainBtn && noChainBtn.getAttribute('aria-pressed') === 'true';
         const sentBtn = document.getElementById('filter-sent-message-only');
         const sentOnly = sentBtn && sentBtn.getAttribute('aria-pressed') === 'true';
         const unsentBtn = document.getElementById('filter-unsent-message-only');
@@ -845,6 +851,7 @@
         if (!opts.skipKeyword && !globalSearchActive && q && !hay.includes(q)) return false;
         if (vipOnly && !isVip) return false;
         if (chainOnly && !isChain) return false;
+        if (noChainOnly && isChain) return false;
         if (sentOnly && !hasSent) return false;
         if (unsentOnly && hasSent) return false;
         if (tagSlugs.length && !leadRowMatchesTagFilter(row, tagSlugs)) return false;
@@ -944,6 +951,8 @@
         if (vip && vip.getAttribute('aria-pressed') === 'true') return true;
         var chain = document.getElementById('filter-chain-only');
         if (chain && chain.getAttribute('aria-pressed') === 'true') return true;
+        var noChain = document.getElementById('filter-no-chain-only');
+        if (noChain && noChain.getAttribute('aria-pressed') === 'true') return true;
         var sent = document.getElementById('filter-sent-message-only');
         if (sent && sent.getAttribute('aria-pressed') === 'true') return true;
         var unsent = document.getElementById('filter-unsent-message-only');
@@ -977,6 +986,8 @@
         if (vip) vip.setAttribute('aria-pressed', 'false');
         var chain = document.getElementById('filter-chain-only');
         if (chain) chain.setAttribute('aria-pressed', 'false');
+        var noChain = document.getElementById('filter-no-chain-only');
+        if (noChain) noChain.setAttribute('aria-pressed', 'false');
         var sent = document.getElementById('filter-sent-message-only');
         if (sent) sent.setAttribute('aria-pressed', 'false');
         var unsent = document.getElementById('filter-unsent-message-only');
@@ -1120,6 +1131,8 @@
         if (vip && vip.getAttribute('aria-pressed') === 'true') return false;
         var chain = document.getElementById('filter-chain-only');
         if (chain && chain.getAttribute('aria-pressed') === 'true') return false;
+        var noChain = document.getElementById('filter-no-chain-only');
+        if (noChain && noChain.getAttribute('aria-pressed') === 'true') return false;
         var sent = document.getElementById('filter-sent-message-only');
         if (sent && sent.getAttribute('aria-pressed') === 'true') return false;
         var unsent = document.getElementById('filter-unsent-message-only');

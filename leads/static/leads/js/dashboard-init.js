@@ -759,6 +759,11 @@
             toggleLeadFilterButton(chainBtn);
             return;
           }
+          var noChainBtn = e.target.closest('#filter-no-chain-only');
+          if (noChainBtn) {
+            toggleLeadFilterButton(noChainBtn);
+            return;
+          }
           var queuedBtn = e.target.closest('#filter-queued-only');
           if (queuedBtn) {
             toggleLeadFilterButton(queuedBtn);

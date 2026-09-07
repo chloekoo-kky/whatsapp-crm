@@ -582,6 +582,8 @@ class DashboardTagFilterTests(TestCase):
         self.assertIn("filter-chain-only", list_src)
         self.assertIn("data-is-chain", list_src)
         self.assertIn("filter-chain-only", init_src)
+        self.assertIn("filter-no-chain-only", list_src)
+        self.assertIn("filter-no-chain-only", init_src)
         self.assertIn("filter-unsent-message-only", list_src)
         self.assertIn("filter-unsent-message-only", init_src)
         bulk_idx = init_src.find("dashboardJsConfig.bulkManualUrl")

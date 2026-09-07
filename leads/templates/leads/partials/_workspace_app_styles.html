@@ -771,6 +771,19 @@
     letter-spacing: 0.04em;
     line-height: 1;
   }
+  .lead-chain-filter-mark--exclude {
+    position: relative;
+  }
+  .lead-chain-filter-mark--exclude::after {
+    content: "";
+    position: absolute;
+    left: -0.08rem;
+    right: -0.08rem;
+    top: 50%;
+    height: 1.5px;
+    background: currentColor;
+    transform: rotate(-45deg);
+  }
   #content-toolbar .lead-filter-tag {
     border-radius: 9999px;
   }
