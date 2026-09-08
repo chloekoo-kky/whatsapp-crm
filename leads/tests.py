@@ -432,9 +432,7 @@ class PipelineGroupTests(TestCase):
         )
         already.refresh_from_db()
         self.assertEqual(already.whatsapp_status, Lead.WhatsappStatus.SENT)
-        chat = ChatMessage.objects.get(lead=lead, is_outbound=True)
-        self.assertEqual(chat.body, "Hi, are you open at 1:26?")
-        self.assertEqual(chat.meta_message_id, "manual-mark-sent")
+        self.assertFalse(ChatMessage.objects.filter(lead=lead).exists())
         self.assertFalse(ChatMessage.objects.filter(lead=already).exists())
 
     def test_bulk_mark_sent_new_folder_keeps_permanent_delete(self):
@@ -459,7 +457,7 @@ class PipelineGroupTests(TestCase):
         self.assertNotIn('title="Move to trash"', html)
         self.assertIn("Permanently delete", html)
 
-    def test_chat_inbox_shows_manual_mark_sent_message(self):
+    def test_chat_inbox_does_not_invent_mark_sent_placeholder(self):
         groups = ensure_pipeline_system_groups()
         lead = Lead.objects.create(
             name="Manual Chat Clinic",
@@ -480,37 +478,54 @@ class PipelineGroupTests(TestCase):
         response = client.get(reverse("chat_inbox", kwargs={"pk": lead.pk}))
         self.assertEqual(response.status_code, 200)
         html = response.content.decode()
-        self.assertIn("Hello from the WhatsApp Business app", html)
-        self.assertNotIn("No messages yet", html)
+        self.assertIn("No messages yet", html)
+        self.assertNotIn("Sent from WhatsApp Business", html)
+        self.assertNotIn("Hello from the WhatsApp Business app", html)
+        self.assertFalse(ChatMessage.objects.filter(lead=lead).exists())
 
-    def test_chat_inbox_backfills_older_manual_mark_sent_log(self):
+    def test_chat_inbox_replaces_mark_sent_placeholder_with_agent_log(self):
         from django.utils import timezone
 
+        from leads.chat_messages import (
+            MANUAL_MARK_SENT_CHAT_BODY,
+            MANUAL_MARK_SENT_MESSAGE_ID,
+        )
         from leads.whatsapp_service import MANUAL_MARK_SENT_REMARK
 
         groups = ensure_pipeline_system_groups()
         lead = Lead.objects.create(
-            name="Older Manual Clinic",
+            name="Placeholder Recovery Clinic",
             address="11 New Rd",
             phone_number="+60119876547",
             phone_numbers=["+60119876547"],
             group=groups["ready"],
             whatsapp_status=Lead.WhatsappStatus.SENT,
             whatsapp_sent_at=timezone.now(),
-            whatsapp_draft="Draft that was already sent",
+        )
+        ChatMessage.objects.create(
+            lead=lead,
+            body=MANUAL_MARK_SENT_CHAT_BODY,
+            is_outbound=True,
+            meta_message_id=MANUAL_MARK_SENT_MESSAGE_ID,
         )
         LeadConversationLog.objects.create(
             lead=lead,
             conversation_date=timezone.now().date(),
             remarks=MANUAL_MARK_SENT_REMARK,
         )
+        LeadConversationLog.objects.create(
+            lead=lead,
+            conversation_date=timezone.now().date(),
+            remarks="wa-id:wamid.REAL_FIRST\n[WhatsApp · agent] Actual first text at 1:26",
+        )
         client = staff_client()
         response = client.get(reverse("chat_inbox", kwargs={"pk": lead.pk}))
         self.assertEqual(response.status_code, 200)
-        self.assertIn("Draft that was already sent", response.content.decode())
-        self.assertTrue(
-            ChatMessage.objects.filter(lead=lead, is_outbound=True).exists()
-        )
+        html = response.content.decode()
+        self.assertIn("Actual first text at 1:26", html)
+        self.assertNotIn("Sent from WhatsApp Business", html)
+        chat = ChatMessage.objects.get(lead=lead, is_outbound=True)
+        self.assertEqual(chat.body, "Actual first text at 1:26")
 
     def test_dequeue_reverts_pending_lead_to_idle(self):
         groups = ensure_pipeline_system_groups()
@@ -1572,8 +1587,11 @@ class YCloudWebhookTests(TestCase):
 
     @override_settings(WHATSAPP_FROM_NUMBER="+60126336429")
     def test_ycloud_smb_echo_replaces_manual_mark_sent_placeholder(self):
-        from leads.chat_messages import MANUAL_MARK_SENT_MESSAGE_ID
-        from leads.whatsapp_service import mark_leads_first_message_sent
+        from leads.chat_messages import (
+            MANUAL_MARK_SENT_CHAT_BODY,
+            MANUAL_MARK_SENT_MESSAGE_ID,
+            record_outbound_chat_message,
+        )
 
         groups = ensure_pipeline_system_groups()
         lead = Lead.objects.create(
@@ -1582,15 +1600,14 @@ class YCloudWebhookTests(TestCase):
             phone_number="+60123456789",
             phone_numbers=["+60123456789"],
             group=groups["uncategorized"],
-            whatsapp_status=Lead.WhatsappStatus.IDLE,
-            whatsapp_draft="Draft copy of the first text",
+            whatsapp_status=Lead.WhatsappStatus.SENT,
         )
-        updated, marked = mark_leads_first_message_sent([lead.pk])
-        self.assertEqual(updated, 1)
-        self.assertEqual(marked, [lead.pk])
-        placeholder = ChatMessage.objects.get(lead=lead, is_outbound=True)
-        self.assertEqual(placeholder.body, "Draft copy of the first text")
-        self.assertEqual(placeholder.meta_message_id, MANUAL_MARK_SENT_MESSAGE_ID)
+        record_outbound_chat_message(
+            lead,
+            template_name="",
+            body=MANUAL_MARK_SENT_CHAT_BODY,
+            meta_message_id=MANUAL_MARK_SENT_MESSAGE_ID,
+        )
 
         payload = {
             "id": "evt_smb_echo_replace",

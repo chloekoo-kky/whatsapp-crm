@@ -16,7 +16,6 @@ from django.db.models import Q
 from django.utils import timezone
 
 from leads.chat_messages import (
-    record_manual_first_send_chat,
     record_outbound_chat_message,
     upsert_outbound_chat_message,
     within_customer_service_window,
@@ -864,12 +863,11 @@ def mark_leads_first_message_sent(lead_ids: Iterable[int]) -> tuple[int, list[in
     for lead in Lead.objects.filter(pk__in=list(lead_ids)).iterator():
         if not mark_first_outbound_sent(lead, whatsapp_from_number()):
             continue
-        log = LeadConversationLog.objects.create(
+        LeadConversationLog.objects.create(
             lead=lead,
             conversation_date=timezone.now().date(),
             remarks=MANUAL_MARK_SENT_REMARK,
         )
-        record_manual_first_send_chat(lead, created_at=log.created_at)
         marked_ids.append(lead.pk)
     return len(marked_ids), marked_ids
 

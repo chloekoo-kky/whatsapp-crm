@@ -272,18 +272,13 @@ def upsert_outbound_chat_message(
     )
 
 
-def record_manual_first_send_chat(lead: Lead, *, created_at=None) -> ChatMessage | None:
-    """Place a first-send bubble after manual Mark sent when no webhook text exists yet."""
-    if ChatMessage.objects.filter(lead=lead).exists():
-        return None
-    body = (getattr(lead, "whatsapp_draft", None) or "").strip() or MANUAL_MARK_SENT_CHAT_BODY
-    return record_outbound_chat_message(
-        lead,
-        template_name="",
-        body=body,
-        meta_message_id=MANUAL_MARK_SENT_MESSAGE_ID,
-        created_at=created_at,
-    )
+def drop_manual_mark_sent_placeholders(lead: Lead) -> int:
+    """Remove fake Mark sent bubbles so they cannot hide a real WhatsApp echo."""
+    deleted, _ = ChatMessage.objects.filter(lead=lead, is_outbound=True).filter(
+        Q(meta_message_id=MANUAL_MARK_SENT_MESSAGE_ID)
+        | Q(body=MANUAL_MARK_SENT_CHAT_BODY)
+    ).delete()
+    return deleted
 
 
 def record_inbound_chat_message(
@@ -348,7 +343,6 @@ def _repair_outbound_template_rows(lead: Lead) -> int:
 def sync_chat_messages_from_logs(lead: Lead) -> None:
     """Import missing rows from ``LeadConversationLog`` and refresh outbound copy."""
     from leads.whatsapp_service import (
-        MANUAL_MARK_SENT_REMARK,
         OFFICIAL_API_MARKER,
         meta_template_preview_body,
         whatsapp_template_name,
@@ -375,10 +369,6 @@ def sync_chat_messages_from_logs(lead: Lead) -> None:
                 created_at=log.created_at,
             )
             ChatMessage.objects.filter(pk=msg.pk).update(created_at=log.created_at)
-            continue
-
-        if remarks == MANUAL_MARK_SENT_REMARK:
-            record_manual_first_send_chat(lead, created_at=log.created_at)
             continue
 
         if "[WhatsApp · client]" in remarks:
@@ -505,6 +495,7 @@ def _repair_failed_outbound_rows(lead: Lead) -> int:
 
 
 def chat_messages_for_lead(lead: Lead) -> list[ChatMessage]:
+    drop_manual_mark_sent_placeholders(lead)
     sync_chat_messages_from_logs(lead)
     _dedupe_duplicate_outbound_rows(lead)
     _repair_outbound_template_rows(lead)
@@ -512,6 +503,8 @@ def chat_messages_for_lead(lead: Lead) -> list[ChatMessage]:
     return list(
         ChatMessage.objects.filter(lead=lead)
         .exclude(is_outbound=True, delivery_status=FAILED_DELIVERY_STATUS)
+        .exclude(is_outbound=True, meta_message_id=MANUAL_MARK_SENT_MESSAGE_ID)
+        .exclude(is_outbound=True, body=MANUAL_MARK_SENT_CHAT_BODY)
         .order_by("created_at", "id")
     )
 
