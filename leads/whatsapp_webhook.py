@@ -392,6 +392,15 @@ def parse_ycloud_webhook(
             return _parse_ycloud_business_outbound(message, skip_status_filter=True), []
         return [], []
 
+    if event_type == "whatsapp.smb.history":
+        inbound = payload.get("whatsappInboundMessage")
+        if isinstance(inbound, dict):
+            return _parse_ycloud_inbound(inbound), []
+        message = payload.get("whatsappMessage")
+        if isinstance(message, dict):
+            return _parse_ycloud_business_outbound(message, skip_status_filter=True), []
+        return [], []
+
     return [], []
 
 

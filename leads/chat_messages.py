@@ -20,6 +20,8 @@ CUSTOMER_SERVICE_WINDOW = timedelta(hours=24)
 # Kept in sync with leads.whatsapp_webhook.DELIVERY_FAILED_MARKER (avoid import cycle).
 DELIVERY_FAILED_MARKER = "[WhatsApp delivery failed]"
 FAILED_DELIVERY_STATUS = "failed"
+MANUAL_MARK_SENT_MESSAGE_ID = "manual-mark-sent"
+MANUAL_MARK_SENT_CHAT_BODY = "Sent from WhatsApp Business"
 
 _CLIENT_LOG_RE = re.compile(r"^\[WhatsApp · client\]\s*(.*)$", re.DOTALL)
 _AGENT_LOG_RE = re.compile(r"^\[WhatsApp · agent\]\s*(.*)$", re.DOTALL)
@@ -231,6 +233,16 @@ def upsert_outbound_chat_message(
                 meta_message_id=mid,
                 created_at=created_at,
             )
+        if existing is None and not tpl and mid != MANUAL_MARK_SENT_MESSAGE_ID:
+            existing = (
+                ChatMessage.objects.filter(
+                    lead=lead,
+                    is_outbound=True,
+                    meta_message_id=MANUAL_MARK_SENT_MESSAGE_ID,
+                )
+                .order_by("created_at", "id")
+                .first()
+            )
         if existing is not None:
             updates: dict[str, object] = {}
             if snapshot and existing.body.strip() != snapshot:
@@ -256,6 +268,20 @@ def upsert_outbound_chat_message(
         template_name=tpl,
         body=snapshot or None,
         meta_message_id=mid,
+        created_at=created_at,
+    )
+
+
+def record_manual_first_send_chat(lead: Lead, *, created_at=None) -> ChatMessage | None:
+    """Place a first-send bubble after manual Mark sent when no webhook text exists yet."""
+    if ChatMessage.objects.filter(lead=lead).exists():
+        return None
+    body = (getattr(lead, "whatsapp_draft", None) or "").strip() or MANUAL_MARK_SENT_CHAT_BODY
+    return record_outbound_chat_message(
+        lead,
+        template_name="",
+        body=body,
+        meta_message_id=MANUAL_MARK_SENT_MESSAGE_ID,
         created_at=created_at,
     )
 
@@ -322,6 +348,7 @@ def _repair_outbound_template_rows(lead: Lead) -> int:
 def sync_chat_messages_from_logs(lead: Lead) -> None:
     """Import missing rows from ``LeadConversationLog`` and refresh outbound copy."""
     from leads.whatsapp_service import (
+        MANUAL_MARK_SENT_REMARK,
         OFFICIAL_API_MARKER,
         meta_template_preview_body,
         whatsapp_template_name,
@@ -348,6 +375,10 @@ def sync_chat_messages_from_logs(lead: Lead) -> None:
                 created_at=log.created_at,
             )
             ChatMessage.objects.filter(pk=msg.pk).update(created_at=log.created_at)
+            continue
+
+        if remarks == MANUAL_MARK_SENT_REMARK:
+            record_manual_first_send_chat(lead, created_at=log.created_at)
             continue
 
         if "[WhatsApp · client]" in remarks:

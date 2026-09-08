@@ -395,6 +395,7 @@ class PipelineGroupTests(TestCase):
             phone_numbers=["+60119876543"],
             group=groups["ready"],
             whatsapp_status=Lead.WhatsappStatus.IDLE,
+            whatsapp_draft="Hi, are you open at 1:26?",
         )
         already = Lead.objects.create(
             name="Already Sent Clinic",
@@ -431,6 +432,10 @@ class PipelineGroupTests(TestCase):
         )
         already.refresh_from_db()
         self.assertEqual(already.whatsapp_status, Lead.WhatsappStatus.SENT)
+        chat = ChatMessage.objects.get(lead=lead, is_outbound=True)
+        self.assertEqual(chat.body, "Hi, are you open at 1:26?")
+        self.assertEqual(chat.meta_message_id, "manual-mark-sent")
+        self.assertFalse(ChatMessage.objects.filter(lead=already).exists())
 
     def test_bulk_mark_sent_new_folder_keeps_permanent_delete(self):
         groups = ensure_pipeline_system_groups()
@@ -453,6 +458,59 @@ class PipelineGroupTests(TestCase):
         self.assertIn("lead-card-active-chat-btn", html)
         self.assertNotIn('title="Move to trash"', html)
         self.assertIn("Permanently delete", html)
+
+    def test_chat_inbox_shows_manual_mark_sent_message(self):
+        groups = ensure_pipeline_system_groups()
+        lead = Lead.objects.create(
+            name="Manual Chat Clinic",
+            address="10 New Rd",
+            phone_number="+60119876546",
+            phone_numbers=["+60119876546"],
+            group=groups["ready"],
+            whatsapp_status=Lead.WhatsappStatus.IDLE,
+            whatsapp_draft="Hello from the WhatsApp Business app",
+        )
+        client = staff_client()
+        mark = client.post(
+            reverse("leads_bulk_mark_sent"),
+            data=json.dumps({"ids": [lead.pk]}),
+            content_type="application/json",
+        )
+        self.assertEqual(mark.status_code, 200)
+        response = client.get(reverse("chat_inbox", kwargs={"pk": lead.pk}))
+        self.assertEqual(response.status_code, 200)
+        html = response.content.decode()
+        self.assertIn("Hello from the WhatsApp Business app", html)
+        self.assertNotIn("No messages yet", html)
+
+    def test_chat_inbox_backfills_older_manual_mark_sent_log(self):
+        from django.utils import timezone
+
+        from leads.whatsapp_service import MANUAL_MARK_SENT_REMARK
+
+        groups = ensure_pipeline_system_groups()
+        lead = Lead.objects.create(
+            name="Older Manual Clinic",
+            address="11 New Rd",
+            phone_number="+60119876547",
+            phone_numbers=["+60119876547"],
+            group=groups["ready"],
+            whatsapp_status=Lead.WhatsappStatus.SENT,
+            whatsapp_sent_at=timezone.now(),
+            whatsapp_draft="Draft that was already sent",
+        )
+        LeadConversationLog.objects.create(
+            lead=lead,
+            conversation_date=timezone.now().date(),
+            remarks=MANUAL_MARK_SENT_REMARK,
+        )
+        client = staff_client()
+        response = client.get(reverse("chat_inbox", kwargs={"pk": lead.pk}))
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Draft that was already sent", response.content.decode())
+        self.assertTrue(
+            ChatMessage.objects.filter(lead=lead, is_outbound=True).exists()
+        )
 
     def test_dequeue_reverts_pending_lead_to_idle(self):
         groups = ensure_pipeline_system_groups()
@@ -1147,6 +1205,32 @@ class YCloudWebhookTests(TestCase):
         self.assertEqual(parsed[0].text_body, "Reply from Coex phone app")
 
     @override_settings(WHATSAPP_FROM_NUMBER="+60126336429")
+    def test_parse_ycloud_smb_history_outbound(self):
+        from leads.whatsapp_webhook import parse_ycloud_webhook
+
+        payload = {
+            "id": "evt_smb_hist_1",
+            "type": "whatsapp.smb.history",
+            "apiVersion": "v2",
+            "createTime": "2026-09-07T05:26:00.000Z",
+            "whatsappMessage": {
+                "id": "msg_hist_1",
+                "wamid": "wamid.YCLOUD_SMB_HISTORY",
+                "from": "+60126336429",
+                "to": "+60123456789",
+                "type": "text",
+                "status": "sent",
+                "text": {"body": "History first text at 1:26"},
+                "sendTime": "2026-09-07T05:26:00.000Z",
+            },
+        }
+        parsed, failures = parse_ycloud_webhook(payload)
+        self.assertEqual(len(parsed), 1)
+        self.assertEqual(len(failures), 0)
+        self.assertTrue(parsed[0].from_me)
+        self.assertEqual(parsed[0].text_body, "History first text at 1:26")
+
+    @override_settings(WHATSAPP_FROM_NUMBER="+60126336429")
     def test_ycloud_template_webhook_upserts_outbound_chat(self):
         from django.utils import timezone
 
@@ -1485,6 +1569,57 @@ class YCloudWebhookTests(TestCase):
         chat = ChatMessage.objects.get(lead=lead, is_outbound=True)
         self.assertEqual(chat.body, "Coex phone reply logged")
         self.assertEqual(chat.template_name, "")
+
+    @override_settings(WHATSAPP_FROM_NUMBER="+60126336429")
+    def test_ycloud_smb_echo_replaces_manual_mark_sent_placeholder(self):
+        from leads.chat_messages import MANUAL_MARK_SENT_MESSAGE_ID
+        from leads.whatsapp_service import mark_leads_first_message_sent
+
+        groups = ensure_pipeline_system_groups()
+        lead = Lead.objects.create(
+            name="Manual Then Echo Clinic",
+            address="1 Main St",
+            phone_number="+60123456789",
+            phone_numbers=["+60123456789"],
+            group=groups["uncategorized"],
+            whatsapp_status=Lead.WhatsappStatus.IDLE,
+            whatsapp_draft="Draft copy of the first text",
+        )
+        updated, marked = mark_leads_first_message_sent([lead.pk])
+        self.assertEqual(updated, 1)
+        self.assertEqual(marked, [lead.pk])
+        placeholder = ChatMessage.objects.get(lead=lead, is_outbound=True)
+        self.assertEqual(placeholder.body, "Draft copy of the first text")
+        self.assertEqual(placeholder.meta_message_id, MANUAL_MARK_SENT_MESSAGE_ID)
+
+        payload = {
+            "id": "evt_smb_echo_replace",
+            "type": "whatsapp.smb.message.echoes",
+            "apiVersion": "v2",
+            "createTime": "2026-09-07T05:26:00.000Z",
+            "whatsappMessage": {
+                "id": "msg_smb_replace",
+                "wamid": "wamid.YCLOUD_SMB_REAL",
+                "from": "+60126336429",
+                "to": "+60123456789",
+                "type": "text",
+                "text": {"body": "Actual first text at 1:26"},
+                "sendTime": "2026-09-07T05:26:00.000Z",
+            },
+        }
+        client = Client()
+        response = client.post(
+            "/whatsapp/webhook/",
+            data=json.dumps(payload),
+            content_type="application/json",
+            REMOTE_ADDR="127.0.0.1",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["synced"], 1)
+        chats = list(ChatMessage.objects.filter(lead=lead, is_outbound=True))
+        self.assertEqual(len(chats), 1)
+        self.assertEqual(chats[0].body, "Actual first text at 1:26")
+        self.assertEqual(chats[0].meta_message_id, "wamid.YCLOUD_SMB_REAL")
 
     @override_settings(WHATSAPP_FROM_NUMBER="+60126336429")
     def test_ycloud_smb_echo_marks_first_message_sent(self):
