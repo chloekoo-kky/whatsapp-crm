@@ -487,6 +487,35 @@ class DashboardTagFilterTests(TestCase):
         self.assertEqual(counts.get("gp"), 1)
         self.assertEqual(counts.get("aesthetic"), 1)
 
+    def test_leads_table_filters_ready_folder_by_tag_and(self):
+        from leads.views import apply_lead_tag_and_filter
+
+        ready = get_or_create_ready_group()
+        for lead in (self.both, self.aes, self.none):
+            lead.group = ready
+            lead.save(update_fields=["group"])
+        qs = apply_lead_tag_and_filter(
+            Lead.objects.filter(group=ready), ["dental", "gp"]
+        )
+        self.assertEqual(set(qs.values_list("name", flat=True)), {"Both Tags Clinic"})
+
+        client = Client()
+        client.force_login(self.user)
+        response = client.get(
+            reverse("get_leads_table"),
+            {"group_id": str(ready.pk), "tags": "dental,gp"},
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        for html in (payload["tbody_html"], payload["grid_html"]):
+            self.assertIn("Both Tags Clinic", html)
+            self.assertNotIn("Aesthetic Only Clinic", html)
+            self.assertNotIn("No Tags Clinic", html)
+        self.assertEqual(payload["tag_counts"].get("dental"), 1)
+        self.assertEqual(payload["tag_counts"].get("gp"), 1)
+        self.assertEqual(payload["tag_counts"].get("aesthetic"), 1)
+        self.assertEqual(payload["funnel_metrics"]["total_pipeline"], 3)
+
     def test_and_semantics_from_row_data_tags_in_both_views(self):
         qs = _annotate_lead_dashboard_qs(
             Lead.objects.filter(pk__in=[self.both.pk, self.aes.pk, self.none.pk])
@@ -557,8 +586,10 @@ class DashboardTagFilterTests(TestCase):
 
         boot = Path(__file__).resolve().parent / "static" / "leads" / "js" / "dashboard-boot.js"
         listing = Path(__file__).resolve().parent / "static" / "leads" / "js" / "lead-list.js"
+        groups = Path(__file__).resolve().parent / "static" / "leads" / "js" / "lead-groups.js"
         boot_src = boot.read_text(encoding="utf-8")
         list_src = listing.read_text(encoding="utf-8")
+        groups_src = groups.read_text(encoding="utf-8")
         init = Path(__file__).resolve().parent / "static" / "leads" / "js" / "dashboard-init.js"
         styles = (
             Path(__file__).resolve().parent
@@ -573,6 +604,28 @@ class DashboardTagFilterTests(TestCase):
         self.assertIn("clinic_crm_lead_tag_filter", list_src)
         self.assertIn("leadRowMatchesTagFilter", list_src)
         self.assertIn("getLeadTagFilterSlugs", list_src)
+        self.assertIn("appendLeadTableFilterParams", groups_src)
+        self.assertIn("searchParams.set('tags'", groups_src)
+        self.assertIn("getLeadTagFilterSlugs().slice().sort().join(',')", groups_src)
+        chip_idx = init_src.find("var tagChip = e.target.closest('.lead-tag-filter-chip')")
+        self.assertGreater(chip_idx, -1)
+        self.assertIn("__refreshCurrentLeadFolder", init_src[chip_idx : chip_idx + 900])
+        self.assertIn("hadTags", list_src)
+        self.assertIn("applyLeadTagFilterCountDelta", list_src)
+        self.assertIn("syncLeadTagFilterChipVisibility", list_src)
+        self.assertIn("chip.hidden = n < 1 && !selected", list_src)
+        delta_idx = list_src.find("function applyLeadTagSlugsToDom")
+        self.assertGreater(delta_idx, -1)
+        self.assertIn(
+            "applyLeadTagFilterCountDelta(leadTagSlugsFromAttr(existing), cleaned)",
+            list_src[delta_idx : delta_idx + 900],
+        )
+        edit_idx = list_src.find("function applyClinicEditToDom")
+        self.assertGreater(edit_idx, -1)
+        self.assertIn(
+            "applyLeadTagFilterCountDelta",
+            list_src[edit_idx : edit_idx + 500],
+        )
         self.assertIn("hasActiveLocalLeadFilters", list_src)
         self.assertIn("(!localFilters || !!globalSearchActive)", list_src)
         self.assertIn("if (!globalSearchActive) applyTableFilter({ resetPage: true });", list_src)

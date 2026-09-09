@@ -872,7 +872,12 @@
             if (idx === -1) slugs.push(slug);
             else slugs.splice(idx, 1);
             saveLeadTagFilterSlugs(slugs);
-            applyTableFilter({ resetPage: true });
+            if (typeof window.syncLeadTagFilterUi === 'function') window.syncLeadTagFilterUi();
+            if (typeof window.__refreshCurrentLeadFolder === 'function') {
+              window.__refreshCurrentLeadFolder();
+            } else {
+              applyTableFilter({ resetPage: true });
+            }
             refreshSelectAllState();
             refreshSelectionVisuals();
             return;
@@ -885,7 +890,12 @@
           var tagFilterClear = e.target.closest('#lead-tag-filter-clear');
           if (tagFilterClear) {
             saveLeadTagFilterSlugs([]);
-            applyTableFilter({ resetPage: true });
+            if (typeof window.syncLeadTagFilterUi === 'function') window.syncLeadTagFilterUi();
+            if (typeof window.__refreshCurrentLeadFolder === 'function') {
+              window.__refreshCurrentLeadFolder();
+            } else {
+              applyTableFilter({ resetPage: true });
+            }
             refreshSelectAllState();
             refreshSelectionVisuals();
             return;

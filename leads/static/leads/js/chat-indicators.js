@@ -89,9 +89,13 @@
         var u = new URL(dashboardJsConfig.getLeadChatIndicatorsUrl, window.location.origin);
         var gid = normalizeLeadGroupTabId(currentLeadGroupTabId);
         u.searchParams.set('group_id', gid === 'uncategorized' ? 'uncategorized' : String(gid));
-        if (activeSearchRecordId != null) u.searchParams.set('search_record', String(activeSearchRecordId));
-        if (typeof window.isQueuedOutreachFilterActive === 'function' && window.isQueuedOutreachFilterActive()) {
-          u.searchParams.set('queued', '1');
+        if (typeof window.appendLeadTableFilterParams === 'function') {
+          window.appendLeadTableFilterParams(u);
+        } else {
+          if (activeSearchRecordId != null) u.searchParams.set('search_record', String(activeSearchRecordId));
+          if (typeof window.isQueuedOutreachFilterActive === 'function' && window.isQueuedOutreachFilterActive()) {
+            u.searchParams.set('queued', '1');
+          }
         }
         var res = await fetch(u.toString(), { headers: { Accept: 'application/json' }, credentials: 'same-origin' });
         if (!res.ok) throw new Error('HTTP ' + res.status);

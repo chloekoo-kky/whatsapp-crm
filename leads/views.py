@@ -399,6 +399,35 @@ def apply_queued_outreach_filter(qs):
     )
 
 
+def _request_tag_filter_slugs(request) -> list[str]:
+    """Selected dashboard tag-filter slugs (AND). ``tags`` may be repeated or comma-separated."""
+    raw_values: list[str] = []
+    if hasattr(request, "GET"):
+        raw_values.extend(request.GET.getlist("tags"))
+    if hasattr(request, "POST"):
+        raw_values.extend(request.POST.getlist("tags"))
+    seen: set[str] = set()
+    out: list[str] = []
+    for raw in raw_values:
+        for part in str(raw or "").split(","):
+            slug = part.strip()
+            if not slug or slug in seen:
+                continue
+            seen.add(slug)
+            out.append(slug)
+    return out
+
+
+def apply_lead_tag_and_filter(qs, slugs):
+    """Keep leads that have every selected tag (AND)."""
+    cleaned = [str(slug).strip() for slug in (slugs or []) if str(slug).strip()]
+    if not cleaned:
+        return qs
+    for slug in cleaned:
+        qs = qs.filter(tags__slug=slug)
+    return qs.distinct()
+
+
 def _resolve_dashboard_tab_key(group_id_raw: Optional[str]) -> str:
     """Map a request ``group_id`` to a dashboard tab key. Missing values default to Ready."""
     g = (group_id_raw or "").strip().lower()
@@ -2781,6 +2810,10 @@ def get_lead_chat_indicators(request):
     qs = _leads_qs_for_tab(
         request, _resolve_dashboard_tab_key(gid_raw), srid_int
     )
+    funnel = _funnel_metrics(qs)
+    tag_slugs = _request_tag_filter_slugs(request)
+    if tag_slugs:
+        qs = apply_lead_tag_and_filter(qs, tag_slugs)
     whatsapp_chats_group = get_or_create_whatsapp_chats_group()
     active_chat_count = _leads_qs_for_tab(
         request, str(whatsapp_chats_group.pk), None, queued_only=False
@@ -2789,7 +2822,7 @@ def get_lead_chat_indicators(request):
         {
             "ok": True,
             "leads": _lead_chat_indicator_map(qs, request=request),
-            "funnel_metrics": _funnel_metrics(qs),
+            "funnel_metrics": funnel,
             "active_chat_count": active_chat_count,
             "group_counts": _lead_group_counts(request),
         },
@@ -2805,8 +2838,14 @@ def get_leads_table(request):
     GET ``search_record``: optional hunt filter (same as dashboard).
     GET ``q``: optional global keyword search across all non-trash folders (min 2 chars).
     GET ``queued``: ``1`` to narrow the current tab to pending/processing (former Queue tab).
+    GET ``tags``: optional comma-separated tag slugs; leads must have every slug (AND).
     """
     qs, is_global_search = _leads_queryset_for_table(request)
+    tag_counts = _tag_lead_counts(qs)
+    funnel = None if is_global_search else _funnel_metrics(qs)
+    tag_slugs = _request_tag_filter_slugs(request)
+    if tag_slugs:
+        qs = apply_lead_tag_and_filter(qs, tag_slugs)
     if is_global_search:
         total_matches = qs.count()
         display_qs = qs[:GLOBAL_LEAD_SEARCH_MAX]
@@ -2842,9 +2881,9 @@ def get_leads_table(request):
             "ok": True,
             "tbody_html": tbody_html,
             "grid_html": grid_html,
-            "funnel_metrics": None if is_global_search else _funnel_metrics(qs),
+            "funnel_metrics": funnel,
             "group_counts": _lead_group_counts(request),
-            "tag_counts": _tag_lead_counts(qs),
+            "tag_counts": tag_counts,
             "global_search": is_global_search,
             "global_search_query": search_q if is_global_search else "",
             "global_search_count": result_count,

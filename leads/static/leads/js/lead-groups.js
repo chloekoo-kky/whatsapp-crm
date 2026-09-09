@@ -124,6 +124,17 @@
         }
       }
       window.syncLeadsAfterGroupFragmentSwap = syncLeadsAfterGroupFragmentSwap;
+      function appendLeadTableFilterParams(u) {
+        if (activeSearchRecordId != null) u.searchParams.set('search_record', String(activeSearchRecordId));
+        if (typeof window.isQueuedOutreachFilterActive === 'function' && window.isQueuedOutreachFilterActive()) {
+          u.searchParams.set('queued', '1');
+        }
+        if (typeof window.getLeadTagFilterSlugs === 'function') {
+          var slugs = window.getLeadTagFilterSlugs();
+          if (slugs && slugs.length) u.searchParams.set('tags', slugs.join(','));
+        }
+      }
+      window.appendLeadTableFilterParams = appendLeadTableFilterParams;
       async function fetchLeadsTableFragment(groupId, opts) {
         opts = opts || {};
         var u = new URL(dashboardJsConfig.getLeadsTableUrl, window.location.origin);
@@ -133,10 +144,7 @@
           var gid = normalizeLeadGroupTabId(groupId);
           u.searchParams.set('group_id', gid === 'uncategorized' ? 'uncategorized' : String(gid));
         }
-        if (activeSearchRecordId != null) u.searchParams.set('search_record', String(activeSearchRecordId));
-        if (typeof window.isQueuedOutreachFilterActive === 'function' && window.isQueuedOutreachFilterActive()) {
-          u.searchParams.set('queued', '1');
-        }
+        appendLeadTableFilterParams(u);
         var res = await fetch(u.toString(), { headers: { Accept: 'application/json' }, credentials: 'same-origin' });
         if (!res.ok) throw new Error('HTTP ' + res.status);
         return res.json();
@@ -146,7 +154,11 @@
         var gid = normalizeLeadGroupTabId(groupId);
         var queued = (typeof window.isQueuedOutreachFilterActive === 'function' && window.isQueuedOutreachFilterActive()) ? '1' : '0';
         var sr = activeSearchRecordId != null ? String(activeSearchRecordId) : '';
-        return gid + '|' + queued + '|' + sr;
+        var tags = '';
+        if (typeof window.getLeadTagFilterSlugs === 'function') {
+          tags = window.getLeadTagFilterSlugs().slice().sort().join(',');
+        }
+        return gid + '|' + queued + '|' + sr + '|' + tags;
       }
       function rememberLeadTabFragment(groupId, data) {
         if (!data || !data.ok) return;

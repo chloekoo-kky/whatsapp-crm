@@ -205,6 +205,10 @@
       function applyClinicEditToDom(d) {
         if (!d || !d.ok || d.id == null) return;
         const id = d.id;
+        if (d.tags !== undefined && d.tags !== null) {
+          var editRow = document.querySelector('.clinic-row[data-clinic-id="' + id + '"]');
+          applyLeadTagFilterCountDelta(leadTagSlugsFromAttr(editRow), d.tags);
+        }
         var phonesSearch = '';
         if (Array.isArray(d.phone_numbers) && d.phone_numbers.length) {
           phonesSearch = d.phone_numbers.join(' ');
@@ -639,6 +643,50 @@
         });
       }
       window.updateLeadTagFilterCounts = updateLeadTagFilterCounts;
+      function leadTagSlugsFromAttr(row) {
+        return String((row && row.getAttribute('data-tags')) || '').split(/\s+/).filter(Boolean);
+      }
+      window.leadTagSlugsFromAttr = leadTagSlugsFromAttr;
+      function adjustLeadTagFilterCount(slug, delta) {
+        if (!slug || !delta) return;
+        var chip = document.querySelector(
+          '#lead-tag-filter .lead-tag-filter-chip[data-tag-slug="' + slug + '"]'
+        );
+        if (!chip) return;
+        var badge = chip.querySelector('.lead-tag-filter-count');
+        if (!badge) {
+          badge = document.createElement('span');
+          badge.className = 'lead-tag-filter-count';
+          badge.setAttribute('aria-hidden', 'true');
+          chip.appendChild(badge);
+        }
+        var n = Math.max(0, (Number(String(badge.textContent || '').trim()) || 0) + delta);
+        badge.textContent = String(n);
+        var labelEl = chip.querySelector('.lead-tag-filter-label');
+        var name = labelEl ? String(labelEl.textContent || '').trim() : slug;
+        chip.title = name + ' · ' + n + ' lead(s)';
+        syncLeadTagFilterChipVisibility(chip);
+      }
+      window.adjustLeadTagFilterCount = adjustLeadTagFilterCount;
+      function applyLeadTagFilterCountDelta(oldSlugs, newSlugs) {
+        var oldSet = Object.create(null);
+        var newSet = Object.create(null);
+        (oldSlugs || []).forEach(function (slug) {
+          slug = String(slug || '').trim();
+          if (slug) oldSet[slug] = true;
+        });
+        (newSlugs || []).forEach(function (slug) {
+          slug = String(slug || '').trim();
+          if (slug) newSet[slug] = true;
+        });
+        Object.keys(oldSet).forEach(function (slug) {
+          if (!newSet[slug]) adjustLeadTagFilterCount(slug, -1);
+        });
+        Object.keys(newSet).forEach(function (slug) {
+          if (!oldSet[slug]) adjustLeadTagFilterCount(slug, 1);
+        });
+      }
+      window.applyLeadTagFilterCountDelta = applyLeadTagFilterCountDelta;
       function setClinicViewMode(mode) {
         const isGrid = mode === 'grid';
         const listEl = document.getElementById('clinics-view-list');
@@ -925,6 +973,8 @@
           seen[slug] = true;
           cleaned.push(slug);
         });
+        var existing = document.querySelector('.clinic-row[data-clinic-id="' + leadId + '"]');
+        applyLeadTagFilterCountDelta(leadTagSlugsFromAttr(existing), cleaned);
         document.querySelectorAll('.clinic-row[data-clinic-id="' + leadId + '"]').forEach(function (row) {
           syncRowDataSearch(row, undefined, undefined, undefined, cleaned);
           var typeCell = row.querySelector('.clinic-type-cell');
@@ -991,6 +1041,7 @@
       async function clearLeadToolbarQuickFilters() {
         var queued = document.getElementById('filter-queued-only');
         var wasQueued = queued && queued.getAttribute('aria-pressed') === 'true';
+        var hadTags = typeof getLeadTagFilterSlugs === 'function' && getLeadTagFilterSlugs().length > 0;
         if (queued) queued.setAttribute('aria-pressed', 'false');
         var vip = document.getElementById('filter-very-important-only');
         if (vip) vip.setAttribute('aria-pressed', 'false');
@@ -1005,7 +1056,7 @@
         if (typeof saveLeadTagFilterSlugs === 'function') saveLeadTagFilterSlugs([]);
         var wasGlobal = !!globalSearchActive;
         await exitGlobalSearchMode({ clearInput: true });
-        if (!wasGlobal && wasQueued && typeof window.__refreshCurrentLeadFolder === 'function') {
+        if (!wasGlobal && (wasQueued || hadTags) && typeof window.__refreshCurrentLeadFolder === 'function') {
           await window.__refreshCurrentLeadFolder();
         }
         applyTableFilter({ resetPage: true });
