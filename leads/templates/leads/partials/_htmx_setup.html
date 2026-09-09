@@ -81,7 +81,12 @@
 
       if (typeof window.refreshBulkAssignGroupButtonState === "function") window.refreshBulkAssignGroupButtonState();
 
-      if (typeof window.applyTableFilter === "function") window.applyTableFilter();
+      // Send now updates dispatched chrome in this same handler; re-filtering here
+      // would immediately hide the card when the Not sent filter is on.
+      if (
+        !elt.classList.contains("lead-force-send-btn") &&
+        typeof window.applyTableFilter === "function"
+      ) window.applyTableFilter();
 
     }
 

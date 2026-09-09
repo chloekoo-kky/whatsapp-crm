@@ -573,6 +573,9 @@ class DashboardTagFilterTests(TestCase):
         self.assertIn("clinic_crm_lead_tag_filter", list_src)
         self.assertIn("leadRowMatchesTagFilter", list_src)
         self.assertIn("getLeadTagFilterSlugs", list_src)
+        self.assertIn("hasActiveLocalLeadFilters", list_src)
+        self.assertIn("(!localFilters || !!globalSearchActive)", list_src)
+        self.assertIn("if (!globalSearchActive) applyTableFilter({ resetPage: true });", list_src)
         self.assertIn("fadeLeadsOutOfCurrentFilters", list_src)
         self.assertIn("lead-card--filter-exit", list_src)
         self.assertIn("lead-card--filter-exit", styles_src)
@@ -588,11 +591,22 @@ class DashboardTagFilterTests(TestCase):
         self.assertIn("filter-unsent-message-only", init_src)
         self.assertIn("bulk-mark-sent-btn", init_src)
         self.assertIn("bulkMarkSelectedSent", init_src)
+        self.assertIn("bulk-move-trash-btn", init_src)
+        self.assertIn("bulkMoveSelectedToTrash", init_src)
+        self.assertIn("bulk-actions-open", init_src)
+        self.assertIn("bindBulkActionsMenu", init_src)
+        self.assertIn("closeBulkActionsMenu", init_src)
+        self.assertIn("document.body.appendChild(panel)", init_src)
+        self.assertIn("positionBulkActions", init_src)
         bulk = Path(__file__).resolve().parent / "static" / "leads" / "js" / "bulk-actions.js"
         bulk_src = bulk.read_text(encoding="utf-8")
         self.assertIn("bottom_actions", bulk_src)
         self.assertIn("__swapLeadBottomActionsHtml", bulk_src)
         self.assertIn("group_id: gid", bulk_src)
+        self.assertIn("bulkMoveSelectedToTrash", bulk_src)
+        self.assertIn("bulkMoveTrashUrl", bulk_src)
+        self.assertIn("onNewTab || onReadyTab", bulk_src)
+        self.assertIn("bulk-actions-open", bulk_src)
         htmx_setup = (
             Path(__file__).resolve().parent
             / "templates"
@@ -603,6 +617,13 @@ class DashboardTagFilterTests(TestCase):
         htmx_src = htmx_setup.read_text(encoding="utf-8")
         self.assertIn("__ensureLeadChatAction", htmx_src)
         self.assertIn("lead-card-active-chat-btn", htmx_src)
+        self.assertIn('!elt.classList.contains("lead-force-send-btn")', htmx_src)
+        after_onload_idx = htmx_src.find('htmx:afterOnLoad')
+        self.assertGreater(after_onload_idx, -1)
+        after_chunk = htmx_src[after_onload_idx : after_onload_idx + 2200]
+        self.assertIn("lead-force-send-btn", after_chunk)
+        self.assertIn("applyTableFilter", after_chunk)
+        self.assertIn('!elt.classList.contains("lead-force-send-btn")', after_chunk)
         bulk_idx = init_src.find("dashboardJsConfig.bulkManualUrl")
         self.assertGreater(bulk_idx, -1)
         bulk_chunk = init_src[bulk_idx : bulk_idx + 1800]

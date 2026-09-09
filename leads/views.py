@@ -129,7 +129,9 @@ from leads.pipeline import (
     get_or_create_whatsapp_chats_group,
     lead_group_display_name,
     move_leads_to_ready,
+    move_leads_to_trash,
     ready_group_filter,
+    TRASH_STATUS_MESSAGE,
     uncategorized_group_filter,
 )
 from leads.services import (
@@ -140,7 +142,6 @@ from leads.services import (
     record_search_query_outcome,
     sync_chain_flags_for_name,
 )
-TRASH_STATUS_MESSAGE = "Moved to trash — excluded from pipeline."
 SYSTEM_LEAD_GROUP_NAMES = (
     UNCATEGORIZED_GROUP_NAME,
     READY_GROUP_NAME,
@@ -624,6 +625,8 @@ def _dashboard_js_config(context: dict) -> dict:
         or "/leads/api/bulk-whatsapp-queue/",
         "bulkMoveReadyUrl": context.get("bulk_move_ready_url")
         or "/leads/api/bulk-move-ready/",
+        "bulkMoveTrashUrl": context.get("bulk_move_trash_url")
+        or "/leads/api/bulk-move-trash/",
         "bulkDequeueUrl": context.get("bulk_dequeue_url") or "/leads/api/bulk-dequeue/",
         "bulkAssignBatchUrl": context.get("bulk_assign_batch_url")
         or "/leads/api/bulk-assign-batch/",
@@ -693,6 +696,7 @@ class LeadDashboardView(ListView):
         context["bulk_auto_classify_url"] = reverse("leads_bulk_auto_classify")
         context["bulk_whatsapp_queue_url"] = reverse("leads_bulk_whatsapp_queue")
         context["bulk_move_ready_url"] = reverse("leads_bulk_move_ready")
+        context["bulk_move_trash_url"] = reverse("leads_bulk_move_trash")
         context["bulk_dequeue_url"] = reverse("leads_bulk_dequeue")
         context["bulk_assign_batch_url"] = reverse("leads_bulk_assign_batch")
         context["whatsapp_batches_json_url"] = reverse("whatsapp_batches_json")
@@ -2939,6 +2943,37 @@ def leads_bulk_move_ready(request):
 
 @csrf_protect
 @require_POST
+def leads_bulk_move_trash(request):
+    """Move selected New or Ready leads into Trash."""
+    try:
+        body = json.loads(request.body.decode() or "{}")
+    except json.JSONDecodeError:
+        return JsonResponse({"ok": False, "detail": "Invalid JSON body."}, status=400)
+
+    ids = body.get("ids")
+    if not isinstance(ids, list) or not ids:
+        return JsonResponse({"ok": False, "detail": "ids must be a non-empty list."}, status=400)
+
+    id_list = owned_lead_ids(request, ids)
+    if not id_list:
+        return JsonResponse({"ok": True, "updated": 0, "skipped": 0, "action": "trash"})
+
+    moved_ids = move_leads_to_trash(id_list)
+    if moved_ids:
+        clear_pending_batch_memberships(moved_ids)
+    skipped = len(id_list) - len(moved_ids)
+    return JsonResponse(
+        {
+            "ok": True,
+            "updated": len(moved_ids),
+            "skipped": skipped,
+            "action": "trash",
+        }
+    )
+
+
+@csrf_protect
+@require_POST
 def leads_bulk_dequeue(request):
     """Remove selected pending leads from the WhatsApp outreach queue."""
     try:
@@ -3216,12 +3251,9 @@ def move_to_trash_group(request, pk: int):
         )
         return HttpResponse(html, status=422)
 
-    trash = get_or_create_trash_group()
-    lead.group = trash
-    lead.whatsapp_status = Lead.WhatsappStatus.FAILED
-    lead.whatsapp_last_error = TRASH_STATUS_MESSAGE
-    lead.save(update_fields=["group", "whatsapp_status", "whatsapp_last_error"])
-    clear_pending_batch_memberships(lead.pk)
+    moved = move_leads_to_trash([lead.pk])
+    if moved:
+        clear_pending_batch_memberships(moved)
     return _lead_grid_cell_fade_out_response(request, lead.pk)
 
 

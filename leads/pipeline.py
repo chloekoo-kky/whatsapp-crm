@@ -16,6 +16,7 @@ READY_DISPLAY_NAME = "Ready"
 QUEUE_GROUP_NAME = "queue"
 QUEUE_DISPLAY_NAME = "Queue"
 TRASH_GROUP_NAME = "🚫 Trash"
+TRASH_STATUS_MESSAGE = "Moved to trash — excluded from pipeline."
 WHATSAPP_CHATS_GROUP_NAME = "whatsapp"
 WHATSAPP_CHATS_DISPLAY_NAME = "Active Chat"
 LEGACY_JUNK_GROUP_NAME = "Junk"
@@ -267,6 +268,29 @@ def move_leads_to_ready(lead_ids: Iterable[int]) -> int:
     if not pks:
         return 0
     return Lead.objects.filter(pk__in=pks).update(group=ready)
+
+
+def move_leads_to_trash(lead_ids: Iterable[int]) -> list[int]:
+    """Soft-trash selected New or Ready leads. Skips leads currently processing a send."""
+    ids = list(lead_ids)
+    if not ids:
+        return []
+    trash = get_or_create_trash_group()
+    uncategorized = get_or_create_uncategorized_group()
+    ready = get_or_create_ready_group()
+    qs = (
+        Lead.objects.filter(pk__in=ids, group_id__in=[uncategorized.pk, ready.pk])
+        .exclude(whatsapp_status__in=WHATSAPP_PROTECTED_STATUSES)
+    )
+    pks = list(qs.values_list("pk", flat=True))
+    if not pks:
+        return []
+    Lead.objects.filter(pk__in=pks).update(
+        group=trash,
+        whatsapp_status=Lead.WhatsappStatus.FAILED,
+        whatsapp_last_error=TRASH_STATUS_MESSAGE,
+    )
+    return pks
 
 
 def apply_group_assignment_side_effects(

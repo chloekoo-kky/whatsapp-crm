@@ -61,6 +61,9 @@
       document.getElementById('bulk-move-ready-btn')?.addEventListener('click', function () {
         bulkMoveSelectedToReady();
       });
+      document.getElementById('bulk-move-trash-btn')?.addEventListener('click', function () {
+        bulkMoveSelectedToTrash();
+      });
       document.getElementById('bulk-mark-sent-btn')?.addEventListener('click', function () {
         bulkMarkSelectedSent();
       });
@@ -374,6 +377,81 @@
           if (!item || item.id === 'restore-backup-btn' || item.id === 'import-xlsx-btn') return;
           closeMore();
         });
+      })();
+      (function bindBulkActionsMenu() {
+        var openBtn = document.getElementById('bulk-actions-open');
+        var panel = document.getElementById('bulk-actions-panel');
+        var host = document.getElementById('bulk-actions-menu');
+        if (!openBtn || !panel) return;
+        function positionBulkActions() {
+          panel.style.left = '0px';
+          panel.style.top = '0px';
+          var mw = panel.offsetWidth;
+          var mh = panel.offsetHeight;
+          var r = openBtn.getBoundingClientRect();
+          var left = r.right - mw;
+          var top = r.bottom + 6;
+          left = Math.max(8, Math.min(left, window.innerWidth - mw - 8));
+          if (top + mh > window.innerHeight - 8) top = Math.max(8, r.top - mh - 6);
+          panel.style.left = left + 'px';
+          panel.style.top = top + 'px';
+        }
+        function closeBulkActions() {
+          panel.classList.add('hidden');
+          panel.setAttribute('aria-hidden', 'true');
+          openBtn.setAttribute('aria-expanded', 'false');
+          panel.style.left = '';
+          panel.style.top = '';
+          if (host && panel.parentNode !== host) host.appendChild(panel);
+        }
+        function isBulkActionsOpen() {
+          return !panel.classList.contains('hidden');
+        }
+        window.closeBulkActionsMenu = closeBulkActions;
+        openBtn.addEventListener('click', function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          if (openBtn.disabled) return;
+          if (typeof leadOwnerAssignMenuOpen !== 'undefined' && leadOwnerAssignMenuOpen &&
+              leadOwnerAssignMenuAnchor === openBtn) {
+            closeLeadOwnerAssignMenu();
+            return;
+          }
+          if (isBulkActionsOpen()) {
+            closeBulkActions();
+            return;
+          }
+          if (typeof closeLeadOwnerAssignMenu === 'function') closeLeadOwnerAssignMenu();
+          document.body.appendChild(panel);
+          panel.classList.remove('hidden');
+          panel.setAttribute('aria-hidden', 'false');
+          openBtn.setAttribute('aria-expanded', 'true');
+          positionBulkActions();
+        });
+        document.addEventListener(
+          'click',
+          function (e) {
+            if (!isBulkActionsOpen()) return;
+            var t = e.target;
+            if (t.closest && (t.closest('#bulk-actions-menu') || t.closest('#bulk-actions-panel'))) return;
+            closeBulkActions();
+          },
+          true
+        );
+        document.addEventListener('keydown', function (e) {
+          if (e.key === 'Escape' && isBulkActionsOpen()) closeBulkActions();
+        });
+        window.addEventListener('resize', function () {
+          if (isBulkActionsOpen()) positionBulkActions();
+        });
+        document.addEventListener('scroll', function () {
+          if (isBulkActionsOpen()) closeBulkActions();
+        }, true);
+        panel.addEventListener('click', function (e) {
+          var item = e.target.closest && e.target.closest('button[role="menuitem"]');
+          if (!item || item.id === 'bulk-assign-owner-open') return;
+          closeBulkActions();
+        }, true);
       })();
       window.clinicsPanelEl = document.getElementById('clinics-panel');
       if (clinicsPanelEl) {
@@ -1083,7 +1161,9 @@
         e.stopPropagation();
         var ids = getUniqueSelectedLeadIds();
         if (ids.length < 1) return;
-        toggleLeadOwnerAssignMenu(this, ids);
+        if (typeof window.closeBulkActionsMenu === 'function') window.closeBulkActionsMenu();
+        var anchor = document.getElementById('bulk-actions-open') || this;
+        toggleLeadOwnerAssignMenu(anchor, ids);
       });
       document.addEventListener(
         'click',
@@ -1092,6 +1172,7 @@
           var t = e.target;
           if (t.closest && t.closest('#lead-owner-assign-menu')) return;
           if (t.closest && t.closest('#bulk-assign-owner-open')) return;
+          if (t.closest && t.closest('#bulk-actions-open')) return;
           if (t.closest && t.closest('.assign-to-user-btn')) return;
           closeLeadOwnerAssignMenu();
         },

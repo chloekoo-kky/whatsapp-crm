@@ -45,7 +45,9 @@ from leads.pipeline import (
     get_or_create_uncategorized_group,
     lead_group_display_name,
     move_leads_to_ready,
+    move_leads_to_trash,
     phone_exists_in_database,
+    TRASH_STATUS_MESSAGE,
 )
 
 
@@ -104,21 +106,30 @@ class PipelineGroupTests(TestCase):
         self.assertNotIn("Move to group", html)
         self.assertIn("Views", html)
         self.assertIn("Set tags", html)
+        self.assertIn("Actions", html)
         self.assertIn("Mark sent", html)
         self.assertIn("Assign to…", html)
         manual_idx = html.find('id="bulk-manual-open"')
+        actions_idx = html.find('id="bulk-actions-open"')
+        ready_idx = html.find('id="bulk-move-ready-btn"')
+        trash_idx = html.find('id="bulk-move-trash-btn"')
         mark_sent_idx = html.find('id="bulk-mark-sent-btn"')
         assign_idx = html.find('id="bulk-assign-owner-open"')
-        ready_idx = html.find('id="bulk-move-ready-btn"')
         dock_idx = html.find('id="bulk-action-dock"')
         self.assertNotEqual(manual_idx, -1)
+        self.assertNotEqual(actions_idx, -1)
+        self.assertNotEqual(ready_idx, -1)
+        self.assertNotEqual(trash_idx, -1)
         self.assertNotEqual(mark_sent_idx, -1)
         self.assertNotEqual(assign_idx, -1)
-        self.assertNotEqual(ready_idx, -1)
-        self.assertLess(manual_idx, mark_sent_idx)
+        self.assertLess(manual_idx, actions_idx)
+        self.assertLess(actions_idx, ready_idx)
+        self.assertLess(ready_idx, trash_idx)
+        self.assertLess(trash_idx, mark_sent_idx)
         self.assertLess(mark_sent_idx, assign_idx)
-        self.assertLess(assign_idx, ready_idx)
-        self.assertLess(ready_idx, dock_idx)
+        self.assertLess(assign_idx, dock_idx)
+        self.assertIn('id="bulk-actions-panel"', html)
+        self.assertIn("Move to Trash", html)
         self.assertIn("Choose batch", html)
         self.assertNotIn('aria-label="Queue"', html)
         self.assertNotIn('data-group-id="' + str(ensure_pipeline_system_groups()["queue"].pk) + '"', html)
@@ -381,6 +392,87 @@ class PipelineGroupTests(TestCase):
         self.assertEqual(payload["updated"], 1)
         lead.refresh_from_db()
         self.assertEqual(lead.group_id, groups["ready"].pk)
+
+    def test_move_to_trash_from_new_and_ready(self):
+        groups = ensure_pipeline_system_groups()
+        new_lead = Lead.objects.create(
+            name="New To Trash",
+            address="1 Trash Rd",
+            group=groups["uncategorized"],
+        )
+        ready_lead = Lead.objects.create(
+            name="Ready To Trash",
+            address="2 Trash Rd",
+            group=groups["ready"],
+        )
+        processing = Lead.objects.create(
+            name="Processing Skip",
+            address="3 Trash Rd",
+            group=groups["ready"],
+            whatsapp_status=Lead.WhatsappStatus.PROCESSING,
+        )
+        moved = move_leads_to_trash([new_lead.pk, ready_lead.pk, processing.pk])
+        self.assertEqual(set(moved), {new_lead.pk, ready_lead.pk})
+        new_lead.refresh_from_db()
+        ready_lead.refresh_from_db()
+        processing.refresh_from_db()
+        self.assertEqual(new_lead.group_id, groups["trash"].pk)
+        self.assertEqual(ready_lead.group_id, groups["trash"].pk)
+        self.assertEqual(new_lead.whatsapp_status, Lead.WhatsappStatus.FAILED)
+        self.assertEqual(new_lead.whatsapp_last_error, TRASH_STATUS_MESSAGE)
+        self.assertEqual(processing.group_id, groups["ready"].pk)
+        self.assertEqual(processing.whatsapp_status, Lead.WhatsappStatus.PROCESSING)
+
+    def test_bulk_move_trash_api_from_new(self):
+        groups = ensure_pipeline_system_groups()
+        lead = Lead.objects.create(
+            name="Bulk Trash New",
+            address="4 Trash Rd",
+            group=groups["uncategorized"],
+        )
+        client = staff_client()
+        response = client.post(
+            reverse("leads_bulk_move_trash"),
+            data=json.dumps({"ids": [lead.pk]}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["updated"], 1)
+        self.assertEqual(payload["skipped"], 0)
+        lead.refresh_from_db()
+        self.assertEqual(lead.group_id, groups["trash"].pk)
+        self.assertEqual(lead.whatsapp_status, Lead.WhatsappStatus.FAILED)
+
+    def test_bulk_move_trash_api_from_ready_skips_processing(self):
+        groups = ensure_pipeline_system_groups()
+        lead = Lead.objects.create(
+            name="Bulk Trash Ready",
+            address="5 Trash Rd",
+            group=groups["ready"],
+        )
+        processing = Lead.objects.create(
+            name="Bulk Trash Processing",
+            address="6 Trash Rd",
+            group=groups["ready"],
+            whatsapp_status=Lead.WhatsappStatus.PROCESSING,
+        )
+        client = staff_client()
+        response = client.post(
+            reverse("leads_bulk_move_trash"),
+            data=json.dumps({"ids": [lead.pk, processing.pk]}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["updated"], 1)
+        self.assertEqual(payload["skipped"], 1)
+        lead.refresh_from_db()
+        processing.refresh_from_db()
+        self.assertEqual(lead.group_id, groups["trash"].pk)
+        self.assertEqual(processing.group_id, groups["ready"].pk)
 
     def test_bulk_mark_sent_api_sets_first_message_sent(self):
         from django.utils import timezone

@@ -24,6 +24,7 @@
       dashboardJsConfig.bulkAutoClassifyUrl = dashboardJsConfig.bulkAutoClassifyUrl || "/leads/api/bulk-auto-classify/";
       dashboardJsConfig.bulkWhatsappQueueUrl = dashboardJsConfig.bulkWhatsappQueueUrl || "/leads/api/bulk-whatsapp-queue/";
       dashboardJsConfig.bulkMoveReadyUrl = dashboardJsConfig.bulkMoveReadyUrl || "/leads/api/bulk-move-ready/";
+      dashboardJsConfig.bulkMoveTrashUrl = dashboardJsConfig.bulkMoveTrashUrl || "/leads/api/bulk-move-trash/";
       dashboardJsConfig.bulkDequeueUrl = dashboardJsConfig.bulkDequeueUrl || "/leads/api/bulk-dequeue/";
       dashboardJsConfig.bulkAssignBatchUrl = dashboardJsConfig.bulkAssignBatchUrl || "/leads/api/bulk-assign-batch/";
       dashboardJsConfig.whatsappBatchesJsonUrl = dashboardJsConfig.whatsappBatchesJsonUrl || "/leads/ajax/whatsapp/batches/";

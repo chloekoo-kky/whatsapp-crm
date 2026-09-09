@@ -316,6 +316,11 @@
         }
         var bulk = document.getElementById('bulk-assign-owner-open');
         if (bulk) bulk.setAttribute('aria-expanded', 'false');
+        var actions = document.getElementById('bulk-actions-open');
+        if (actions) actions.setAttribute('aria-expanded', 'false');
+        if (leadOwnerAssignMenuAnchor && leadOwnerAssignMenuAnchor.setAttribute) {
+          leadOwnerAssignMenuAnchor.setAttribute('aria-expanded', 'false');
+        }
         leadOwnerAssignMenuOpen = false;
         leadOwnerAssignMenuAnchor = null;
         pendingOwnerAssignLeadIds = [];
@@ -351,7 +356,7 @@
         }
         leadOwnerAssignMenuOpen = true;
         leadOwnerAssignMenuAnchor = anchor;
-        if (anchor.id === 'bulk-assign-owner-open') anchor.setAttribute('aria-expanded', 'true');
+        if (anchor && anchor.setAttribute) anchor.setAttribute('aria-expanded', 'true');
         positionLeadOwnerAssignMenu(anchor);
       }
       window.openLeadOwnerAssignMenu = openLeadOwnerAssignMenu;

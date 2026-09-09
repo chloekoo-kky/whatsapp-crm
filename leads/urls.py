@@ -65,6 +65,7 @@ from leads.views import (
     leads_bulk_mark_sent,
     leads_bulk_dequeue,
     leads_bulk_move_ready,
+    leads_bulk_move_trash,
     leads_bulk_whatsapp_pause,
     leads_bulk_whatsapp_queue,
     reorder_lead_groups,
@@ -243,6 +244,11 @@ urlpatterns = [
         "leads/api/bulk-move-ready/",
         leads_bulk_move_ready,
         name="leads_bulk_move_ready",
+    ),
+    path(
+        "leads/api/bulk-move-trash/",
+        leads_bulk_move_trash,
+        name="leads_bulk_move_trash",
     ),
     path(
         "leads/api/bulk-dequeue/",

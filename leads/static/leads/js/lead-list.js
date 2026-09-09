@@ -964,6 +964,12 @@
         return false;
       }
       window.isLeadIconFilterActive = isLeadIconFilterActive;
+      function hasActiveLocalLeadFilters() {
+        if (typeof isLeadIconFilterActive === 'function' && isLeadIconFilterActive()) return true;
+        if (typeof getLeadTagFilterSlugs === 'function' && getLeadTagFilterSlugs().length > 0) return true;
+        return false;
+      }
+      window.hasActiveLocalLeadFilters = hasActiveLocalLeadFilters;
       function isQueuedOutreachFilterActive() {
         var btn = document.getElementById('filter-queued-only');
         return !!(btn && btn.getAttribute('aria-pressed') === 'true');
@@ -1225,9 +1231,19 @@
       }
       window.syncLeadsAfterGlobalSearchSwap = syncLeadsAfterGlobalSearchSwap;
       async function runGlobalLeadSearch(q) {
+        if (leadGroupTabBusy) {
+          clearTimeout(globalSearchDebounceTimer);
+          globalSearchDebounceTimer = window.setTimeout(function () {
+            var si = document.getElementById('table-search');
+            var current = si ? si.value.trim() : '';
+            if (current.length < GLOBAL_SEARCH_MIN_LEN) return;
+            if (hasActiveLocalLeadFilters() && !globalSearchActive) return;
+            runGlobalLeadSearch(current);
+          }, 150);
+          return;
+        }
         var reqId = ++globalSearchRequestId;
         if (!globalSearchActive) tabBeforeGlobalSearch = currentLeadGroupTabId;
-        if (leadGroupTabBusy) return;
         leadGroupTabBusy = true;
         try {
           var data = await fetchLeadsTableFragment(null, { globalSearch: true, q: q });
@@ -1277,19 +1293,23 @@
         var searchInput = document.getElementById('table-search');
         var raw = searchInput ? searchInput.value.trim() : '';
         refreshTableSearchClearVisibility();
-        if (raw.length >= GLOBAL_SEARCH_MIN_LEN) {
+        refreshLeadFilterTagActiveState();
+        var localFilters = hasActiveLocalLeadFilters();
+        var useGlobal = raw.length >= GLOBAL_SEARCH_MIN_LEN && (!localFilters || !!globalSearchActive);
+        if (useGlobal) {
           clearTimeout(globalSearchDebounceTimer);
           globalSearchDebounceTimer = window.setTimeout(function () {
             runGlobalLeadSearch(raw);
           }, 300);
+          if (!globalSearchActive) applyTableFilter({ resetPage: true });
           return;
         }
+        clearTimeout(globalSearchDebounceTimer);
         if (globalSearchActive) {
           exitGlobalSearchMode({ clearInput: false });
           return;
         }
         applyTableFilter({ resetPage: true });
-        refreshLeadFilterTagActiveState();
       }
       window.handleLeadSearchInput = handleLeadSearchInput;
       function highlightLeadRow(leadId) {

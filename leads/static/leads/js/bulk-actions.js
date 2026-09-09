@@ -166,6 +166,47 @@
         }
       }
       window.bulkMoveSelectedToReady = bulkMoveSelectedToReady;
+      async function bulkMoveSelectedToTrash() {
+        var ids = getUniqueSelectedLeadIds();
+        if (!ids.length) return;
+        var ok = await window.appConfirm({
+          title: 'Move to Trash?',
+          message: 'Move ' + ids.length + ' selected lead(s) to Trash?',
+          confirmLabel: 'Move to Trash',
+          danger: true,
+        });
+        if (!ok) return;
+        var btn = document.getElementById('bulk-move-trash-btn');
+        if (btn) btn.disabled = true;
+        try {
+          var res = await fetch(dashboardJsConfig.bulkMoveTrashUrl, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-CSRFToken': getCsrfToken(),
+            },
+            body: JSON.stringify({ ids: ids }),
+          });
+          var data = await res.json();
+          if (!res.ok || !data.ok) {
+            throw new Error((data.detail && String(data.detail)) || ('HTTP ' + res.status));
+          }
+          if (typeof window.showLeadStatusToast === 'function') {
+            var msg = 'Moved ' + (data.updated || 0) + ' lead(s) to Trash.';
+            if (data.skipped) msg += ' ' + data.skipped + ' skipped.';
+            window.showLeadStatusToast(msg, { duration: 3200 });
+          }
+          if (selectAll) selectAll.checked = false;
+          await switchLeadGroupTab(currentLeadGroupTabId, { force: true, skipHistory: true });
+        } catch (err) {
+          console.error(err);
+          await window.appAlert((err && err.message) || 'Could not move selected leads to Trash.');
+        } finally {
+          if (btn) btn.disabled = false;
+        }
+      }
+      window.bulkMoveSelectedToTrash = bulkMoveSelectedToTrash;
       async function bulkMarkSelectedSent() {
         var ids = getUniqueSelectedLeadIds();
         if (!ids.length) return;
@@ -388,19 +429,33 @@
         const n = getUniqueSelectedLeadIds().length;
         const btn = document.getElementById('bulk-manual-open');
         if (btn) btn.disabled = n < 1;
+        const actionsBtn = document.getElementById('bulk-actions-open');
+        if (actionsBtn) actionsBtn.disabled = n < 1;
+        if (n < 1 && typeof window.closeBulkActionsMenu === 'function') {
+          window.closeBulkActionsMenu();
+        }
         const markSentBtn = document.getElementById('bulk-mark-sent-btn');
         if (markSentBtn) markSentBtn.disabled = n < 1;
         const ownerBtn = document.getElementById('bulk-assign-owner-open');
         if (ownerBtn) ownerBtn.disabled = n < 1;
         const readyBtn = document.getElementById('bulk-move-ready-btn');
+        const trashBtn = document.getElementById('bulk-move-trash-btn');
+        var gid = typeof currentLeadGroupTabId !== 'undefined' && currentLeadGroupTabId != null
+          ? String(currentLeadGroupTabId)
+          : 'uncategorized';
+        var onNewTab = gid === 'uncategorized';
+        var onReadyTab = dashboardJsConfig.readyGroupTabId &&
+          gid === String(dashboardJsConfig.readyGroupTabId);
         if (readyBtn) {
-          var gid = typeof currentLeadGroupTabId !== 'undefined' && currentLeadGroupTabId != null
-            ? String(currentLeadGroupTabId)
-            : 'uncategorized';
-          var onNewTab = gid === 'uncategorized';
           readyBtn.hidden = !onNewTab;
           readyBtn.style.display = onNewTab ? '' : 'none';
           readyBtn.disabled = !onNewTab || n < 1;
+        }
+        if (trashBtn) {
+          var showTrash = onNewTab || onReadyTab;
+          trashBtn.hidden = !showTrash;
+          trashBtn.style.display = showTrash ? '' : 'none';
+          trashBtn.disabled = !showTrash || n < 1;
         }
       }
       window.refreshSetCategoryButtonState = refreshSetCategoryButtonState;
