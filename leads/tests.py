@@ -512,7 +512,8 @@ class PipelineGroupTests(TestCase):
         bottom_html = payload["bottom_actions"][str(lead.pk)]
         self.assertIn("lead-card-active-chat-btn", bottom_html)
         self.assertIn("chat/inbox", bottom_html)
-        self.assertNotIn('title="Move to trash"', bottom_html)
+        self.assertIn("lead-card-bottom-actions--has-chat", bottom_html)
+        self.assertIn('title="Move to trash"', bottom_html)
         self.assertNotIn(str(already.pk), payload["bottom_actions"])
         lead.refresh_from_db()
         self.assertEqual(lead.whatsapp_status, Lead.WhatsappStatus.SENT)
@@ -546,7 +547,7 @@ class PipelineGroupTests(TestCase):
         self.assertEqual(response.status_code, 200)
         html = response.json()["bottom_actions"][str(lead.pk)]
         self.assertIn("lead-card-active-chat-btn", html)
-        self.assertNotIn('title="Move to trash"', html)
+        self.assertIn("lead-card-bottom-actions--has-chat", html)
         self.assertIn("Permanently delete", html)
 
     def test_chat_inbox_does_not_invent_mark_sent_placeholder(self):
@@ -1431,7 +1432,7 @@ class YCloudWebhookTests(TestCase):
         self.assertTrue(lead_already_received_template(lead, "say_hi"))
         self.assertFalse(lead_already_received_template(lead, "say_hi_en"))
 
-    def test_mark_sent_sinks_display_order_on_first_send(self):
+    def test_mark_sent_keeps_display_order_on_first_send(self):
         from leads.whatsapp_service import mark_sent
 
         groups = ensure_pipeline_system_groups()
@@ -1453,7 +1454,8 @@ class YCloudWebhookTests(TestCase):
         mark_sent(lead, "+60126336429", template_name="say_hi")
         lead.refresh_from_db()
         top.refresh_from_db()
-        self.assertGreater(lead.display_order, top.display_order)
+        self.assertEqual(lead.display_order, 2)
+        self.assertEqual(top.display_order, 1)
 
     def test_mark_first_outbound_sent_sets_status_without_template_row(self):
         from django.utils import timezone
@@ -1462,13 +1464,6 @@ class YCloudWebhookTests(TestCase):
 
         groups = ensure_pipeline_system_groups()
         group = LeadGroup.objects.create(name="App Send Folder", sort_order=61)
-        top = Lead.objects.create(
-            name="Top App Lead",
-            address="1 Main St",
-            phone_number="+60111111112",
-            group=group,
-            display_order=1,
-        )
         lead = Lead.objects.create(
             name="App Send Lead",
             address="2 Main St",
@@ -1483,12 +1478,11 @@ class YCloudWebhookTests(TestCase):
             mark_first_outbound_sent(lead, "+60126336429", sent_at=sent_at)
         )
         lead.refresh_from_db()
-        top.refresh_from_db()
         self.assertEqual(lead.whatsapp_status, Lead.WhatsappStatus.SENT)
         self.assertEqual(lead.whatsapp_sent_at, sent_at)
         self.assertEqual(lead.whatsapp_instance_id, "+60126336429")
         self.assertEqual(lead.whatsapp_last_error, "")
-        self.assertGreater(lead.display_order, top.display_order)
+        self.assertEqual(lead.display_order, 2)
         self.assertFalse(ChatMessage.objects.filter(lead=lead).exists())
         self.assertFalse(
             LeadConversationLog.objects.filter(
@@ -2738,7 +2732,7 @@ class ClinicUpdatePhoneTests(TestCase):
         self.assertEqual(response.status_code, 200)
         mock_send.assert_called_once()
 
-    def test_force_send_success_triggers_dispatched_and_sink(self):
+    def test_force_send_success_triggers_dispatched_without_sink(self):
         from django.test import RequestFactory
         from django.utils import timezone
 
@@ -2755,11 +2749,10 @@ class ClinicUpdatePhoneTests(TestCase):
             request,
             self.lead,
             ok=True,
-            sink_card=True,
         )
         trigger = json.loads(response["HX-Trigger"])
         self.assertEqual(trigger["leadCardDispatched"], self.lead.pk)
-        self.assertEqual(trigger["leadCardSink"], self.lead.pk)
+        self.assertNotIn("leadCardSink", trigger)
         body = response.content.decode()
         self.assertIn("lead-force-send-btn", body)
         self.assertNotIn("hx-swap-oob", body)

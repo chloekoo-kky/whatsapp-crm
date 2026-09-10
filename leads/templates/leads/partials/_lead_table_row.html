@@ -10,6 +10,7 @@
   data-sort-name="{{ c.name|default:''|lower }}"
   data-sort-state="{{ c.search_state|default_if_none:''|default:''|lower }}"
   data-sort-created="{{ c.created_at|date:'U' }}"
+  data-sort-sent="{% if c.whatsapp_sent_at %}{{ c.whatsapp_sent_at|date:'U' }}{% else %}0{% endif %}"
   data-search-base="{{ c.name }} {{ c.address }} {{ c.dashboard_phones|join:' ' }} {{ c.website }} {{ c.shop_keyword }} {{ c.search_state|default_if_none:''|default:'' }} {{ c.search_city|default_if_none:''|default:'' }} {{ c.search_query|default_if_none:''|default:'' }}"
   data-search="{{ c.name }} {{ c.address }} {{ c.dashboard_phones|join:' ' }} {{ c.website }} {{ c.shop_keyword }} {{ c.primary_tag_slug }} {% for t in c.tags.all %}{{ t.slug }} {{ t.label }} {% endfor %}{{ c.search_state|default_if_none:''|default:'' }} {{ c.search_city|default_if_none:''|default:'' }} {{ c.search_query|default_if_none:''|default:'' }} {% if c.is_chain %}chain{% endif %} {% if c.is_very_important %}important{% endif %}">
   <td class="align-top px-2 py-3.5 text-center sm:px-3">
@@ -29,6 +30,7 @@
     </p>
     {% include "leads/partials/_lead_fields/_branches_line.html" with extra_class="mt-1 text-[11px] leading-snug text-slate-600" %}
     {% include "leads/partials/_lead_fields/_created_line.html" with extra_class="mt-1" %}
+    {% include "leads/partials/_lead_fields/_sent_date_line.html" with extra_class="mt-1" %}
     {% include "leads/partials/_lead_fields/_batch_badges.html" with wrap_class="mt-1 w-full justify-end" badge_class="" label_class="whitespace-nowrap" %}
   </td>
   <td class="clinic-contact-cell align-top px-2 py-3.5 sm:px-4">

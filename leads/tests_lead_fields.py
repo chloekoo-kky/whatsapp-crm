@@ -102,6 +102,7 @@ class LeadFieldPartialTests(TestCase):
             "clinic-source-line",
             "clinic-branches-line",
             "clinic-created-line",
+            "clinic-sent-date-line",
             "clinic-batch-lines",
             "WhatsApp batch ·",
             "Sent ·",
@@ -202,11 +203,37 @@ class LeadFieldPartialTests(TestCase):
         self.assertIn('data-whatsapp-dispatched="1"', card)
         self.assertIn("clinic-sent-badge", card)
         self.assertIn('title="WhatsApp message sent"', card)
+        self.assertIn("clinic-sent-date-line", card)
+        self.assertRegex(card, r'clinic-sent-date-text[^>]*>Sent ')
+        self.assertGreater(card.find("clinic-sent-date-line"), card.find("clinic-created-line"))
         self.assertGreater(card.find("clinic-sent-badge"), card.find("wa-me-open-btn"))
         self.assertNotIn("border-emerald-400", card)
         self.assertNotIn("hover:border-emerald-500", card)
         header = card[card.find("clinic-card-header-actions"):card.find("clinic-name-cell-inner")]
         self.assertNotIn("clinic-sent-badge", header)
+        self.assertIn("lead-card-active-chat-btn", card)
+        self.assertIn("lead-card-bottom-actions--has-chat", card)
+        self.assertIn('title="Move to trash"', card)
+
+    def test_sent_ready_card_keeps_chat_and_hides_trash_via_css(self):
+        ready = get_or_create_ready_group()
+        self.lead.group = ready
+        self.lead.whatsapp_status = Lead.WhatsappStatus.SENT
+        self.lead.whatsapp_sent_at = timezone.now()
+        self.lead.save(update_fields=["group", "whatsapp_status", "whatsapp_sent_at"])
+        client = Client()
+        client.force_login(self.user)
+        response = client.get(reverse("get_leads_table"), {"group_id": str(ready.pk)})
+        self.assertEqual(response.status_code, 200)
+        html = response.json()["grid_html"]
+        self.assertIn("lead-card-active-chat-btn", html)
+        self.assertIn("Open chat", html)
+        self.assertIn("lead-card-bottom-actions--has-chat", html)
+        self.assertIn('title="Move to trash"', html)
+        self.assertIn("lead-force-send-btn", html)
+        self.assertIn("clinic-sent-date-line", html)
+        self.assertRegex(html, r'clinic-sent-date-text[^>]*>Sent ')
+        self.assertIn("data-sort-sent=", html)
 
     def test_layout_class_differences_are_preserved(self):
         card = self._card()
@@ -257,6 +284,7 @@ class LeadFieldPartialTests(TestCase):
         self.assertGreater(card.find("clinic-assigned-to-line"), card.find("clinic-name-cell-inner"))
         self.assertLess(card.find("clinic-assigned-to-line"), card.find("clinic-source-line"))
         self.assertGreater(card.find("clinic-assigned-date-line"), card.find("clinic-created-line"))
+        self.assertGreater(card.find("clinic-sent-date-line"), card.find("clinic-assigned-date-line"))
         self.assertNotIn("clinic-assigned-line", row)
 
         supervisor = get_user_model().objects.create_user(
@@ -600,7 +628,21 @@ class DashboardTagFilterTests(TestCase):
         )
         init_src = init.read_text(encoding="utf-8")
         styles_src = styles.read_text(encoding="utf-8")
+        self.assertIn("clinic_crm_lead_sort", boot_src)
         self.assertIn("clinic_crm_lead_tag_filter", boot_src)
+        self.assertIn("sent-desc", list_src)
+        self.assertIn("data-sort-sent", list_src)
+        self.assertIn("field === 'sent'", list_src)
+        panel = (
+            Path(__file__).resolve().parent
+            / "templates"
+            / "leads"
+            / "partials"
+            / "_workspace_dashboard_panel.html"
+        )
+        panel_src = panel.read_text(encoding="utf-8")
+        self.assertIn('value="sent-desc"', panel_src)
+        self.assertIn('value="sent-asc"', panel_src)
         self.assertIn("clinic_crm_lead_tag_filter", list_src)
         self.assertIn("leadRowMatchesTagFilter", list_src)
         self.assertIn("getLeadTagFilterSlugs", list_src)
@@ -632,6 +674,8 @@ class DashboardTagFilterTests(TestCase):
         self.assertIn("fadeLeadsOutOfCurrentFilters", list_src)
         self.assertIn("lead-card--filter-exit", list_src)
         self.assertIn("lead-card--filter-exit", styles_src)
+        self.assertIn(".lead-card-bottom-actions.lead-card-bottom-actions--has-chat .lead-card-trash-btn", styles_src)
+        self.assertIn(".lead-card-bottom-actions.lead-card-bottom-actions--has-chat .lead-card-active-chat-btn", styles_src)
         self.assertIn("fadeLeadsOutOfCurrentFilters([id])", list_src)
         self.assertIn("showLeadStatusToast", list_src)
         self.assertIn("lead-status-toast--in", list_src)
@@ -669,6 +713,7 @@ class DashboardTagFilterTests(TestCase):
         )
         htmx_src = htmx_setup.read_text(encoding="utf-8")
         self.assertIn("__ensureLeadChatAction", htmx_src)
+        self.assertIn("__revealLeadSentDate", htmx_src)
         self.assertIn("lead-card-active-chat-btn", htmx_src)
         self.assertIn('!elt.classList.contains("lead-force-send-btn")', htmx_src)
         after_onload_idx = htmx_src.find('htmx:afterOnLoad')
@@ -677,6 +722,11 @@ class DashboardTagFilterTests(TestCase):
         self.assertIn("lead-force-send-btn", after_chunk)
         self.assertIn("applyTableFilter", after_chunk)
         self.assertIn('!elt.classList.contains("lead-force-send-btn")', after_chunk)
+        chat_ind = (
+            Path(__file__).resolve().parent / "static" / "leads" / "js" / "chat-indicators.js"
+        )
+        chat_src = chat_ind.read_text(encoding="utf-8")
+        self.assertIn("__applyLeadDispatchedChrome", chat_src)
         bulk_idx = init_src.find("dashboardJsConfig.bulkManualUrl")
         self.assertGreater(bulk_idx, -1)
         bulk_chunk = init_src[bulk_idx : bulk_idx + 1800]

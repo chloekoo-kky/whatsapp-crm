@@ -302,6 +302,9 @@
             if (row.classList.contains('clinic-card')) {
               row.classList.toggle('clinic-card--dispatched', !!d.whatsapp_dispatched);
             }
+            if (d.whatsapp_dispatched && typeof window.__applyLeadDispatchedChrome === 'function') {
+              window.__applyLeadDispatchedChrome(id);
+            }
           }
           if (d.grid_bottom_actions_html) {
             if (typeof window.__swapLeadBottomActionsHtml === 'function') {
@@ -711,7 +714,7 @@
       function readLeadSortMode() {
         try {
           var v = localStorage.getItem(LEAD_SORT_KEY);
-          if (v && /^(default|name-asc|name-desc|state-asc|state-desc|created-asc|created-desc)$/.test(v)) return v;
+          if (v && /^(default|name-asc|name-desc|state-asc|state-desc|created-asc|created-desc|sent-asc|sent-desc)$/.test(v)) return v;
         } catch (e) { /* ignore */ }
         return 'default';
       }
@@ -726,9 +729,15 @@
         var field = leadSortMode.split('-')[0];
         var av;
         var bv;
-        if (field === 'created') {
-          av = parseFloat(a.getAttribute('data-sort-created') || '0') || 0;
-          bv = parseFloat(b.getAttribute('data-sort-created') || '0') || 0;
+        if (field === 'created' || field === 'sent') {
+          var attr = field === 'sent' ? 'data-sort-sent' : 'data-sort-created';
+          av = parseFloat(a.getAttribute(attr) || '0') || 0;
+          bv = parseFloat(b.getAttribute(attr) || '0') || 0;
+          if (field === 'sent') {
+            var aMissing = av <= 0;
+            var bMissing = bv <= 0;
+            if (aMissing !== bMissing) return aMissing ? 1 : -1;
+          }
         } else if (field === 'state') {
           av = (a.getAttribute('data-sort-state') || '').toLowerCase();
           bv = (b.getAttribute('data-sort-state') || '').toLowerCase();
@@ -737,7 +746,7 @@
           bv = (b.getAttribute('data-sort-name') || '').toLowerCase();
         }
         var cmp = 0;
-        if (field === 'created') cmp = av - bv;
+        if (field === 'created' || field === 'sent') cmp = av - bv;
         else if (av < bv) cmp = -1;
         else if (av > bv) cmp = 1;
         if (cmp === 0) {

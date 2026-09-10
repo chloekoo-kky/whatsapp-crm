@@ -144,12 +144,17 @@
               apiLeadIds.forEach(function (leadId) {
                 var row = data.leads[leadId] || {};
                 setLeadCardAwaitingPulse(leadId, !!row.awaiting);
+                if (row.dispatched && typeof window.__applyLeadDispatchedChrome === 'function') {
+                  window.__applyLeadDispatchedChrome(leadId);
+                  return;
+                }
                 var cell = document.getElementById('lead-grid-cell-' + leadId);
                 if (cell) {
-                  cell.setAttribute('data-whatsapp-dispatched', row.dispatched ? '1' : '0');
+                  cell.setAttribute('data-whatsapp-dispatched', '0');
                 }
                 document.querySelectorAll('.clinic-row[data-clinic-id="' + leadId + '"]').forEach(function (el) {
-                  el.setAttribute('data-whatsapp-dispatched', row.dispatched ? '1' : '0');
+                  el.setAttribute('data-whatsapp-dispatched', '0');
+                  el.classList.remove('clinic-card--dispatched');
                 });
               });
               leadChatIndicatorSnapshot = snapshot;

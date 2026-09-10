@@ -109,8 +109,6 @@
           var forceTriggers = JSON.parse(forceTriggerHeader);
           if (forceTriggers.forceSendDuplicatePrompt != null && window.__showForceSendDuplicateDialog) {
             window.__showForceSendDuplicateDialog(forceTriggers.forceSendDuplicatePrompt);
-          } else if (forceTriggers.leadCardSink != null && window.__sinkLeadCard) {
-            window.__sinkLeadCard(forceTriggers.leadCardSink);
           } else if (forceTriggers.leadCardDispatched != null && window.__applyLeadDispatchedChrome) {
             window.__applyLeadDispatchedChrome(forceTriggers.leadCardDispatched);
           }
@@ -251,6 +249,41 @@
     if (window.htmx) window.htmx.process(chatBtn);
   };
 
+  window.__formatLeadSentAtLabel = function (date) {
+    if (!date || isNaN(date.getTime())) return "";
+    var months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    var h = date.getHours();
+    var ampm = h >= 12 ? "PM" : "AM";
+    var h12 = h % 12 || 12;
+    var min = String(date.getMinutes());
+    if (min.length < 2) min = "0" + min;
+    return months[date.getMonth()] + " " + date.getDate() + ", " + date.getFullYear() + " · " + h12 + ":" + min + " " + ampm;
+  };
+
+  window.__revealLeadSentDate = function (id) {
+    if (id == null) return false;
+    var updated = false;
+    var unix = 0;
+    document.querySelectorAll('.clinic-row[data-clinic-id="' + id + '"]').forEach(function (row) {
+      var current = parseFloat(row.getAttribute("data-sort-sent") || "0") || 0;
+      if (current <= 0) {
+        if (!unix) unix = Math.floor(Date.now() / 1000);
+        row.setAttribute("data-sort-sent", String(unix));
+        updated = true;
+      }
+      var line = row.querySelector(".clinic-sent-date-line");
+      if (!line) return;
+      line.classList.remove("hidden");
+      var text = row.querySelector(".clinic-sent-date-text");
+      if (text && !String(text.textContent || "").trim()) {
+        var labelDate = unix ? new Date(unix * 1000) : new Date();
+        text.textContent = "Sent " + window.__formatLeadSentAtLabel(labelDate);
+        updated = true;
+      }
+    });
+    return updated;
+  };
+
   window.__applyLeadDispatchedChrome = function (id) {
     if (id == null) return;
     var cell = document.getElementById("lead-grid-cell-" + id);
@@ -265,38 +298,14 @@
       card.setAttribute("data-whatsapp-dispatched", "1");
       card.classList.add("clinic-card--dispatched");
     }
+    var sentUpdated = window.__revealLeadSentDate(id);
     window.__ensureLeadChatAction(id);
-  };
-
-  window.__sinkLeadCard = function (id) {
-    if (id == null) return;
-    window.__applyLeadDispatchedChrome(id);
-    var rows = typeof window.getFilteredClinicRowsInOrder === "function"
-      ? window.getFilteredClinicRowsInOrder()
-      : [];
-    var perPage = typeof window.readLeadsPerPage === "function" ? window.readLeadsPerPage() : 0;
-    // Moving to the end of a paginated folder hides the card on the current page.
-    if (perPage && rows.length > perPage) return;
-    var cell = document.getElementById("lead-grid-cell-" + id);
-    var grid = document.getElementById("clinics-grid-inner");
-    if (cell && grid) {
-      cell.classList.add("lead-card--sinking");
-      grid.appendChild(cell);
-      window.setTimeout(function () { cell.classList.remove("lead-card--sinking"); }, 320);
-    }
-    var row = document.querySelector('tr.clinic-row[data-clinic-id="' + id + '"]');
-    var tbody = document.getElementById("clinics-table-body");
-    if (row && tbody) tbody.appendChild(row);
+    if (sentUpdated && typeof window.applyLeadSort === "function") window.applyLeadSort();
   };
 
   document.body.addEventListener("leadCardDispatched", function (evt) {
     var id = window.__htmxTriggerValue(evt.detail, "leadCardDispatched");
     window.__applyLeadDispatchedChrome(id);
-  });
-
-  document.body.addEventListener("leadCardSink", function (evt) {
-    var id = window.__htmxTriggerValue(evt.detail, "leadCardSink");
-    window.__sinkLeadCard(id);
   });
 
   window.__forceSendDuplicatePayload = null;

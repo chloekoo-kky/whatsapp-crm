@@ -15,15 +15,13 @@
   {% if is_trash_view %}
   {% include "leads/partials/_lead_grid_trash_button.html" with lead_id=lead.id is_trash_view=True %}
   {% else %}
-  {% if lead|whatsapp_dispatched %}
+  {% if not is_whatsapp_chats_view %}
   {% include "leads/partials/_lead_grid_active_chat_button.html" with lead=lead %}
   {% endif %}
   {% if is_uncategorized_view %}
-  {% if not lead|whatsapp_dispatched %}
   {% include "leads/partials/_lead_grid_trash_button.html" with lead_id=lead.id is_trash_view=False %}
-  {% endif %}
   {% include "leads/partials/_lead_grid_permanent_delete_button.html" with lead_id=lead.id %}
-  {% elif not is_queue_view and not is_whatsapp_chats_view and not lead|whatsapp_dispatched %}
+  {% elif not is_queue_view and not is_whatsapp_chats_view %}
   {% include "leads/partials/_lead_grid_trash_button.html" with lead_id=lead.id is_trash_view=False %}
   {% endif %}
   {% endif %}

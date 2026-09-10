@@ -2683,7 +2683,7 @@ def _lead_grid_cell_fade_out_response(request, lead_id: int) -> HttpResponse:
 
 
 def _force_send_grid_response(
-    request, lead: Lead, *, ok: bool, sink_card: bool = False
+    request, lead: Lead, *, ok: bool
 ) -> HttpResponse:
     """HTMX response after Send now: remove queue row on success, else refresh actions."""
     ctx = _lead_grid_action_context(request, lead)
@@ -2696,8 +2696,6 @@ def _force_send_grid_response(
     trigger = {"waRowFlash": lead.pk, "funnelMetricsRefresh": True}
     if ok and not ctx.get("is_queue_view"):
         trigger["leadCardDispatched"] = lead.pk
-        if sink_card:
-            trigger["leadCardSink"] = lead.pk
     if ok and ctx.get("is_queue_view"):
         response = _lead_grid_cell_fade_out_response(request, lead.pk)
         response["HX-Trigger"] = json.dumps(trigger)
@@ -2774,7 +2772,6 @@ def whatsapp_force_send(request, pk: int):
         response["HX-Reswap"] = "outerHTML"
         return response
 
-    was_unsent = lead.whatsapp_sent_at is None
     lead.whatsapp_status = Lead.WhatsappStatus.PROCESSING
     lead.whatsapp_last_error = ""
     lead.save(update_fields=["whatsapp_status", "whatsapp_last_error"])
@@ -2797,7 +2794,6 @@ def whatsapp_force_send(request, pk: int):
         request,
         lead,
         ok=ok,
-        sink_card=ok and was_unsent,
     )
 
 

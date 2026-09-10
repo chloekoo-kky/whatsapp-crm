@@ -225,15 +225,6 @@ def next_display_order_for_group(group_id: int) -> int:
     return current_max + 1
 
 
-def sink_lead_display_order(lead: Lead) -> int:
-    """Return a ``display_order`` value that places the lead at the tab bottom."""
-    group_id = lead.group_id
-    if group_id is None:
-        uncategorized = get_or_create_uncategorized_group()
-        group_id = uncategorized.pk
-    return next_display_order_for_group(group_id)
-
-
 def enqueue_leads_for_whatsapp(lead_ids: Iterable[int]) -> int:
     """Mark eligible leads pending for WhatsApp outreach without changing their folder."""
     ids = list(lead_ids)

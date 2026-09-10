@@ -939,6 +939,19 @@
   .lead-card-bottom-actions--single-action {
     justify-content: flex-end;
   }
+  .lead-card-bottom-actions .lead-card-active-chat-btn {
+    display: none !important;
+  }
+  article.clinic-card--dispatched .lead-card-bottom-actions .lead-card-active-chat-btn,
+  .lead-card-container[data-whatsapp-dispatched="1"] .lead-card-bottom-actions .lead-card-active-chat-btn,
+  .lead-card-bottom-actions.lead-card-bottom-actions--has-chat .lead-card-active-chat-btn {
+    display: inline-flex !important;
+  }
+  article.clinic-card--dispatched .lead-card-bottom-actions .lead-card-trash-btn,
+  .lead-card-container[data-whatsapp-dispatched="1"] .lead-card-bottom-actions .lead-card-trash-btn,
+  .lead-card-bottom-actions.lead-card-bottom-actions--has-chat .lead-card-trash-btn {
+    display: none !important;
+  }
   .lead-card-bottom-actions .lead-force-send-btn,
   .lead-card-bottom-actions .lead-join-queue-btn,
   .lead-card-bottom-actions .lead-dequeue-btn,
@@ -973,7 +986,6 @@
   .lead-dequeue-btn.is-busy .htmx-indicator {
     display: inline-block;
   }
-  .lead-card-container.lead-card--sinking,
   .lead-card-container.lead-card--floating {
     transition: transform 320ms ease, opacity 320ms ease;
   }
@@ -1136,8 +1148,10 @@
     .lead-card-bottom-actions.lead-card-bottom-actions--has-send > * {
       display: none !important;
     }
-    .lead-card-bottom-actions .lead-card-active-chat-btn,
-    .lead-card-bottom-actions .lead-force-send-btn {
+    .lead-card-bottom-actions .lead-force-send-btn,
+    .lead-card-bottom-actions.lead-card-bottom-actions--has-chat .lead-card-active-chat-btn,
+    article.clinic-card--dispatched .lead-card-bottom-actions .lead-card-active-chat-btn,
+    .lead-card-container[data-whatsapp-dispatched="1"] .lead-card-bottom-actions .lead-card-active-chat-btn {
       display: inline-flex !important;
       height: 2.5rem;
       width: auto;
