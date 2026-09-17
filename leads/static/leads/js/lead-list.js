@@ -1194,6 +1194,7 @@
       window.applyTableFilter = applyTableFilter;
       function canReorderGridCards() {
         if (!document.documentElement.classList.contains('cv-grid')) return false;
+        if (typeof isAllFoldersTabId === 'function' && isAllFoldersTabId(currentLeadGroupTabId)) return false;
         if (leadSortMode !== 'default') return false;
         var si = document.getElementById('table-search');
         if (si && si.value.trim()) return false;
@@ -1229,6 +1230,7 @@
       window.refreshGridCardsDraggable = refreshGridCardsDraggable;
       function getLeadGroupTabLabel(tabId) {
         var want = normalizeLeadGroupTabId(tabId);
+        if (want === 'all') return 'All folders';
         var btn = document.querySelector('#lead-group-tabs .lead-group-tab[data-group-id="' + want + '"]');
         if (!btn) return want === 'uncategorized' ? 'New' : 'folder';
         var nameEl = btn.querySelector('.lead-group-tab-label');
@@ -1254,7 +1256,6 @@
           parts.push(String(meta.count) + ' result' + (meta.count === 1 ? '' : 's'));
         }
         if (meta.truncated) parts.push('(first 200 shown)');
-        parts.push('· Back to ' + getLeadGroupTabLabel(tabBeforeGlobalSearch));
         textEl.textContent = parts.join(' ');
         banner.classList.remove('hidden');
       }
@@ -1297,7 +1298,7 @@
             var si = document.getElementById('table-search');
             var current = si ? si.value.trim() : '';
             if (current.length < GLOBAL_SEARCH_MIN_LEN) return;
-            if (hasActiveLocalLeadFilters() && !globalSearchActive) return;
+            if (typeof isAllFoldersTabId === 'function' && !isAllFoldersTabId(currentLeadGroupTabId)) return;
             runGlobalLeadSearch(current);
           }, 150);
           return;
@@ -1338,6 +1339,14 @@
         }
         refreshTableSearchClearVisibility();
         refreshLeadFilterTagActiveState();
+        if (wasActive && isAllFoldersTabId(currentLeadGroupTabId)) {
+          await switchLeadGroupTab('all', {
+            force: true,
+            skipHistory: true,
+            skipGlobalSearchExit: true,
+          });
+          return;
+        }
         if (wasActive && !opts.skipTabRestore) {
           await switchLeadGroupTab(tabBeforeGlobalSearch || currentLeadGroupTabId, {
             force: true,
@@ -1354,18 +1363,14 @@
         var raw = searchInput ? searchInput.value.trim() : '';
         refreshTableSearchClearVisibility();
         refreshLeadFilterTagActiveState();
-        var localFilters = hasActiveLocalLeadFilters();
-        var useGlobal = raw.length >= GLOBAL_SEARCH_MIN_LEN && (!localFilters || !!globalSearchActive);
-        if (useGlobal) {
-          clearTimeout(globalSearchDebounceTimer);
-          globalSearchDebounceTimer = window.setTimeout(function () {
-            runGlobalLeadSearch(raw);
-          }, 300);
-          if (!globalSearchActive) applyTableFilter({ resetPage: true });
-          return;
-        }
-        clearTimeout(globalSearchDebounceTimer);
         if (globalSearchActive) {
+          if (raw.length >= GLOBAL_SEARCH_MIN_LEN) {
+            clearTimeout(globalSearchDebounceTimer);
+            globalSearchDebounceTimer = window.setTimeout(function () {
+              runGlobalLeadSearch(raw);
+            }, 300);
+            return;
+          }
           exitGlobalSearchMode({ clearInput: false });
           return;
         }

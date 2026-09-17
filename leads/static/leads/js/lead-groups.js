@@ -1,12 +1,18 @@
 (function () {
   if (window.__leadsDashboardSkip) return;
+      window.ALL_FOLDERS_TAB_ID = 'all';
       function normalizeLeadGroupTabId(groupId) {
-        if (groupId === 'uncategorized' || groupId === 'all' || groupId === '' || groupId == null) return 'uncategorized';
+        if (groupId === 'all') return 'all';
+        if (groupId === 'uncategorized' || groupId === '' || groupId == null) return 'uncategorized';
         var qid = window.dashboardJsConfig && dashboardJsConfig.queueGroupTabId;
         if (qid && String(groupId) === String(qid)) return 'uncategorized';
         return String(groupId);
       }
       window.normalizeLeadGroupTabId = normalizeLeadGroupTabId;
+      function isAllFoldersTabId(groupId) {
+        return normalizeLeadGroupTabId(groupId) === 'all';
+      }
+      window.isAllFoldersTabId = isAllFoldersTabId;
       function defaultLeadGroupTabId() {
         var rid = window.dashboardJsConfig && dashboardJsConfig.readyGroupTabId;
         return rid ? String(rid) : 'uncategorized';
@@ -41,7 +47,9 @@
         var u = new URL(window.location.href);
         var gid = normalizeLeadGroupTabId(currentLeadGroupTabId);
         var readyId = defaultLeadGroupTabId();
-        if (readyId && String(gid) === String(readyId)) {
+        if (gid === 'all') {
+          u.searchParams.set('group_id', 'all');
+        } else if (readyId && String(gid) === String(readyId)) {
           u.searchParams.delete('group_id');
         } else if (gid === 'uncategorized') {
           u.searchParams.set('group_id', 'uncategorized');
@@ -63,24 +71,47 @@
         }
       }
       window.replaceDashboardUrlForCurrentTab = replaceDashboardUrlForCurrentTab;
+      function refreshLeadSearchPlaceholder() {
+        var si = document.getElementById('table-search');
+        if (!si) return;
+        if (isAllFoldersTabId(currentLeadGroupTabId)) {
+          si.setAttribute('placeholder', 'Search all folders…');
+          si.setAttribute('aria-label', 'Search all folders');
+        } else {
+          si.setAttribute('placeholder', 'Search this view…');
+          si.setAttribute('aria-label', 'Search this view');
+        }
+      }
+      window.refreshLeadSearchPlaceholder = refreshLeadSearchPlaceholder;
       function setLeadGroupTabActive(groupId) {
         var want = normalizeLeadGroupTabId(groupId);
         currentLeadGroupTabId = want;
+        var noneSelected = want === 'all';
         document.querySelectorAll('#lead-group-tabs .lead-group-tab[data-group-id]').forEach(function (btn) {
           var id = btn.getAttribute('data-group-id') || 'uncategorized';
-          var active = id === want;
+          var active = !noneSelected && id === want;
           btn.classList.toggle('lead-group-tab--active', active);
           btn.setAttribute('aria-selected', active ? 'true' : 'false');
         });
         syncLeadGroupMobileLabel(want);
+        refreshLeadSearchPlaceholder();
       }
       window.setLeadGroupTabActive = setLeadGroupTabActive;
       function syncLeadGroupMobileLabel(groupId) {
         var want = normalizeLeadGroupTabId(groupId);
-        var btn = document.querySelector('#lead-group-tabs .lead-group-tab[data-group-id="' + want + '"]');
         var label = document.getElementById('lead-group-mobile-label');
         var countEl = document.getElementById('lead-group-mobile-count');
-        if (!btn || !label) return;
+        if (!label) return;
+        if (want === 'all') {
+          label.textContent = 'All folders';
+          if (countEl) {
+            countEl.textContent = '';
+            countEl.classList.add('hidden');
+          }
+          return;
+        }
+        var btn = document.querySelector('#lead-group-tabs .lead-group-tab[data-group-id="' + want + '"]');
+        if (!btn) return;
         var nameEl = btn.querySelector('.lead-group-tab-label');
         label.textContent = (nameEl && nameEl.textContent.trim()) || 'New';
         if (!countEl) return;
@@ -187,17 +218,15 @@
       window.setLeadsTabLoading = setLeadsTabLoading;
       async function switchLeadGroupTab(groupId, opts) {
         opts = opts || {};
+        var want = normalizeLeadGroupTabId(groupId);
         if (globalSearchActive && !opts.skipGlobalSearchExit) {
           globalSearchRequestId += 1;
           clearTimeout(globalSearchDebounceTimer);
           globalSearchActive = false;
           globalSearchQuery = '';
           updateGlobalSearchBanner();
-          var searchClear = document.getElementById('table-search');
-          if (searchClear) searchClear.value = '';
           refreshTableSearchClearVisibility();
         }
-        var want = normalizeLeadGroupTabId(groupId);
         if (!opts.force && want === normalizeLeadGroupTabId(currentLeadGroupTabId) && !globalSearchActive) {
           return;
         }

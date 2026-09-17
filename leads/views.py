@@ -429,9 +429,15 @@ def apply_lead_tag_and_filter(qs, slugs):
 
 
 def _resolve_dashboard_tab_key(group_id_raw: Optional[str]) -> str:
-    """Map a request ``group_id`` to a dashboard tab key. Missing values default to Ready."""
+    """Map a request ``group_id`` to a dashboard tab key.
+
+    Missing values default to Ready. ``all`` means no folder is selected
+    (search across folders). ``uncategorized`` is the New tab.
+    """
     g = (group_id_raw or "").strip().lower()
-    if g in ("uncategorized", "all"):
+    if g == "all":
+        return "all"
+    if g == "uncategorized":
         return "uncategorized"
     queue_group = get_or_create_queue_group()
     if g.isdigit():
@@ -459,6 +465,11 @@ def _leads_qs_for_tab(
     whatsapp_chats_group = get_or_create_whatsapp_chats_group()
     if queued_only is None:
         queued_only = _request_queued_filter(request)
+    if g == "all":
+        qs = qs.select_related("group").exclude(group_id=trash_group.pk)
+        if queued_only:
+            qs = apply_queued_outreach_filter(qs)
+        return _leads_tab_sink_order(qs)
     # Queue is a toolbar filter now, not a Views tab. Old ``group_id=<queue pk>``
     # bookmarks land on New; ``queued=1`` applies the former tab condition.
     if g.isdigit() and int(g) == queue_group.pk:
@@ -492,6 +503,22 @@ def _folder_context_for_group(grp: LeadGroup) -> dict:
         "is_queue_view": grp.name == QUEUE_GROUP_NAME,
         "is_whatsapp_chats_view": grp.name == WHATSAPP_CHATS_GROUP_NAME,
         "force_send_template_name": get_force_send_template_name(),
+        "all_folders_view": False,
+    }
+
+
+def _all_folders_folder_context() -> dict:
+    """No Views tab selected — every non-trash lead, with per-card folder chrome."""
+    return {
+        "current_group_name": "",
+        "current_group_id": None,
+        "is_trash_view": False,
+        "is_uncategorized_view": False,
+        "is_ready_view": False,
+        "is_queue_view": False,
+        "is_whatsapp_chats_view": False,
+        "force_send_template_name": get_force_send_template_name(),
+        "all_folders_view": True,
     }
 
 
@@ -520,7 +547,9 @@ def _active_folder_context(request, *, group_id: str | None = None) -> dict:
         else (request.GET.get("group_id") or request.POST.get("group_id") or "")
     ).strip().lower()
     tab_key = _resolve_dashboard_tab_key(gid_raw)
-    if tab_key == "uncategorized":
+    if tab_key == "all":
+        ctx = _all_folders_folder_context()
+    elif tab_key == "uncategorized":
         ctx = _folder_context_for_group(get_or_create_uncategorized_group())
     elif tab_key.isdigit():
         grp = LeadGroup.objects.filter(pk=int(tab_key)).first()
@@ -697,8 +726,11 @@ class LeadDashboardView(ListView):
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
+        gid_raw = (self.request.GET.get("group_id") or "").strip().lower()
+        tab_key = _resolve_dashboard_tab_key(gid_raw)
+        cross_folder = tab_key == "all"
         clinics_list, multi_brands = _dashboard_prepare_clinics(
-            context["clinics"], request=self.request
+            context["clinics"], request=self.request, global_search=cross_folder
         )
         context["multi_location_brands"] = multi_brands
         context["clinics"] = clinics_list
@@ -767,11 +799,14 @@ class LeadDashboardView(ListView):
         context["active_search_record_id"] = (
             int(rid) if rid and str(rid).isdigit() else None
         )
-        gid_raw = (self.request.GET.get("group_id") or "").strip().lower()
-        tab_key = _resolve_dashboard_tab_key(gid_raw)
+        context["all_folders_view"] = tab_key == "all"
+        context["show_folder_badge"] = cross_folder
         if tab_key == "uncategorized":
             context["active_group_pk"] = None
             context["active_group_tab_id"] = "uncategorized"
+        elif tab_key == "all":
+            context["active_group_pk"] = None
+            context["active_group_tab_id"] = "all"
         else:
             context["active_group_pk"] = int(tab_key)
             context["active_group_tab_id"] = tab_key
@@ -2830,13 +2865,16 @@ def get_lead_chat_indicators(request):
 def get_leads_table(request):
     """
     Return HTML fragments for the leads list/grid for AJAX tab switching.
-    GET ``group_id``: numeric LeadGroup pk, or ``uncategorized`` (default) for ungrouped leads.
+    GET ``group_id``: numeric LeadGroup pk, ``uncategorized`` for New, or ``all``
+    for no folder selected. Missing ``group_id`` defaults to Ready.
     GET ``search_record``: optional hunt filter (same as dashboard).
     GET ``q``: optional global keyword search across all non-trash folders (min 2 chars).
     GET ``queued``: ``1`` to narrow the current tab to pending/processing (former Queue tab).
     GET ``tags``: optional comma-separated tag slugs; leads must have every slug (AND).
     """
     qs, is_global_search = _leads_queryset_for_table(request)
+    folder_ctx = _active_folder_context(request)
+    cross_folder = is_global_search or bool(folder_ctx.get("all_folders_view"))
     tag_counts = _tag_lead_counts(qs)
     funnel = None if is_global_search else _funnel_metrics(qs)
     tag_slugs = _request_tag_filter_slugs(request)
@@ -2852,14 +2890,14 @@ def get_leads_table(request):
         result_count = None
         result_truncated = False
     clinics_list, multi_location_brands = _dashboard_prepare_clinics(
-        display_qs, request=request, global_search=is_global_search
+        display_qs, request=request, global_search=cross_folder
     )
     ctx = {
+        **folder_ctx,
         "clinics": clinics_list,
         "multi_location_brands": multi_location_brands,
-        "show_folder_badge": is_global_search,
+        "show_folder_badge": cross_folder,
         "is_global_search": is_global_search,
-        **_active_folder_context(request),
     }
     tbody_html = render_to_string(
         "leads/partials/_leads_table_body.html",
@@ -3513,7 +3551,9 @@ def clinics_export_xlsx(request):
     qs = visible_leads(request).order_by("display_order", "-created_at")
     group_id = (request.GET.get("group_id") or "").strip().lower()
     if group_id:
-        if group_id == "uncategorized":
+        if group_id in ("all",):
+            pass
+        elif group_id == "uncategorized":
             qs = qs.filter(uncategorized_group_filter())
         elif group_id.isdigit():
             qs = qs.filter(group_id=int(group_id))

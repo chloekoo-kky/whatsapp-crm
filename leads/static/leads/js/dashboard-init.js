@@ -1063,6 +1063,7 @@
           ? dashboardJsConfig.initialLeadGroupTabIdFromPage
           : (dashboardJsConfig.readyGroupTabId || 'uncategorized')
       );
+      if (typeof refreshLeadSearchPlaceholder === 'function') refreshLeadSearchPlaceholder();
       if (typeof rememberLeadTabFragment === 'function') {
         var bootTb = document.getElementById('clinics-table-body');
         var bootGrid = document.getElementById('clinics-grid-inner');
@@ -1162,7 +1163,10 @@
         e.preventDefault();
         e.stopPropagation();
         var gid = normalizeLeadGroupTabId(tab.getAttribute('data-group-id') || 'uncategorized');
-        if (gid === normalizeLeadGroupTabId(currentLeadGroupTabId)) return;
+        if (gid === normalizeLeadGroupTabId(currentLeadGroupTabId)) {
+          switchLeadGroupTab('all', { historyMode: 'push' });
+          return;
+        }
         switchLeadGroupTab(gid, { historyMode: 'push' });
       });
       replaceDashboardUrlForCurrentTab('replace');
@@ -1580,7 +1584,7 @@
           address: document.getElementById('lead-create-address').value.trim(),
           website: document.getElementById('lead-create-website').value.trim(),
           tags: collectTagPickerSlugs(document.getElementById('lead-create-tags')),
-          group_id: gid === 'uncategorized' ? 'uncategorized' : gid,
+          group_id: (gid === 'uncategorized' || gid === 'all') ? 'uncategorized' : gid,
         };
         if (!payload.name) {
           showLeadCreateError('Name is required.');

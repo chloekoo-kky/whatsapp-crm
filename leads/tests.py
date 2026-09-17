@@ -3625,6 +3625,54 @@ class GlobalLeadSearchTests(TestCase):
         self.assertFalse(is_global)
         self.assertEqual(list(qs.values_list("name", flat=True)), ["Beta Physio"])
 
+    def test_all_folders_tab_shows_every_non_trash_lead(self):
+        from django.test import RequestFactory
+
+        from leads.pipeline import get_or_create_ready_group, get_or_create_trash_group
+        from leads.views import _leads_queryset_for_table, _resolve_dashboard_tab_key
+
+        self.assertEqual(_resolve_dashboard_tab_key("all"), "all")
+        self.assertEqual(
+            _resolve_dashboard_tab_key(""),
+            str(get_or_create_ready_group().pk),
+        )
+        trash = get_or_create_trash_group()
+        Lead.objects.create(
+            name="Trash Hidden",
+            address="99 Dump Rd",
+            group=trash,
+        )
+        request = RequestFactory().get("/", {"group_id": "all"})
+        request.user = self.user
+        qs, is_global = _leads_queryset_for_table(request)
+        self.assertFalse(is_global)
+        names = set(qs.values_list("name", flat=True))
+        self.assertEqual(names, {"Alpha Dental", "Beta Physio"})
+
+    def test_all_folders_ajax_shows_cards_with_folder_badges(self):
+        response = self.client.get(reverse("get_leads_table"), {"group_id": "all"})
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertFalse(payload["global_search"])
+        self.assertIn("Alpha Dental", payload["tbody_html"])
+        self.assertIn("Beta Physio", payload["tbody_html"])
+        self.assertIn("lead-folder-badge", payload["tbody_html"])
+        self.assertIn("lead-folder-badge", payload["grid_html"])
+        self.assertIn("New", payload["tbody_html"])
+        self.assertIn("Selangor Prospects", payload["grid_html"])
+        self.assertNotIn("Select a view, or search all folders.", payload["tbody_html"])
+
+    def test_dashboard_all_folders_deselects_views(self):
+        response = self.client.get(reverse("dashboard"), {"group_id": "all"})
+        self.assertEqual(response.status_code, 200)
+        html = response.content.decode()
+        self.assertNotRegex(html, r'class="lead-group-tab[^"]*lead-group-tab--active')
+        self.assertIn("Search all folders…", html)
+        self.assertIn("Alpha Dental", html)
+        self.assertIn("Beta Physio", html)
+        self.assertIn("lead-folder-badge", html)
+        self.assertNotIn("Select a view, or search all folders.", html)
+
 
 class ApiStatusSidebarTests(TestCase):
     @override_settings(SERPER_API_KEY="test-serper")

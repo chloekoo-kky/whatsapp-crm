@@ -669,8 +669,11 @@ class DashboardTagFilterTests(TestCase):
             list_src[edit_idx : edit_idx + 500],
         )
         self.assertIn("hasActiveLocalLeadFilters", list_src)
-        self.assertIn("(!localFilters || !!globalSearchActive)", list_src)
-        self.assertIn("if (!globalSearchActive) applyTableFilter({ resetPage: true });", list_src)
+        self.assertIn("isAllFoldersTabId(currentLeadGroupTabId)", list_src)
+        self.assertIn("ALL_FOLDERS_TAB_ID", groups_src)
+        self.assertIn("function isAllFoldersTabId", groups_src)
+        self.assertIn("Click the active view again to deselect", panel_src)
+        self.assertIn("switchLeadGroupTab('all'", init_src)
         self.assertIn("fadeLeadsOutOfCurrentFilters", list_src)
         self.assertIn("lead-card--filter-exit", list_src)
         self.assertIn("lead-card--filter-exit", styles_src)
