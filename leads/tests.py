@@ -1258,6 +1258,19 @@ class YCloudWebhookTests(TestCase):
         self.assertEqual(parsed[0].remote_phone, "+60123456789")
         self.assertEqual(parsed[0].text_body, "Hello from YCloud")
         self.assertFalse(parsed[0].from_me)
+        self.assertFalse(parsed[0].from_history)
+
+    @override_settings(WHATSAPP_FROM_NUMBER="+60126336529")
+    def test_parse_ycloud_inbound_string_text_and_missing_type(self):
+        from leads.whatsapp_webhook import parse_ycloud_webhook
+
+        parsed, failures = parse_ycloud_webhook(
+            self._ycloud_inbound_payload(type="", text="Thanks, we are closed today.")
+        )
+        self.assertEqual(len(failures), 0)
+        self.assertEqual(len(parsed), 1)
+        self.assertEqual(parsed[0].text_body, "Thanks, we are closed today.")
+        self.assertFalse(parsed[0].from_me)
 
     @override_settings(WHATSAPP_FROM_NUMBER="+60126336429")
     def test_parse_ycloud_mobile_echo(self):
@@ -1983,6 +1996,132 @@ class YCloudWebhookTests(TestCase):
         self.assertEqual(response.json()["synced"], 1)
         chat = ChatMessage.objects.get(lead=lead, is_outbound=False)
         self.assertEqual(chat.body, "Hello from YCloud")
+
+    @override_settings(WHATSAPP_FROM_NUMBER="+60126336529")
+    def test_ycloud_inbound_stale_send_time_counts_in_todays_report(self):
+        from datetime import datetime, time, timedelta
+
+        from django.test import RequestFactory
+        from django.utils import timezone
+
+        from leads.views import _daily_report_leads
+        from leads.whatsapp_service import campaign_timezone
+
+        groups = ensure_pipeline_system_groups()
+        tz = campaign_timezone()
+        today = timezone.now().astimezone(tz).date()
+        start = timezone.make_aware(datetime.combine(today, time.min), tz)
+        yesterday = timezone.make_aware(
+            datetime.combine(today - timedelta(days=1), time.min), tz
+        )
+        user = get_user_model().objects.create_superuser(
+            "inb-report", "inb-report@t.test", "pass"
+        )
+        lead = Lead.objects.create(
+            name="Auto Reply Clinic",
+            address="1 Main St",
+            phone_number="+60123456789",
+            phone_numbers=["+60123456789"],
+            group=groups["uncategorized"],
+            whatsapp_status=Lead.WhatsappStatus.SENT,
+            whatsapp_sent_at=start,
+        )
+        outbound = ChatMessage.objects.create(
+            lead=lead,
+            body="Hi",
+            is_outbound=True,
+            template_name="say_hi",
+        )
+        ChatMessage.objects.filter(pk=outbound.pk).update(created_at=start)
+        payload = self._ycloud_inbound_payload(
+            wamid="wamid.AUTO_REPLY",
+            text={"body": "Thanks for contacting us. We are currently away."},
+            sendTime=yesterday.isoformat(),
+        )
+        client = Client()
+        response = client.post(
+            "/whatsapp/webhook/",
+            data=json.dumps(payload),
+            content_type="application/json",
+            REMOTE_ADDR="127.0.0.1",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["synced"], 1)
+        req = RequestFactory().get("/")
+        req.user = user
+        leads = {row.name: row for row in _daily_report_leads(req, today)}
+        self.assertEqual(leads["Auto Reply Clinic"].report_inbound_count, 1)
+        self.assertEqual(leads["Auto Reply Clinic"].report_status_display, "Active")
+
+    @override_settings(WHATSAPP_FROM_NUMBER="+60126336529")
+    def test_ycloud_inbound_refreshes_same_wamid_onto_today(self):
+        from datetime import datetime, time, timedelta
+
+        from django.test import RequestFactory
+        from django.utils import timezone
+
+        from leads.views import _daily_report_leads
+        from leads.whatsapp_service import campaign_timezone
+        from leads.whatsapp_webhook import WEBHOOK_MSG_ID_PREFIX
+
+        groups = ensure_pipeline_system_groups()
+        tz = campaign_timezone()
+        today = timezone.now().astimezone(tz).date()
+        start = timezone.make_aware(datetime.combine(today, time.min), tz)
+        yesterday = timezone.make_aware(
+            datetime.combine(today - timedelta(days=1), time.min), tz
+        )
+        user = get_user_model().objects.create_superuser(
+            "inb-refresh", "inb-refresh@t.test", "pass"
+        )
+        lead = Lead.objects.create(
+            name="Repeat Auto Reply",
+            address="1 Main St",
+            phone_number="+60123456789",
+            phone_numbers=["+60123456789"],
+            group=groups["uncategorized"],
+            whatsapp_status=Lead.WhatsappStatus.SENT,
+            whatsapp_sent_at=start,
+        )
+        outbound = ChatMessage.objects.create(
+            lead=lead,
+            body="Hi",
+            is_outbound=True,
+            template_name="say_hi",
+        )
+        ChatMessage.objects.filter(pk=outbound.pk).update(created_at=start)
+        inbound = ChatMessage.objects.create(
+            lead=lead,
+            body="Thanks, we are away.",
+            is_outbound=False,
+            meta_message_id="wamid.AUTO_REPLY_DUP",
+        )
+        ChatMessage.objects.filter(pk=inbound.pk).update(created_at=yesterday)
+        LeadConversationLog.objects.create(
+            lead=lead,
+            conversation_date=yesterday.date(),
+            remarks=(
+                f"{WEBHOOK_MSG_ID_PREFIX}wamid.AUTO_REPLY_DUP\n"
+                "[WhatsApp · client] Thanks, we are away."
+            ),
+        )
+        payload = self._ycloud_inbound_payload(
+            wamid="wamid.AUTO_REPLY_DUP",
+            text={"body": "Thanks, we are away."},
+        )
+        client = Client()
+        response = client.post(
+            "/whatsapp/webhook/",
+            data=json.dumps(payload),
+            content_type="application/json",
+            REMOTE_ADDR="127.0.0.1",
+        )
+        self.assertEqual(response.status_code, 200)
+        req = RequestFactory().get("/")
+        req.user = user
+        leads = {row.name: row for row in _daily_report_leads(req, today)}
+        self.assertEqual(leads["Repeat Auto Reply"].report_inbound_count, 1)
+        self.assertEqual(leads["Repeat Auto Reply"].report_status_display, "Active")
 
 
 class PhoneDeduplicationTests(TestCase):
@@ -2905,6 +3044,7 @@ class DailyReportTests(TestCase):
             created_at=start + timedelta(hours=1),
         )
         leads = {lead.name: lead for lead in _daily_report_leads(self._req(), self.today)}
+        self.assertEqual(leads["Same Day Reply"].report_inbound_count, 1)
         self.assertEqual(leads["Same Day Reply"].report_status_display, "Active")
 
     def test_reports_follow_up_outbound_without_inbound_shows_active(self):

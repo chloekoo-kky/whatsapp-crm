@@ -25,7 +25,7 @@ from leads.chat_messages import (
     upsert_outbound_chat_message,
 )
 from leads.display import normalize_manual_phone
-from leads.models import Lead, LeadConversationLog
+from leads.models import ChatMessage, Lead, LeadConversationLog
 from leads.pipeline import (
     TRASH_GROUP_NAME,
     find_lead_by_phone,
@@ -46,6 +46,7 @@ class ParsedWebhookMessage:
     message_id: str
     timestamp: datetime
     template_name: str = ""
+    from_history: bool = False
 
 
 @dataclass(frozen=True)
@@ -193,43 +194,52 @@ def _extract_template_name(message: dict[str, Any]) -> str:
     return ""
 
 
+def _coerce_message_text(value: Any) -> str:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    if isinstance(value, dict):
+        for key in ("body", "text", "caption", "title", "payload"):
+            inner = value.get(key)
+            if isinstance(inner, str) and inner.strip():
+                return inner.strip()
+    return ""
+
+
 def _extract_text(message: dict[str, Any]) -> str:
     msg_type = (message.get("type") or "").strip().lower()
     if msg_type == "text":
-        text = message.get("text")
-        if isinstance(text, dict):
-            body = text.get("body")
-            if isinstance(body, str) and body.strip():
-                return body.strip()
+        body = _coerce_message_text(message.get("text"))
+        if body:
+            return body
     if msg_type == "template":
-        text = message.get("text")
-        if isinstance(text, dict):
-            body = text.get("body")
-            if isinstance(body, str) and body.strip():
-                return body.strip()
+        body = _coerce_message_text(message.get("text"))
+        if body:
+            return body
         template = message.get("template")
         if isinstance(template, dict):
             for comp in template.get("components") or []:
                 if not isinstance(comp, dict):
                     continue
                 if (comp.get("type") or "").upper() == "BODY":
-                    body = comp.get("text") or comp.get("body")
-                    if isinstance(body, str) and body.strip():
-                        return body.strip()
+                    body = _coerce_message_text(comp.get("text") or comp.get("body") or comp)
+                    if body:
+                        return body
     if msg_type == "button":
-        button = message.get("button")
-        if isinstance(button, dict):
-            text = button.get("text") or button.get("payload")
-            if isinstance(text, str) and text.strip():
-                return text.strip()
+        body = _coerce_message_text(message.get("button"))
+        if body:
+            return body
     if msg_type == "interactive":
         interactive = message.get("interactive")
         if isinstance(interactive, dict):
             reply = interactive.get("button_reply") or interactive.get("list_reply")
-            if isinstance(reply, dict):
-                title = reply.get("title") or reply.get("id")
-                if isinstance(title, str) and title.strip():
-                    return title.strip()
+            body = _coerce_message_text(reply)
+            if body:
+                return body
+    if msg_type not in {"revoke", "edit", "request_welcome", "system", "unsupported"}:
+        for key in ("text", "body", "caption", "button"):
+            body = _coerce_message_text(message.get(key))
+            if body:
+                return body
     return ""
 
 
@@ -238,18 +248,9 @@ def _extract_text_or_placeholder(message: dict[str, Any]) -> str:
     if body:
         return body
     msg_type = (message.get("type") or "").strip().lower()
-    if msg_type in ("revoke", "edit"):
+    if msg_type in ("revoke", "edit", "request_welcome", "system", "unsupported"):
         return ""
-    if msg_type in (
-        "image",
-        "video",
-        "audio",
-        "document",
-        "sticker",
-        "location",
-        "contacts",
-        "reaction",
-    ):
+    if msg_type:
         return f"[{msg_type}]"
     return ""
 
@@ -264,7 +265,9 @@ def _phones_match(a: str, b: str) -> bool:
     return normalize_manual_phone(a) == normalize_manual_phone(b)
 
 
-def _parse_ycloud_inbound(inbound: dict[str, Any]) -> list[ParsedWebhookMessage]:
+def _parse_ycloud_inbound(
+    inbound: dict[str, Any], *, from_history: bool = False
+) -> list[ParsedWebhookMessage]:
     raw_from = (inbound.get("from") or "").strip()
     remote_phone = normalize_manual_phone(raw_from)
     if not remote_phone:
@@ -279,6 +282,7 @@ def _parse_ycloud_inbound(inbound: dict[str, Any]) -> list[ParsedWebhookMessage]
             from_me=False,
             message_id=_message_id(inbound),
             timestamp=_iso_timestamp(inbound.get("sendTime") or inbound.get("createTime")),
+            from_history=from_history,
         )
     ]
 
@@ -395,7 +399,7 @@ def parse_ycloud_webhook(
     if event_type == "whatsapp.smb.history":
         inbound = payload.get("whatsappInboundMessage")
         if isinstance(inbound, dict):
-            return _parse_ycloud_inbound(inbound), []
+            return _parse_ycloud_inbound(inbound, from_history=True), []
         message = payload.get("whatsappMessage")
         if isinstance(message, dict):
             return _parse_ycloud_business_outbound(message, skip_status_filter=True), []
@@ -497,6 +501,38 @@ def _log_already_synced(lead: Lead, message_id: str) -> bool:
     return LeadConversationLog.objects.filter(lead=lead, remarks__startswith=prefix).exists()
 
 
+def _inbound_event_time(msg: ParsedWebhookMessage):
+    """Live inbound uses receive time so daily reports count auto-replies today."""
+    if msg.from_history:
+        return msg.timestamp
+    return dj_timezone.now()
+
+
+def _ensure_inbound_chat_message(lead: Lead, msg: ParsedWebhookMessage) -> None:
+    """Create or refresh the inbound bubble even if the conversation log already exists."""
+    created_at = _inbound_event_time(msg)
+    existing = ChatMessage.objects.filter(
+        lead=lead, is_outbound=False, meta_message_id=msg.message_id
+    ).first()
+    if existing is None:
+        record_inbound_chat_message(
+            lead,
+            body=msg.text_body,
+            meta_message_id=msg.message_id,
+            created_at=created_at,
+        )
+        return
+    from leads.whatsapp_service import campaign_timezone
+
+    tz = campaign_timezone()
+    existing_day = existing.created_at.astimezone(tz).date()
+    new_day = created_at.astimezone(tz).date()
+    if existing_day != new_day:
+        ChatMessage.objects.filter(pk=existing.pk).update(created_at=created_at)
+        if msg.text_body and existing.body != msg.text_body:
+            ChatMessage.objects.filter(pk=existing.pk).update(body=msg.text_body)
+
+
 @transaction.atomic
 def sync_webhook_message(msg: ParsedWebhookMessage) -> bool:
     lead = find_lead_by_phone(msg.remote_phone)
@@ -507,6 +543,8 @@ def sync_webhook_message(msg: ParsedWebhookMessage) -> bool:
         return False
 
     if _log_already_synced(lead, msg.message_id):
+        if not msg.from_me:
+            _ensure_inbound_chat_message(lead, msg)
         return False
 
     if msg.from_me:
@@ -517,32 +555,37 @@ def sync_webhook_message(msg: ParsedWebhookMessage) -> bool:
             template_name=msg.template_name,
             created_at=msg.timestamp,
         )
-    elif not inbound_chat_message_exists(lead, msg.message_id):
-        record_inbound_chat_message(
-            lead,
-            body=msg.text_body,
-            meta_message_id=msg.message_id,
-            created_at=msg.timestamp,
-        )
+        event_time = msg.timestamp
+    else:
+        event_time = _inbound_event_time(msg)
+        if not inbound_chat_message_exists(lead, msg.message_id):
+            record_inbound_chat_message(
+                lead,
+                body=msg.text_body,
+                meta_message_id=msg.message_id,
+                created_at=event_time,
+            )
+        else:
+            _ensure_inbound_chat_message(lead, msg)
 
-    from leads.whatsapp_service import mark_first_outbound_sent
+    from leads.whatsapp_service import campaign_timezone, mark_first_outbound_sent
 
     mark_first_outbound_sent(
         lead,
         whatsapp_from_number(),
-        sent_at=msg.timestamp,
+        sent_at=event_time,
     )
 
     sender = "agent" if msg.from_me else "client"
     remarks = _format_log_remarks(sender, msg.text_body, msg.message_id)
     log = LeadConversationLog(
         lead=lead,
-        conversation_date=msg.timestamp.date(),
+        conversation_date=event_time.astimezone(campaign_timezone()).date(),
         remarks=remarks,
     )
     log.save()
-    if msg.timestamp:
-        LeadConversationLog.objects.filter(pk=log.pk).update(created_at=msg.timestamp)
+    if event_time:
+        LeadConversationLog.objects.filter(pk=log.pk).update(created_at=event_time)
 
     return True
 

@@ -304,7 +304,9 @@ def inbound_chat_message_exists(lead: Lead, meta_message_id: str) -> bool:
     mid = (meta_message_id or "").strip()
     if not mid:
         return False
-    return ChatMessage.objects.filter(lead=lead, meta_message_id=mid).exists()
+    return ChatMessage.objects.filter(
+        lead=lead, is_outbound=False, meta_message_id=mid
+    ).exists()
 
 
 def outbound_chat_message_exists(lead: Lead, meta_message_id: str) -> bool:
